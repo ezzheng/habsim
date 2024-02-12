@@ -1,7 +1,7 @@
 import numpy as np
 import math
 
-elevfile = '/gefs/worldelev.npy'
+elevfile = './gefs/worldelev.npy'
 data = np.load(elevfile, 'r')
 resolution = 120 ## points per degree
 

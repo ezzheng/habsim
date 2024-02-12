@@ -2,13 +2,12 @@
 *.pyc
 __pycache__*
 *.tif
-*.npy
 *.grb2
 *grb2*
 .idea
 .vscode
 .DS_Store
-*.npz
 test.py
 plot.html
 plot_test.html
+.vercel

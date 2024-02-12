@@ -1,31 +1,29 @@
-from flask import Flask, jsonify, request, Response
+from flask import Flask, jsonify, request, Response, render_template, send_from_directory
 from flask_cors import CORS
 
 app = Flask(__name__)
 CORS(app)
-
-mount = True
 
 import elev
 from datetime import datetime, timezone
 import simulate
 import os
 
-@app.route('/which')
+@app.route('/sim/which')
 def whichgefs():
     simulate.refresh()
     return simulate.currgefs
 
-@app.route('/status')
+@app.route('/sim/status')
 def status():
-    f = open('/gefs/serverstatus') if mount else open("serverstatus")
+    f = open('./gefs/whichgefs')
     s = f.readline()
     f.close()
     return s
 
-@app.route('/ls')
+@app.route('/sim/ls')
 def ls():
-    files = os.listdir('/gefs/gefs' if mount else 'gefs')
+    files = os.listdir('./gefs')
     return jsonify({
         "count": len(files),
         "files": files
@@ -43,7 +41,7 @@ Return format is a list of [loc1, loc2 ...] where each loc is a list [lat, lon, 
 u-wind is wind towards the EAST: wind vector in the positive X direction
 v-wind is wind towards the NORTH: wind vector in the positve Y direction
 '''
-@app.route('/singlepredicth')
+@app.route('/sim/singlepredicth')
 def singlepredicth():
     args = request.args
     yr, mo, day, hr, mn = int(args['yr']), int(args['mo']), int(args['day']), int(args['hr']), int(args['mn'])
@@ -59,7 +57,7 @@ def singlepredicth():
         return "error"
     return jsonify(path)
 
-@app.route('/singlepredict')
+@app.route('/sim/singlepredict')
 def singlepredict():
     args = request.args
     timestamp = datetime.utcfromtimestamp(float(args['timestamp'])).replace(tzinfo=timezone.utc)
@@ -98,7 +96,7 @@ def singlezpb(timestamp, lat, lon, alt, equil, eqtime, asc, desc, model):
         return "error"
 
 
-@app.route('/singlezpb')
+@app.route('/sim/singlezpb')
 def singlezpbh():
     args = request.args
     timestamp = datetime.utcfromtimestamp(float(args['timestamp'])).replace(tzinfo=timezone.utc)
@@ -112,7 +110,7 @@ def singlezpbh():
     return jsonify(path)
 
 
-@app.route('/spaceshot')
+@app.route('/sim/spaceshot')
 def spaceshot():
     args = request.args
     timestamp = datetime.utcfromtimestamp(float(args['timestamp'])).replace(tzinfo=timezone.utc)
@@ -129,11 +127,10 @@ def spaceshot():
 '''
 Given a lat and lon, returns the elevation as a string
 '''
-@app.route('/elev')
+@app.route('/sim/elev')
 def elevation():
     lat, lon = float(request.args['lat']), float(request.args['lon'])
     return str(elev.getElevation(lat, lon))
-
 
 
 '''
@@ -147,7 +144,7 @@ dv/dh = [dv/dh-1, dv/dh-2, dv/dh-3...dv/dh-20]
 
 where the numbers are the GEFS model from which the data is extracted.
 '''
-@app.route('/windensemble')
+@app.route('/sim/windensemble')
 def windensemble():
     #simulate.refresh()
     args = request.args
@@ -176,7 +173,7 @@ Given a time (yr, mo, day, hr, mn), a location (lat, lon), an altitude (alt),
 and a model (model) returns a json object of u-wind, v-wind, du/dh, dv/dh for that location
 extracted from that model.
 '''
-@app.route('/wind')
+@app.route('/sim/wind')
 def wind():
     #simulate.refresh()
     args = request.args
@@ -188,7 +185,3 @@ def wind():
     time = datetime(yr, mo, day, hr, mn).replace(tzinfo=timezone.utc)
     u, v, du, dv = simulate.get_wind(time,lat,lon,alt, model, levels)
     return jsonify([u, v, du, dv])
-
-# richard was here
-
-# another comment

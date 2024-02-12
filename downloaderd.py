@@ -8,9 +8,9 @@ parser.add_argument("--dlogfile", default=None,
 parser.add_argument("--logfile", default=None,
         help="Target path for downloader logs; stdout by default")
 parser.add_argument("--savedir", default="./gefs", 
-        help="./gefs by default; should be /gefs/gefs in production.")
-parser.add_argument("--statusfile", default="./whichgefs",
-        help="./whichgefs by default; should be /gefs/whichgefs in production.")
+        help="./gefs by default")
+parser.add_argument("--statusfile", default="./gefs/whichgefs",
+        help="./gefs/whichgefs by default")
 args = parser.parse_args()
 
 logger = logging.getLogger(__name__)

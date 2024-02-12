@@ -7,11 +7,11 @@ socket.setdefaulttimeout(10)
 
 parser = argparse.ArgumentParser()
 parser.add_argument("timestamp", 
-        help='Model timestamp in the format "yyymmddhh"')
+        help='Model timestamp in the format "yyyymmddhh"')
 parser.add_argument("--logfile", default=None, 
         help="Target path for logs; prints to stdout by default.")
 parser.add_argument("--savedir", default="./gefs", 
-        help="./gefs by default; should be /gefs/gefs in production.")
+        help="./gefs by default")
 args = parser.parse_args()
 
 logger = logging.getLogger(__name__)
