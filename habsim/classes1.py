@@ -87,7 +87,7 @@ class ElevationFile:
     resolution = 120 ## points per degree
 
     def __init__(self, path): # store
-        self.data = np.load(path, 'r')
+        self.data = np.load(path)
         self.resolution = 120
 
     def elev(self, lat, lon): # return elevation

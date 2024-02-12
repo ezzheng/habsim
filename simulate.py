@@ -7,6 +7,7 @@ import bisect
 import time
 from windfile import WindFile
 from habsim import Simulator, Balloon
+from gefs import open_gefs, load_gefs
 
 # Note: .replace(tzinfo=utc) is needed because we need to call .timestamp
 
@@ -19,11 +20,9 @@ filecache = []
 
 currgefs = "Unavailable"
 
-gefspath = './gefs'
-
 def refresh():
     global currgefs
-    f = open(f'{gefspath}/whichgefs')
+    f = open_gefs('whichgefs')
     s = f.readline()
     f.close()
     if s != currgefs:
@@ -37,7 +36,7 @@ def reset():
     global filecache
     filecache = []
     for i in range(1, 3): # TODO: change 3 back to 21
-        filecache.append(Simulator(WindFile(f'{gefspath}/{currgefs}_{str(i).zfill(2)}.npz'), f'{gefspath}/worldelev.npy'))
+        filecache.append(Simulator(WindFile(load_gefs(f'{currgefs}_{str(i).zfill(2)}.npz')), load_gefs('worldelev.npy')))
 
 
 def lin_to_angular_velocities(lat, lon, u, v): 

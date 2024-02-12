@@ -7,7 +7,7 @@ CORS(app)
 import elev
 from datetime import datetime, timezone
 import simulate
-import os
+from gefs import listdir_gefs, open_gefs
 
 @app.route('/sim/which')
 def whichgefs():
@@ -16,14 +16,14 @@ def whichgefs():
 
 @app.route('/sim/status')
 def status():
-    f = open('./gefs/whichgefs')
+    f = open_gefs('whichgefs')
     s = f.readline()
     f.close()
     return s
 
 @app.route('/sim/ls')
 def ls():
-    files = os.listdir('./gefs')
+    files = listdir_gefs()
     return jsonify({
         "count": len(files),
         "files": files
