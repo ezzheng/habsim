@@ -187,7 +187,8 @@ async function simulate() {
     }
     var onlyonce = true;
     if(checkNumPos(allValues) && checkasc(asc,alt,equil)){
-        for (i = 1; i < 21; i++) {
+        // Backend currently caches 2 members; extend back to 20 when ready
+        for (i = 1; i < 3; i++) {
             var url2 = url + "&model=" + i;
             console.log(url2);
             await fetch(url2).then(res => res.json()).then(function(resjson){

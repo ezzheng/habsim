@@ -16,10 +16,13 @@ def whichgefs():
 
 @app.route('/sim/status')
 def status():
-    f = open_gefs('whichgefs')
-    s = f.readline()
-    f.close()
-    return s
+    try:
+        f = open_gefs('whichgefs')
+        _ = f.readline()
+        f.close()
+        return "Ready"
+    except Exception:
+        return "Unavailable"
 
 @app.route('/sim/ls')
 def ls():
