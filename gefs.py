@@ -1,33 +1,39 @@
 import io
-
-import supabase
-
 import os
-from supabase import create_client, Client
+import requests
 
-url: str = os.environ.get("SUPABASE_URL")
-key: str = os.environ.get("SUPABASE_SECRET")
-supabase: Client = create_client(url, key)
+_BASE_URL = os.environ.get("SUPABASE_URL", "").rstrip('/')
+_KEY = os.environ.get("SUPABASE_SECRET", "")
+_BUCKET = "habsim"
+_SESSION = requests.Session()
+_COMMON_HEADERS = {
+    "Authorization": f"Bearer {_KEY}",
+    "apikey": _KEY,
+}
 
-bucket = supabase.storage.from_('habsim')
+def _object_url(path: str) -> str:
+    return f"{_BASE_URL}/storage/v1/object/{path}"
+
+def _list_url(bucket: str) -> str:
+    return f"{_BASE_URL}/storage/v1/object/list/{bucket}"
 
 def listdir_gefs():
-    files_info = bucket.list()
-    file_names = []
-    for file_info in files_info:
-        file_names.append(file_info['name'])
-    return file_names
+    resp = _SESSION.post(_list_url(_BUCKET), headers=_COMMON_HEADERS, json={"prefix": ""})
+    resp.raise_for_status()
+    items = resp.json()
+    return [item.get('name') for item in items]
 
 def open_gefs(file_name):
-    res = bucket.download(file_name)
-    f = io.StringIO(res.decode("utf-8"))
-    return f
+    resp = _SESSION.get(_object_url(f"{_BUCKET}/{file_name}"), headers=_COMMON_HEADERS)
+    resp.raise_for_status()
+    return io.StringIO(resp.content.decode("utf-8"))
 
 def load_gefs(file_name):
-    res = bucket.download(file_name)
-    f = io.BytesIO(res)
-    return f
+    resp = _SESSION.get(_object_url(f"{_BUCKET}/{file_name}"), headers=_COMMON_HEADERS)
+    resp.raise_for_status()
+    return io.BytesIO(resp.content)
 
 def download_gefs(file_name):
-    res = bucket.download(file_name)
-    return res
+    resp = _SESSION.get(_object_url(f"{_BUCKET}/{file_name}"), headers=_COMMON_HEADERS)
+    resp.raise_for_status()
+    return resp.content
