@@ -3,12 +3,13 @@ import math
 import datetime
 import bisect
 import time
-from scipy import interpolate
 import mmap
 from io import BytesIO
 
 class WindFile:
     def __init__(self, path: BytesIO):
+        # Defer SciPy import to runtime to avoid heavy cold-start cost
+        from scipy import interpolate as _interpolate
         self.data_npz = np.load(path)
 
         self.data = self.data_npz['data']
@@ -18,7 +19,7 @@ class WindFile:
 
         self.resolution_lat_multiplier = (self.data.shape[-5] - 1) / 180
         self.resolution_lon_multiplier = (self.data.shape[-4] - 1) / 360
-        self.interp_function = interpolate.interp1d(self.levels, np.arange(0, len(self.levels)), 
+        self.interp_function = _interpolate.interp1d(self.levels, np.arange(0, len(self.levels)), 
                                 bounds_error=False, fill_value=(0, len(self.levels)-1), assume_sorted=True)   
 
     def get(self, lat, lon, altitude, time):

@@ -6,13 +6,15 @@ CORS(app)
 
 import elev
 from datetime import datetime, timezone
-import simulate
 from gefs import listdir_gefs, open_gefs
 
 @app.route('/sim/which')
 def whichgefs():
-    simulate.refresh()
-    return simulate.currgefs
+    # Read directly from storage to avoid importing heavy modules on cold start
+    f = open_gefs('whichgefs')
+    s = f.readline()
+    f.close()
+    return s
 
 @app.route('/sim/status')
 def status():
@@ -46,6 +48,7 @@ v-wind is wind towards the NORTH: wind vector in the positve Y direction
 '''
 @app.route('/sim/singlepredicth')
 def singlepredicth():
+    import simulate  # defer heavy import
     args = request.args
     yr, mo, day, hr, mn = int(args['yr']), int(args['mo']), int(args['day']), int(args['hr']), int(args['mn'])
     lat, lon = float(args['lat']), float(args['lon'])
@@ -62,6 +65,7 @@ def singlepredicth():
 
 @app.route('/sim/singlepredict')
 def singlepredict():
+    import simulate  # defer heavy import
     args = request.args
     timestamp = datetime.utcfromtimestamp(float(args['timestamp'])).replace(tzinfo=timezone.utc)
     lat, lon = float(args['lat']), float(args['lon'])
@@ -79,6 +83,7 @@ def singlepredict():
 
 
 def singlezpb(timestamp, lat, lon, alt, equil, eqtime, asc, desc, model):
+    import simulate  # defer heavy import
     try:
         simulate.refresh()
         dur = 0 if equil == alt else (equil - alt) / asc / 3600
@@ -149,7 +154,7 @@ where the numbers are the GEFS model from which the data is extracted.
 '''
 @app.route('/sim/windensemble')
 def windensemble():
-    #simulate.refresh()
+    import simulate  # defer heavy import
     args = request.args
     lat, lon = float(args['lat']), float(args['lon'])
     alt = float(args['alt'])
@@ -178,7 +183,7 @@ extracted from that model.
 '''
 @app.route('/sim/wind')
 def wind():
-    #simulate.refresh()
+    import simulate  # defer heavy import
     args = request.args
     lat, lon = float(args['lat']), float(args['lon'])
     model = int(args['model'])
