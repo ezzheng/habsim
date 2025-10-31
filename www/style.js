@@ -79,33 +79,39 @@ function setMode(mode){
     var gcoeff = document.getElementById("group-coeff");
     var gdur = document.getElementById("group-dur");
     var gstep = document.getElementById("group-step");
+    var gtimer = document.getElementById("group-timeremain");
     // buttons
     var eqbtn = document.getElementById("eqtimebtn");
 
     if (mode === "STANDARD"){
-        geqtime.style.visibility = "hidden";
-        gcoeff.style.visibility = "hidden";
-        gdur.style.visibility = "hidden";
-        gstep.style.visibility = "hidden";
+        geqtime.style.display = "none";
+        gcoeff.style.display = "none";
+        gdur.style.display = "none";
+        gstep.style.display = "none";
+        if (gtimer) gtimer.style.display = "grid";
         eqbtn.style.visibility = "visible";
         document.getElementById("asc").value = 4;
         document.getElementById("equil").value = 30000;
         document.getElementById("desc").value = 8;
+        document.getElementById("timeremain").style.visibility = "visible";
     } else if (mode === "ZPB"){
-        geqtime.style.visibility = "visible";
-        gcoeff.style.visibility = "hidden";
-        gdur.style.visibility = "hidden";
-        gstep.style.visibility = "hidden";
+        geqtime.style.display = "grid";
+        gcoeff.style.display = "none";
+        gdur.style.display = "none";
+        gstep.style.display = "none";
+        if (gtimer) gtimer.style.display = "grid";
         eqbtn.style.visibility = "visible";
         document.getElementById("asc").value = 3.7;
         document.getElementById("equil").value = 29000;
         document.getElementById("eqtime").value = 1;
         document.getElementById("desc").value = 15;
+        document.getElementById("timeremain").style.visibility = "visible";
     } else { // FLOAT
-        geqtime.style.visibility = "hidden";
-        gcoeff.style.visibility = "visible";
-        gdur.style.visibility = "visible";
-        gstep.style.visibility = "visible";
+        geqtime.style.display = "none";
+        gcoeff.style.display = "grid";
+        gdur.style.display = "grid";
+        gstep.style.display = "grid";
+        if (gtimer) gtimer.style.display = "none";
         eqbtn.style.visibility = "hidden";
         document.getElementById("coeff").value = 0.5;
         document.getElementById("dur").value = 48;
