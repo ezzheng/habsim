@@ -47,6 +47,7 @@ def _get_elevation_data():
     global elevation_cache
     if elevation_cache is None:
         elevation_cache = load_gefs('worldelev.npy')
+    elevation_cache.seek(0)
     return elevation_cache
 
 

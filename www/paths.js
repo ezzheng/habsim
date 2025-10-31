@@ -196,7 +196,7 @@ async function simulate() {
             .then(function(resjson){
                 if(resjson==="error"){
                     if(onlyonce) {
-                        alert("ERROR: Please make sure your entire flight is within 378 hours of the present model run.");
+                            alert("Simulation failed on the server. Please verify inputs or try again in a few minutes.");
                         onlyonce = false;
                     }
                     //break;
