@@ -19,7 +19,7 @@
     <style type="text/css">
         :root{
             --bg:#ffffff; --fg:#111827; --muted:#6b7280; --line:#e5e7eb; --soft:#f3f4f6; --soft2:#fafafa; --brand:#111827; --brand-600:#0b1220;
-            --radius:8px; --space:14px; --space-sm:8px; --space-xs:5px;
+            --radius:8px; --space:12px; --space-sm:8px; --space-xs:4px;
         }
         @media (prefers-color-scheme: dark){
             :root{ --bg:#0b0f14; --fg:#e5e7eb; --muted:#9ca3af; --line:#1f2937; --soft:#0f1520; --soft2:#0d131d; --brand:#93c5fd; --brand-600:#60a5fa; }
@@ -51,7 +51,7 @@
             align-items: center;
             justify-content: space-between;
             gap: var(--space);
-            padding: 6px 14px;
+            padding: 4px 12px;
             flex-wrap: wrap;
         }
         .topbar-group {
@@ -73,7 +73,7 @@
             font-weight: 600;
             letter-spacing: 0.2px;
             color: var(--fg);
-            font-size: 16px;
+            font-size: 15px;
         }
         .toggle-label {
             display: inline-flex;
@@ -91,13 +91,13 @@
             background: var(--bg);
         }
         .segment {
-            padding: 4px 10px;
+            padding: 4px 9px;
             background: var(--bg);
             cursor: pointer;
             border: none;
             font-weight: 500;
             color: var(--fg);
-            font-size: 13px;
+            font-size: 12.5px;
         }
         .segment:hover{ background: var(--soft2); }
         .segment.active { background: var(--brand); color: #ffffff; }
@@ -110,17 +110,17 @@
             padding: 6px 12px;
             border-radius: var(--radius);
             transition: background .15s ease,border-color .15s ease,box-shadow .15s ease;
-            font-size: 13px;
+            font-size: 12.5px;
         }
         .btn-primary-modern:hover{ background: var(--brand-600); border-color: var(--brand-600); }
         .btn-ghost {
             background: transparent;
             border: 1px solid var(--line);
             color: var(--fg);
-            padding: 6px 10px;
+            padding: 5px 10px;
             border-radius: var(--radius);
             transition: background .15s ease,border-color .15s ease;
-            font-size: 13px;
+            font-size: 12.5px;
         }
         .btn-ghost:hover{ background: var(--soft2); }
         .toggle {
@@ -129,7 +129,7 @@
         /* Parameter panel */
         #param-panel {
             border-top: 1px solid var(--soft);
-            padding: 8px 14px 12px 14px;
+            padding: 8px 12px 10px 12px;
             background: var(--soft2);
             max-height: 60vh;
             overflow-y: auto;
@@ -138,11 +138,25 @@
             box-sizing: border-box;
             -webkit-overflow-scrolling: touch;
         }
-        .inputs-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: var(--space-sm); align-items: end; width: 100%; box-sizing: border-box; }
-        #contentwrap { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: var(--space-sm); align-items: end; }
+        .inputs-row {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: var(--space-sm);
+            align-items: stretch;
+            width: 100%;
+            box-sizing: border-box;
+        }
+        .inputs-row > div { min-width: 0; }
+        #contentwrap {
+            grid-column: 1 / -1;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: var(--space-sm);
+            align-items: end;
+        }
         #contentwrap .input { padding-bottom: 0; }
-        .input { font-size: 13px; padding-bottom: 4px; color: var(--fg); }
-        .input input { border: 1px solid #d1d5db; border-radius: 6px; padding: 6px 8px; background: var(--bg); color: var(--fg); }
+        .input { font-size: 13px; padding-bottom: 4px; color: var(--fg); display: flex; flex-direction: column; gap: 4px; }
+        .input input { border: 1px solid #d1d5db; border-radius: 6px; padding: 6px 8px; background: var(--bg); color: var(--fg); width: 100%; }
         .input input:focus{ outline: 2px solid var(--brand-600); outline-offset: 1px; }
         .help { font-size: 11px; color: var(--muted); margin: 4px 0 0 0; }
         @media (max-width: 900px) {
