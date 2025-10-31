@@ -22,6 +22,7 @@ filecache_model = None
 elevation_cache = None
 
 currgefs = "Unavailable"
+_last_refresh_check = 0.0
 
 def refresh():
     global currgefs
@@ -47,12 +48,15 @@ def _get_elevation_data():
     global elevation_cache
     if elevation_cache is None:
         elevation_cache = load_gefs('worldelev.npy')
-    elevation_cache.seek(0)
     return elevation_cache
 
 
 def _get_simulator(model):
-    global filecache, filecache_model
+    global filecache, filecache_model, _last_refresh_check
+    now = time.time()
+    if currgefs == "Unavailable" or now - _last_refresh_check > 300:
+        refresh()
+        _last_refresh_check = now
     if filecache_model == model and filecache is not None:
         return filecache
 

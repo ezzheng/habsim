@@ -1,26 +1,89 @@
-import numpy as np
 import math
 import datetime
-import bisect
-import time
-import mmap
+import threading
 from io import BytesIO
+from pathlib import Path
+from typing import Union
+
+import numpy as np
+from numpy.lib.format import open_memmap
+
+_MEMMAP_LOCKS: dict[Path, threading.Lock] = {}
+_MEMMAP_LOCKS_LOCK = threading.Lock()
+
+
+def _normalize_path(path: Union[BytesIO, str]) -> Union[BytesIO, Path]:
+    if isinstance(path, (str, Path)):
+        return Path(path)
+    return path
+
+
+def _get_memmap_lock(path: Path) -> threading.Lock:
+    with _MEMMAP_LOCKS_LOCK:
+        lock = _MEMMAP_LOCKS.get(path)
+        if lock is None:
+            lock = threading.Lock()
+            _MEMMAP_LOCKS[path] = lock
+        return lock
+
 
 class WindFile:
-    def __init__(self, path: BytesIO):
-        # Defer SciPy import to runtime to avoid heavy cold-start cost
-        from scipy import interpolate as _interpolate
-        self.data_npz = np.load(path)
+    def __init__(self, path: Union[BytesIO, str]):
+        normalized_path = _normalize_path(path)
+        npz = np.load(normalized_path)
 
-        self.data = self.data_npz['data']
-        self.time = self.data_npz['timestamp']
-        self.levels = self.data_npz['levels']
-        self.interval = self.data_npz['interval']
+        try:
+            self.time = float(npz['timestamp'][()])
+            self.levels = np.array(npz['levels'], copy=True)
+            self.interval = float(npz['interval'][()])
+
+            if isinstance(normalized_path, Path) and normalized_path.suffix == '.npz':
+                self.data = self._load_memmap_data(npz, normalized_path)
+            else:
+                self.data = np.array(npz['data'], copy=True)
+        finally:
+            npz.close()
 
         self.resolution_lat_multiplier = (self.data.shape[-5] - 1) / 180
         self.resolution_lon_multiplier = (self.data.shape[-4] - 1) / 360
-        self.interp_function = _interpolate.interp1d(self.levels, np.arange(0, len(self.levels)), 
-                                bounds_error=False, fill_value=(0, len(self.levels)-1), assume_sorted=True)   
+
+        level_array = np.asarray(self.levels, dtype=np.float32)
+        level_indices = np.arange(level_array.size, dtype=np.float32)
+
+        if level_array.size == 0:
+            raise ValueError("WindFile levels array is empty")
+
+        level_diff = np.diff(level_array)
+        if np.all(level_diff > 0):  # already ascending
+            interp_levels = level_array
+            interp_indices = level_indices
+        elif np.all(level_diff < 0):  # descending
+            interp_levels = level_array[::-1]
+            interp_indices = level_indices[::-1]
+        else:  # unordered, fall back to argsort
+            sort_idx = np.argsort(level_array)
+            interp_levels = level_array[sort_idx]
+            interp_indices = level_indices[sort_idx]
+
+        self._interp_levels = interp_levels
+        self._interp_indices = interp_indices
+        self._interp_min = float(interp_levels[0])
+        self._interp_max = float(interp_levels[-1])
+
+    def _load_memmap_data(self, npz: np.lib.npyio.NpzFile, path: Path):
+        memmap_path = Path(f"{path}.data.npy")
+        if not memmap_path.exists():
+            lock = _get_memmap_lock(memmap_path)
+            with lock:
+                if not memmap_path.exists():
+                    array = npz['data']
+                    memmap_path.parent.mkdir(parents=True, exist_ok=True)
+                    mm = open_memmap(memmap_path, mode='w+', dtype=array.dtype, shape=array.shape)
+                    mm[...] = array
+                    mm.flush()
+                    del mm
+                    del array
+        return np.load(memmap_path, mmap_mode='r')
 
     def get(self, lat, lon, altitude, time):
         if lat < -90 or lat > 90:
@@ -54,10 +117,10 @@ class WindFile:
     def get_pressure_index(self, alt):
         pressure = self.alt_to_hpa(alt)
 
-        if pressure < self.levels[0]:
+        if pressure < self._interp_min or pressure > self._interp_max:
             raise Exception(f"Altitude {alt} out of bounds")
-        
-        return self.interp_function(pressure)
+
+        return float(np.interp(pressure, self._interp_levels, self._interp_indices))
 
     def interpolate(self, lat, lon, level, time):
         pressure_filter = np.array([1-level % 1, level % 1]).reshape(1, 1, 2, 1, 1)

@@ -194,38 +194,37 @@ async function simulate() {
         }
         var onlyonce = true;
         if(checkNumPos(allValues) && checkasc(asc,alt,equil)){
-            for (i = 1; i < 3; i++) {
-                var url2 = url + "&model=" + i;
-                console.log(url2);
-                await fetch(url2)
-                .then(res => res.json())
-                .then(function(resjson){
-                    if(resjson==="error"){
-                        if(onlyonce) {
+            const isHistorical = Number(document.getElementById('yr').value) < 2019;
+            const modelIds = isHistorical ? [1] : [1, 2];
+
+            for (const modelId of modelIds) {
+                const urlWithModel = url + "&model=" + modelId;
+                console.log(urlWithModel);
+                try {
+                    const response = await fetch(urlWithModel);
+                    const payload = await response.json();
+
+                    if (payload === "error") {
+                        if (onlyonce) {
                             alert("Simulation failed on the server. Please verify inputs or try again in a few minutes.");
                             onlyonce = false;
                         }
-                     }
-                    else if (resjson==="alt error") {
-                        if(onlyonce) {
+                    }
+                    else if (payload === "alt error") {
+                        if (onlyonce) {
                             alert("ERROR: Please make sure your entire flight altitude is within 45km.");
                             onlyonce = false;
                         }
                     }
                     else {
-                        showpath(resjson);
+                        showpath(payload);
                     }
-                })
-                .catch(function(err){
-                    console.error('Simulation fetch failed', err);
-                    if(onlyonce){
+                } catch (error) {
+                    console.error('Simulation fetch failed', error);
+                    if (onlyonce) {
                         alert('Failed to contact simulation server. Please try again later.');
                         onlyonce = false;
                     }
-                });
-                if (Number(document.getElementById('yr').value) < 2019){
-                    console.log("Historical flight, breaking after one run");
-                    break;
                 }
             }
             onlyonce = true;
