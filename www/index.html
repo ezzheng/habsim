@@ -171,6 +171,9 @@
             flex: 0 0 auto;
             width: max-content;
         }
+        .param-field-date .field-inputs {
+            width: auto;
+        }
         .param-field-status {
             font-weight: 600;
             gap: 6px;
@@ -198,6 +201,8 @@
         .field-input-sm { width: 64px; }
         .field-input-md { width: 88px; }
         .field-input-lg { width: 120px; }
+        .param-field-date .field-input { width: auto; }
+        #yr.field-input { width: 6ch; }
         .param-extra {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
@@ -247,6 +252,8 @@
             }
             .param-field .field-label { flex: 1 1 100px; }
             .param-field .field-inputs { flex: 1 1 100%; width: 100%; }
+            .param-field-date .field-inputs { width: 100%; }
+            .param-field-date .field-input { width: 100%; }
             .topbar-actions { flex-direction: column; align-items: stretch; gap: var(--space-xs); }
             .btn-primary-modern, .btn-ghost { width: 100%; display: inline-flex; justify-content: center; }
             .param-extra { grid-template-columns: 1fr; }
