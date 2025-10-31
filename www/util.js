@@ -39,6 +39,11 @@ function displayCoordinates(pnt) {
     document.getElementById("lat").value = lat;
     document.getElementById("lon").value = lng;
     updateClickMarker(new google.maps.LatLng(parseFloat(lat), parseFloat(lng)));
+    // Clear previous paths immediately when new location is clicked
+    clearWaypoints();
+    for (path in currpaths) {currpaths[path].setMap(null);}
+    currpaths = new Array();
+    rawpathcache = new Array();
     getElev();
 }
 function updateClickMarker(position) {
