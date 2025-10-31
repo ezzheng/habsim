@@ -28,6 +28,8 @@
             font-family: Helvetica;
             font-size: 1vw;
         }
+        /* Keep input rows consistent height to prevent bar shifting */
+        #contentwrap .input { min-height: 28px; }
         .nav-item {
             padding-right: 35px;
         }
@@ -107,12 +109,13 @@
                 </div>
                 <button class="btn-sm" onclick="getElev()">Get Ground elevation</button><br>
                 <div class="btn-group">
+                    <!--
                     <button type="button" class="btn btn-warning btn-sm" onclick="habmc()">Get Live HABMC Data</button>
                     <button type="button" class="btn btn-warning dropdown-toggle dropdown-toggle-split" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
                         <span class="sr-only">Toggle Dropdown</span>
                     </button>
-                    <div class="dropdown-menu">
-                    </div>
+                    <div class="dropdown-menu"></div>
+                    -->
                 </div>
                 <br>
                 <p style="font-size: 12px;" id="activeMission">SSI-</p>
@@ -129,16 +132,16 @@
                 <div class = "input">
                     Descent rate: <input id="desc" type="text" size="4" name="desc"> m/s <br/>
                 </div>
-                <div class = "input" id="group-eqtime" style="display:none;">
+                <div class = "input" id="group-eqtime" style="visibility:hidden;">
                     Time at Equilibrium: <input id="eqtime" type="text" size="4" name="eqtime"> h <br/>
                 </div>
-                <div class = "input" id="group-coeff" style="display:none;">
+                <div class = "input" id="group-coeff" style="visibility:hidden;">
                     Floating Coefficient: <input id="coeff" type="text" size="4" name="coeff"> <br/>
                 </div>
-                <div class = "input" id="group-dur" style="display:none;">
+                <div class = "input" id="group-dur" style="visibility:hidden;">
                     Simulate for: <input id="dur" type="text" size="4" name="dur"> h <br/>
                 </div>
-                <div class = "input" id="group-step" style="display:none;">
+                <div class = "input" id="group-step" style="visibility:hidden;">
                     Step Size: <input id="step" type="text" size="4" name="step"> s <br/>
                 </div>
             </li>
