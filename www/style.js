@@ -16,7 +16,7 @@ $(document).ready(function() {
     setMode("STANDARD");
 });
 
-var waypointsToggle = true;
+var waypointsToggle = false;
 $(function() {
     const waypointBtn = $('#waypoint-toggle');
     waypointBtn.on('click', function() {
@@ -29,6 +29,9 @@ $(function() {
         }
     });
     waypointBtn.toggleClass('on', waypointsToggle);
+    if (!waypointsToggle) {
+        clearWaypoints();
+    }
 });
 
 var now = new Date(Date.now());
