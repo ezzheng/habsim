@@ -105,10 +105,10 @@ function setMode(mode){
         gstep.style.display = "none";
         if (gtimer) gtimer.style.display = "flex";
         if (eqbtn) eqbtn.style.visibility = "visible";
-        document.getElementById("asc").value = 3.7;
-        document.getElementById("equil").value = 29000;
+        document.getElementById("asc").value = 4;
+        document.getElementById("equil").value = 30000;
         document.getElementById("eqtime").value = 1;
-        document.getElementById("desc").value = 15;
+        document.getElementById("desc").value = 8;
         var remain = document.getElementById("timeremain");
         if (remain) remain.style.visibility = "visible";
     } else { // FLOAT
@@ -118,6 +118,9 @@ function setMode(mode){
         gstep.style.display = "flex";
         if (gtimer) gtimer.style.display = "none";
         if (eqbtn) eqbtn.style.visibility = "hidden";
+        document.getElementById("asc").value = 4;
+        document.getElementById("equil").value = 30000;
+        document.getElementById("desc").value = 8;
         document.getElementById("coeff").value = 0.5;
         document.getElementById("dur").value = 48;
         document.getElementById("step").value = 240;
