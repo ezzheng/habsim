@@ -205,6 +205,9 @@
             width: 100%;
             margin-top: var(--space-sm);
         }
+        .param-field.placeholder {
+            visibility: hidden;
+        }
         .spinner {
             width: 14px;
             height: 14px;
@@ -293,6 +296,20 @@
                         <input id="mn" class="field-input field-input-xs" type="text" name="mn">
                     </div>
                 </div>
+                <div class="param-field" id="group-eqtime" style="display:none;">
+                    <span class="field-label">Time at Equilibrium</span>
+                    <div class="field-inputs">
+                        <input id="eqtime" class="field-input field-input-md" type="text" name="eqtime">
+                        <span class="unit">h</span>
+                    </div>
+                </div>
+                <div class="param-field" id="group-dur" style="display:none;">
+                    <span class="field-label">Simulate for</span>
+                    <div class="field-inputs">
+                        <input id="dur" class="field-input field-input-md" type="text" name="dur">
+                        <span class="unit">h</span>
+                    </div>
+                </div>
             </div>
             <div class="param-column">
                 <div class="param-field">
@@ -338,41 +355,22 @@
                     </div>
                 </div>
             </div>
-        </div>
-        <div class="param-extra">
-            <div class="param-field" id="group-eqtime" style="display:none;">
-                <span class="field-label">Time at Equilibrium</span>
-                <div class="field-inputs">
-                    <input id="eqtime" class="field-input field-input-md" type="text" name="eqtime">
-                    <span class="unit">h</span>
+            <div class="param-column">
+                <div class="param-field" id="group-coeff" style="display:none;">
+                    <span class="field-label">Floating Coefficient</span>
+                    <div class="field-inputs">
+                        <input id="coeff" class="field-input field-input-md" type="text" name="coeff">
+                    </div>
                 </div>
+                <div class="param-field" id="group-step" style="display:none;">
+                    <span class="field-label">Step Size</span>
+                    <div class="field-inputs">
+                        <input id="step" class="field-input field-input-md" type="text" name="step">
+                        <span class="unit">s</span>
+                    </div>
+                </div>
+                <div class="param-field placeholder" aria-hidden="true"></div>
             </div>
-            <div class="param-field" id="group-coeff" style="display:none;">
-                <span class="field-label">Floating Coefficient</span>
-                <div class="field-inputs">
-                    <input id="coeff" class="field-input field-input-md" type="text" name="coeff">
-                </div>
-            </div>
-            <div class="param-field" id="group-dur" style="display:none;">
-                <span class="field-label">Simulate for</span>
-                <div class="field-inputs">
-                    <input id="dur" class="field-input field-input-md" type="text" name="dur">
-                    <span class="unit">h</span>
-                </div>
-            </div>
-            <div class="param-field" id="group-step" style="display:none;">
-                <span class="field-label">Step Size</span>
-                <div class="field-inputs">
-                    <input id="step" class="field-input field-input-md" type="text" name="step">
-                    <span class="unit">s</span>
-                </div>
-            </div>
-            <!-- <div class="param-field param-field-status" id="group-timeremain">
-                <span class="field-label">Remaining</span>
-                <div class="field-inputs">
-                    <span id="timeremain"></span>
-                </div>
-            </div> -->
         </div>
         <div class="visually-hidden" aria-hidden="true">
             <input type="radio" name="optradio" class="radiobtn" value="standardbln" checked>
