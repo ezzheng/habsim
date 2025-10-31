@@ -103,10 +103,14 @@
             border-top: 1px solid var(--soft);
             padding: 8px var(--space) 12px var(--space);
             background: var(--soft2);
-            max-height: 42vh;
+            max-height: 60vh;
             overflow-y: auto;
+            overflow-x: hidden;
+            width: 100%;
+            box-sizing: border-box;
+            -webkit-overflow-scrolling: touch;
         }
-        .inputs-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: var(--space); align-items: end; }
+        .inputs-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: var(--space); align-items: end; width: 100%; box-sizing: border-box; }
         .input { font-size: 14px; padding-bottom: 6px; color: var(--fg); }
         .input input { border: 1px solid #d1d5db; border-radius: 6px; padding: 6px 8px; background: var(--bg); color: var(--fg); }
         .input input:focus{ outline: 2px solid var(--brand-600); outline-offset: 1px; }
