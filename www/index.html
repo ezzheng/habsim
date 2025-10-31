@@ -103,6 +103,8 @@
             border-top: 1px solid var(--soft);
             padding: 8px var(--space) 12px var(--space);
             background: var(--soft2);
+            max-height: 42vh;
+            overflow-y: auto;
         }
         .inputs-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: var(--space); align-items: end; }
         .input { font-size: 14px; padding-bottom: 6px; color: var(--fg); }
@@ -132,8 +134,8 @@
         <button id="collapse-toggle" class="btn-ghost" title="Show/Hide parameters">Toggle panel</button>
         <div class="spacer"></div>
         <div class="status">Model run: <span id="run">Unavailable</span> • Server: <span id="status">Unavailable</span></div>
-        <button class="btn-primary-modern" onclick="simulate()">Simulate</button>
-        <button id="eqtimebtn" class="btn-ghost" onclick="getTimeremain()">Remaining Time</button>
+        <button class="btn-primary-modern" type="button" onclick="simulate()">Simulate</button>
+        <button id="eqtimebtn" class="btn-ghost" type="button" onclick="getTimeremain()">Remaining Time</button>
     </div>
     <div id="param-panel">
         <div class="inputs-row">

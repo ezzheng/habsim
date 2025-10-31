@@ -191,7 +191,9 @@ async function simulate() {
         for (i = 1; i < 3; i++) {
             var url2 = url + "&model=" + i;
             console.log(url2);
-            await fetch(url2).then(res => res.json()).then(function(resjson){
+            await fetch(url2)
+            .then(res => res.json())
+            .then(function(resjson){
                 if(resjson==="error"){
                     if(onlyonce) {
                         alert("ERROR: Please make sure your entire flight is within 378 hours of the present model run.");
@@ -207,6 +209,13 @@ async function simulate() {
                 }
                 else {
                     showpath(resjson);
+                }
+            })
+            .catch(function(err){
+                console.error('Simulation fetch failed', err);
+                if(onlyonce){
+                    alert('Failed to contact simulation server. Please try again later.');
+                    onlyonce = false;
                 }
             });
             if (Number(document.getElementById('yr').value) < 2019){

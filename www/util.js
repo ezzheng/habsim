@@ -42,9 +42,15 @@ function displayCoordinates(pnt) {
 function getElev() {
     lat = document.getElementById("lat").value;
     lng = document.getElementById("lon").value;
-    fetch(URL_ROOT + "/elev?lat=" + lat + "&lon=" + lng).then(res => res.json()).then((result) => {
-        document.getElementById("alt").value = result
-    })
+    fetch(URL_ROOT + "/elev?lat=" + lat + "&lon=" + lng)
+        .then(res => res.json())
+        .then((result) => {
+            document.getElementById("alt").value = result
+        })
+        .catch(err => {
+            console.error('Elevation fetch failed', err);
+            alert('Failed to fetch ground elevation. Please try again.');
+        });
 }
 function getTimeremain() {
     alt = document.getElementById("alt").value;
@@ -60,10 +66,16 @@ function getTimeremain() {
         descr = document.getElementById("desc").value;
         lat = document.getElementById("lat").value;
         lng = document.getElementById("lon").value;
-        fetch(URL_ROOT + "/elev?lat=" + lat + "&lon=" + lng).then(res => res.json()).then((ground) => {
-            time = (alt - ground)/(3600*descr);
-            document.getElementById("timeremain").textContent = time.toFixed(2) + " hr descent remaining"
-        })
+        fetch(URL_ROOT + "/elev?lat=" + lat + "&lon=" + lng)
+            .then(res => res.json())
+            .then((ground) => {
+                time = (alt - ground)/(3600*descr);
+                document.getElementById("timeremain").textContent = time.toFixed(2) + " hr descent remaining"
+            })
+            .catch(err => {
+                console.error('Elevation fetch failed', err);
+                alert('Failed to fetch ground elevation for remaining time.');
+            });
     }
 }
 async function habmc(){
