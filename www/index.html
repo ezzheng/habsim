@@ -98,10 +98,10 @@
             opacity: 0.8;
         }
         .waypoint-toggle {
-            border: 1px solid var(--line);
+            border: 2px solid var(--line);
             background: var(--bg);
             color: var(--fg);
-            padding: 8px 16px;
+            padding: 7px 15px;
             border-radius: var(--radius);
             cursor: pointer;
             font-size: 13px;
@@ -114,11 +114,13 @@
             box-shadow: 0 2px 6px rgba(0,0,0,0.1);
         }
         .waypoint-toggle.on {
-            background: var(--brand);
-            color: #fff;
-            border-color: var(--brand);
+            background: var(--bg);
+            color: var(--fg);
+            border-color: #10b981;
         }
-        .waypoint-toggle.on:hover { opacity: 0.85; }
+        .waypoint-toggle.on:hover { 
+            background: rgba(16, 185, 129, 0.05);
+        }
         /* Segmented button styles - commented out for Standard-only version
         .segmented {
             display: inline-flex;
@@ -177,9 +179,9 @@
         }
         .btn-ghost {
             background: var(--bg);
-            border: 1px solid var(--line);
+            border: 2px solid var(--line);
             color: var(--muted);
-            padding: 8px 16px;
+            padding: 7px 15px;
             border-radius: var(--radius);
             cursor: pointer;
             font-size: 13px;
@@ -191,6 +193,14 @@
             background: var(--soft); 
             color: var(--fg);
             box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+        }
+        .btn-ghost.active {
+            background: var(--bg);
+            color: var(--fg);
+            border-color: #10b981;
+        }
+        .btn-ghost.active:hover {
+            background: rgba(16, 185, 129, 0.05);
         }
         .toggle {
             border: solid 1px #a2a2a2;
@@ -415,7 +425,7 @@
             <div class="topbar-center-group">
                 <button id="simulate-btn" class="btn-primary-modern" type="button" onclick="simulate()">Simulate</button>
                 <button id="waypoint-toggle" type="button" class="waypoint-toggle on">Waypoints</button>
-                <button id="collapse-toggle" class="btn-ghost" title="Show/Hide parameters">Toggle panel</button>
+                <button id="collapse-toggle" class="btn-ghost active" title="Show/Hide parameters">Data Panel</button>
             </div>
             <div class="topbar-actions">
                 <div id="sim-spinner" class="spinner" aria-hidden="true"></div>
@@ -570,6 +580,7 @@
                 if (panel.classList.contains('collapsed')) {
                     // Fade in: remove display:none first, then fade in
                     panel.classList.remove('collapsed');
+                    collapseBtn.classList.add('active');
                     panel.style.opacity = '0';
                     requestAnimationFrame(() => {
                         panel.style.opacity = '1';
@@ -577,6 +588,7 @@
                 } else {
                     // Fade out: fade first, then set display:none
                     panel.style.opacity = '0';
+                    collapseBtn.classList.remove('active');
                     setTimeout(() => {
                         panel.classList.add('collapsed');
                     }, 150);
