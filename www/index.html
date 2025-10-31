@@ -113,6 +113,10 @@
             background: var(--soft);
             box-shadow: 0 2px 6px rgba(0,0,0,0.1);
         }
+        .waypoint-toggle:focus,
+        .waypoint-toggle:active {
+            outline: none;
+        }
         .waypoint-toggle.on {
             background: var(--bg);
             color: var(--fg);
@@ -120,6 +124,11 @@
         }
         .waypoint-toggle.on:hover { 
             background: rgba(16, 185, 129, 0.05);
+        }
+        .waypoint-toggle.on:focus,
+        .waypoint-toggle.on:active {
+            background: var(--bg);
+            border-color: #10b981;
         }
         /* Segmented button styles - commented out for Standard-only version
         .segmented {
@@ -194,6 +203,10 @@
             color: var(--fg);
             box-shadow: 0 2px 6px rgba(0,0,0,0.1);
         }
+        .btn-ghost:focus,
+        .btn-ghost:active {
+            outline: none;
+        }
         .btn-ghost.active {
             background: var(--bg);
             color: var(--fg);
@@ -201,6 +214,11 @@
         }
         .btn-ghost.active:hover {
             background: rgba(16, 185, 129, 0.05);
+        }
+        .btn-ghost.active:focus,
+        .btn-ghost.active:active {
+            background: var(--bg);
+            border-color: #10b981;
         }
         .toggle {
             border: solid 1px #a2a2a2;
