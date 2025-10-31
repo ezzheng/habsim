@@ -138,69 +138,61 @@
             box-sizing: border-box;
             -webkit-overflow-scrolling: touch;
         }
-        .inputs-row {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        .param-grid {
+            display: flex;
+            flex-direction: column;
+            gap: var(--space-xs);
+        }
+        .param-row {
+            display: flex;
+            flex-wrap: wrap;
             gap: var(--space-sm);
-            align-items: start;
-            width: 100%;
-            box-sizing: border-box;
+            align-items: flex-end;
         }
-        .inputs-row > div {
-            min-width: 0;
-            display: grid;
-            gap: var(--space-xs);
-        }
-        #contentwrap {
-            grid-column: 1 / -1;
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: var(--space-xs);
-            align-items: start;
-        }
-        .input {
+        .param-field {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex: 1 1 0;
+            min-width: 170px;
             font-size: 13px;
             color: var(--fg);
-            display: grid;
-            grid-template-columns: minmax(120px, max-content) minmax(0, 1fr) auto;
-            align-items: center;
-            gap: 6px;
-            min-height: 28px;
         }
-        .input-label {
+        .param-field-button { flex: 0 0 auto; }
+        .param-field-date { flex: 1.5 1 260px; }
+        .param-field-status { flex: 0 0 auto; gap: 6px; font-weight: 600; }
+        .field-label {
             font-weight: 600;
             white-space: nowrap;
         }
-        .input-inline {
+        .field-inputs {
             display: inline-flex;
             align-items: center;
             gap: 6px;
-            min-width: 0;
-            grid-column: 2 / 4;
+            flex-wrap: nowrap;
         }
-        .input-inline.with-unit { grid-column: 2; }
-        .input input {
+        .field-input {
             border: 1px solid #d1d5db;
             border-radius: 6px;
             padding: 5px 8px;
             background: var(--bg);
             color: var(--fg);
-            min-width: 0;
         }
-        .input input:focus{ outline: 2px solid var(--brand-600); outline-offset: 1px; }
+        .field-input:focus { outline: 2px solid var(--brand-600); outline-offset: 1px; }
+        .field-sep {
+            color: var(--muted);
+            font-weight: 500;
+        }
         .unit {
             font-size: 12px;
             color: var(--muted);
             white-space: nowrap;
-            grid-column: 3;
         }
-        .input-sep {
-            color: var(--muted);
-            white-space: nowrap;
-        }
-        .input-status { grid-template-columns: minmax(120px, max-content) auto; }
-        .input-status span:last-child { font-weight: 600; }
-        .help { font-size: 11px; color: var(--muted); margin: 2px 0 0 0; }
+        .field-input-xs { width: 48px; }
+        .field-input-sm { width: 64px; }
+        .field-input-md { width: 80px; }
+        .field-input-lg { width: 110px; }
+        .help { font-size: 11px; color: var(--muted); margin: 4px 0 0 0; }
         .visually-hidden {
             position: absolute;
             width: 1px;
@@ -221,10 +213,11 @@
         }
         @media (max-width: 768px) {
             .topbar-group { gap: var(--space-sm); }
-            .inputs-row { grid-template-columns: 1fr; }
+            .param-row { gap: var(--space-xs); }
+            .param-field { flex: 1 1 100%; min-width: 0; }
+            .param-field-button { width: 100%; }
             .topbar-buttons { flex-direction: column; align-items: stretch; gap: var(--space-xs); }
             .btn-primary-modern, .btn-ghost { width: 100%; display: inline-flex; justify-content: center; }
-            #contentwrap { grid-template-columns: 1fr; }
         }
     </style>
 </head>
@@ -255,106 +248,108 @@
         </div>
     </div>
     <div id="param-panel">
-        <div class="inputs-row">
-            <div>
-                <div class="input">
-                    <span class="input-label">Date</span>
-                    <div class="input-inline">
-                        <input id="yr" type="text" size="4" name="yr">
-                        <span class="input-sep">/</span>
-                        <input id="mo" type="text" size="2" name="mo">
-                        <span class="input-sep">/</span>
-                        <input id="day" type="text" size="2" name="day">
+        <div class="param-grid">
+            <div class="param-row">
+                <div class="param-field param-field-date">
+                    <span class="field-label">Date</span>
+                    <div class="field-inputs">
+                        <input id="mo" class="field-input field-input-xs" type="text" name="mo">
+                        <span class="field-sep">/</span>
+                        <input id="day" class="field-input field-input-xs" type="text" name="day">
+                        <span class="field-sep">/</span>
+                        <input id="yr" class="field-input field-input-lg" type="text" name="yr">
                     </div>
                 </div>
-                <div class="input">
-                    <span class="input-label">Time (UTC)</span>
-                    <div class="input-inline">
-                        <input id="hr" type="text" size="2" name="hr">
-                        <span class="input-sep">:</span>
-                        <input id="mn" type="text" size="2" name="mn">
+                <div class="param-field">
+                    <span class="field-label">Lat</span>
+                    <div class="field-inputs">
+                        <input id="lat" class="field-input field-input-md" type="text" name="lat">
+                    </div>
+                </div>
+                <div class="param-field">
+                    <span class="field-label">Launch altitude</span>
+                    <div class="field-inputs">
+                        <input id="alt" class="field-input field-input-md" type="text" name="alt">
+                        <span class="unit">m</span>
                     </div>
                 </div>
             </div>
-            <div>
-                <div class="input">
-                    <span class="input-label">Lat</span>
-                    <div class="input-inline">
-                        <input id="lat" type="text" size="8" name="lat">
+            <div class="param-row">
+                <div class="param-field param-field-time">
+                    <span class="field-label">Time (UTC)</span>
+                    <div class="field-inputs">
+                        <input id="hr" class="field-input field-input-xs" type="text" name="hr">
+                        <span class="field-sep">:</span>
+                        <input id="mn" class="field-input field-input-xs" type="text" name="mn">
                     </div>
                 </div>
-                <div class="input">
-                    <span class="input-label">Lon</span>
-                    <div class="input-inline">
-                        <input id="lon" type="text" size="8" name="lon">
+                <div class="param-field">
+                    <span class="field-label">Lon</span>
+                    <div class="field-inputs">
+                        <input id="lon" class="field-input field-input-md" type="text" name="lon">
                     </div>
                 </div>
-                <p class="help">Click on map to get coordinates</p>
+                <div class="param-field param-field-button">
+                    <button class="btn-ghost" onclick="getElev()">Get ground elevation</button>
+                </div>
             </div>
-            <div>
-                <div class="input">
-                    <span class="input-label">Launch altitude</span>
-                    <div class="input-inline">
-                        <input id="alt" type="text" size="5" name="alt">
+            <div class="param-row">
+                <div class="param-field">
+                    <span class="field-label">Ascent rate</span>
+                    <div class="field-inputs">
+                        <input id="asc" class="field-input field-input-md" type="text" name="asc">
+                        <span class="unit">m/s</span>
                     </div>
-                    <span class="unit">m</span>
                 </div>
-                <button class="btn-ghost" onclick="getElev()">Get ground elevation</button>
+                <div class="param-field">
+                    <span class="field-label">Burst/Equilibrium altitude</span>
+                    <div class="field-inputs">
+                        <input id="equil" class="field-input field-input-md" type="text" name="equil">
+                        <span class="unit">m</span>
+                    </div>
+                </div>
+                <div class="param-field">
+                    <span class="field-label">Descent rate</span>
+                    <div class="field-inputs">
+                        <input id="desc" class="field-input field-input-md" type="text" name="desc">
+                        <span class="unit">m/s</span>
+                    </div>
+                </div>
             </div>
-            <div id="contentwrap">
-                <div class="input">
-                    <span class="input-label">Ascent rate</span>
-                    <div class="input-inline">
-                        <input id="asc" type="text" size="4" name="asc">
-                    </div>
-                    <span class="unit">m/s</span>
-                </div>
-                <div class="input">
-                    <span class="input-label">Burst/Equilibrium altitude</span>
-                    <div class="input-inline">
-                        <input id="equil" type="text" size="5" name="equil">
-                    </div>
-                    <span class="unit">m</span>
-                </div>
-                <div class="input">
-                    <span class="input-label">Descent rate</span>
-                    <div class="input-inline">
-                        <input id="desc" type="text" size="4" name="desc">
-                    </div>
-                    <span class="unit">m/s</span>
-                </div>
-                <div class="input" id="group-eqtime" style="display:none;">
-                    <span class="input-label">Time at Equilibrium</span>
-                    <div class="input-inline">
-                        <input id="eqtime" type="text" size="4" name="eqtime">
-                    </div>
-                    <span class="unit">h</span>
-                </div>
-                <div class="input" id="group-coeff" style="display:none;">
-                    <span class="input-label">Floating Coefficient</span>
-                    <div class="input-inline">
-                        <input id="coeff" type="text" size="4" name="coeff">
+            <div class="param-row extra-row">
+                <div class="param-field" id="group-eqtime" style="display:none;">
+                    <span class="field-label">Time at Equilibrium</span>
+                    <div class="field-inputs">
+                        <input id="eqtime" class="field-input field-input-md" type="text" name="eqtime">
+                        <span class="unit">h</span>
                     </div>
                 </div>
-                <div class="input" id="group-dur" style="display:none;">
-                    <span class="input-label">Simulate for</span>
-                    <div class="input-inline">
-                        <input id="dur" type="text" size="4" name="dur">
+                <div class="param-field" id="group-coeff" style="display:none;">
+                    <span class="field-label">Floating Coefficient</span>
+                    <div class="field-inputs">
+                        <input id="coeff" class="field-input field-input-md" type="text" name="coeff">
                     </div>
-                    <span class="unit">h</span>
                 </div>
-                <div class="input" id="group-step" style="display:none;">
-                    <span class="input-label">Step Size</span>
-                    <div class="input-inline">
-                        <input id="step" type="text" size="4" name="step">
+                <div class="param-field" id="group-dur" style="display:none;">
+                    <span class="field-label">Simulate for</span>
+                    <div class="field-inputs">
+                        <input id="dur" class="field-input field-input-md" type="text" name="dur">
+                        <span class="unit">h</span>
                     </div>
-                    <span class="unit">s</span>
                 </div>
-                <div class="input input-status" id="group-timeremain">
-                    <span class="input-label">Remaining</span>
+                <div class="param-field" id="group-step" style="display:none;">
+                    <span class="field-label">Step Size</span>
+                    <div class="field-inputs">
+                        <input id="step" class="field-input field-input-md" type="text" name="step">
+                        <span class="unit">s</span>
+                    </div>
+                </div>
+                <div class="param-field param-field-status" id="group-timeremain">
+                    <span class="field-label">Remaining</span>
                     <span id="timeremain"></span>
                 </div>
             </div>
+            <p class="help">Click on map to get coordinates</p>
         </div>
         <div class="visually-hidden" aria-hidden="true">
             <input type="radio" name="optradio" class="radiobtn" value="standardbln" checked>

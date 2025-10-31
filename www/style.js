@@ -88,18 +88,18 @@ function setMode(mode){
         gcoeff.style.display = "none";
         gdur.style.display = "none";
         gstep.style.display = "none";
-        if (gtimer) gtimer.style.display = "grid";
+        if (gtimer) gtimer.style.display = "flex";
         eqbtn.style.visibility = "visible";
         document.getElementById("asc").value = 4;
         document.getElementById("equil").value = 30000;
         document.getElementById("desc").value = 8;
         document.getElementById("timeremain").style.visibility = "visible";
     } else if (mode === "ZPB"){
-        geqtime.style.display = "grid";
+        geqtime.style.display = "flex";
         gcoeff.style.display = "none";
         gdur.style.display = "none";
         gstep.style.display = "none";
-        if (gtimer) gtimer.style.display = "grid";
+        if (gtimer) gtimer.style.display = "flex";
         eqbtn.style.visibility = "visible";
         document.getElementById("asc").value = 3.7;
         document.getElementById("equil").value = 29000;
@@ -108,9 +108,9 @@ function setMode(mode){
         document.getElementById("timeremain").style.visibility = "visible";
     } else { // FLOAT
         geqtime.style.display = "none";
-        gcoeff.style.display = "grid";
-        gdur.style.display = "grid";
-        gstep.style.display = "grid";
+        gcoeff.style.display = "flex";
+        gdur.style.display = "flex";
+        gstep.style.display = "flex";
         if (gtimer) gtimer.style.display = "none";
         eqbtn.style.visibility = "hidden";
         document.getElementById("coeff").value = 0.5;
