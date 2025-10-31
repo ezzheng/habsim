@@ -171,6 +171,13 @@
             flex: 1 1 auto;
             min-width: 0;
         }
+        .param-field-date .field-inputs {
+            flex: 0 0 auto;
+            min-width: unset;
+        }
+        .param-field-date .field-inputs .field-input {
+            width: auto;
+        }
         .param-field-status {
             font-weight: 600;
             gap: 6px;
@@ -247,6 +254,7 @@
             }
             .param-field .field-label { flex: 1 1 100px; }
             .param-field .field-inputs { flex: 1 1 100%; }
+            .param-field-date .field-inputs { flex: 1 1 100%; }
             .topbar-actions { flex-direction: column; align-items: stretch; gap: var(--space-xs); }
             .btn-primary-modern, .btn-ghost { width: 100%; display: inline-flex; justify-content: center; }
             .param-extra { grid-template-columns: 1fr; }
