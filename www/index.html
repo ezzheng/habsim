@@ -67,9 +67,7 @@
             font-size: 15px;
             cursor: pointer;
             text-decoration: none;
-            display: inline-flex;
-            align-items: baseline;
-            gap: 8px;
+            display: inline-block;
         }
         .brand:hover {
             opacity: 0.8;
@@ -79,6 +77,13 @@
             font-weight: 400;
             color: var(--muted);
             letter-spacing: 0;
+            margin-left: 8px;
+        }
+        .topbar-right-group {
+            display: inline-flex;
+            align-items: center;
+            gap: var(--space-sm);
+            flex-wrap: wrap;
         }
         .waypoint-toggle {
             border: 1px solid var(--line);
@@ -271,6 +276,7 @@
             .topbar { padding-left: 12px; padding-right: 12px; }
             #param-panel { padding-left: 12px; padding-right: 12px; }
             .topbar-firstline { gap: var(--space-sm); }
+            .topbar-right-group { width: 100%; flex-direction: column; }
             .param-grid { flex-direction: column; }
             .param-field {
                 grid-template-columns: 1fr;
@@ -294,10 +300,8 @@
 <nav id="info" class="navbar navbar-light bg-light" style="position:fixed; top:0; left:0; right:0; z-index:1000;">
     <div class="topbar">
         <div class="topbar-firstline">
-            <a href="https://www.stanfordssi.org/" target="_blank" rel="noopener noreferrer" class="brand">
-                <span>HABSIM</span>
-                <span class="mode-indicator">Standard</span>
-            </a>
+            <a href="https://www.stanfordssi.org/" target="_blank" rel="noopener noreferrer" class="brand">HABSIM</a>
+            <span class="mode-indicator">Standard</span>
             <!-- Segmented mode selector - commented out for Standard-only version
             <div class="segmented" role="group" aria-label="Mode">
                 <button class="segment active" data-mode="standardbln">Standard</button>
@@ -308,12 +312,14 @@
             </div>
             -->
             <div class="topbar-spacer"></div>
-            <button id="waypoint-toggle" type="button" class="waypoint-toggle on">Waypoints</button>
-            <div class="topbar-actions">
-                <button id="simulate-btn" class="btn-primary-modern" type="button" onclick="simulate()">Simulate</button>
-                <div id="sim-spinner" class="spinner" aria-hidden="true"></div>
-                <div class="status" role="status">Model run: <span id="run">Unavailable</span> • Server: <span id="status">Unavailable</span></div>
-                <button id="collapse-toggle" class="btn-ghost" title="Show/Hide parameters">Toggle panel</button>
+            <div class="topbar-right-group">
+                <button id="waypoint-toggle" type="button" class="waypoint-toggle on">Waypoints</button>
+                <div class="topbar-actions">
+                    <button id="simulate-btn" class="btn-primary-modern" type="button" onclick="simulate()">Simulate</button>
+                    <div id="sim-spinner" class="spinner" aria-hidden="true"></div>
+                    <div class="status" role="status">Model run: <span id="run">Unavailable</span> • Server: <span id="status">Unavailable</span></div>
+                    <button id="collapse-toggle" class="btn-ghost" title="Show/Hide parameters">Toggle panel</button>
+                </div>
             </div>
         </div>
     </div>
