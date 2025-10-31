@@ -88,7 +88,6 @@
             border-radius: var(--radius);
             font-size: 13px;
             transition: background .15s ease,border-color .15s ease,color .15s ease;
-            margin-left: 175px;
         }
         .waypoint-toggle.on {
             background: var(--brand);
@@ -162,8 +161,8 @@
             opacity: 0;
         }
         .param-grid {
-            display: grid;
-            grid-template-columns: repeat(3, 1fr);
+            display: flex;
+            justify-content: space-between;
             gap: 60px;
             width: 100%;
         }
@@ -172,6 +171,7 @@
             flex-direction: column;
             gap: var(--space-sm);
             min-width: 0;
+            flex: 0 1 auto;
         }
         .param-field {
             display: grid;
@@ -271,8 +271,7 @@
             .topbar { padding-left: 12px; padding-right: 12px; }
             #param-panel { padding-left: 12px; padding-right: 12px; }
             .topbar-firstline { gap: var(--space-sm); }
-            .waypoint-toggle { margin-left: 0; }
-            .param-grid { grid-template-columns: 1fr; }
+            .param-grid { flex-direction: column; }
             .param-field {
                 grid-template-columns: 1fr;
                 row-gap: 6px;
@@ -308,8 +307,8 @@
                 <button class="segment" data-mode="floatbln">Float</button>
             </div>
             -->
-            <button id="waypoint-toggle" type="button" class="waypoint-toggle on">Waypoints</button>
             <div class="topbar-spacer"></div>
+            <button id="waypoint-toggle" type="button" class="waypoint-toggle on">Waypoints</button>
             <div class="topbar-actions">
                 <button id="simulate-btn" class="btn-primary-modern" type="button" onclick="simulate()">Simulate</button>
                 <div id="sim-spinner" class="spinner" aria-hidden="true"></div>
