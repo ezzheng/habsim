@@ -23,7 +23,8 @@ logging.basicConfig(
 )
 
 levels = [1, 2, 3, 5, 7, 20, 30, 70, 150, 350, 450, 550, 600, 650, 750, 800, 900, 950, 975]
-NUM_MEMBERS = 2
+NUM_PERTURBED_MEMBERS = 2  # Number of perturbed ensemble members (gep01, gep02, etc.)
+DOWNLOAD_CONTROL = True     # Whether to download control run (gec00)
 MAX_HOURS = 384
 FORECAST_INTERVAL = 6
 TIMEOUT = timedelta(hours=12)
@@ -48,22 +49,26 @@ def complete_run(model_timestamp):
     os.mkdir(f'{args.savedir}/temp')
 
     for t in range(0, FORECAST_INTERVAL+MAX_HOURS, FORECAST_INTERVAL):
-        for n in range(1, 1+NUM_MEMBERS):
-            single_run(y, m, d, h, t, n)
+        # Download control run (member 0)
+        if DOWNLOAD_CONTROL:
+            single_run(y, m, d, h, t, 0, is_control=True)
+        # Download perturbed ensemble members
+        for n in range(1, 1+NUM_PERTURBED_MEMBERS):
+            single_run(y, m, d, h, t, n, is_control=False)
         logger.info(f'Successfully completed {args.timestamp}+{t}')
 
     combine_files()
     shutil.rmtree(f'{args.savedir}/temp')
     logger.info(f'Downloader finished run {args.timestamp}')
 
-def single_run(y,m,d,h,t,n):
+def single_run(y,m,d,h,t,n,is_control=False):
     savename = get_savename(y,m,d,h,t,n)
     
     if os.path.exists(f"{args.savedir}/{savename}.npy"): 
         logger.debug("{} exists; skipping.".format(savename))
         return
 
-    url = get_url(y,m,d,h,t,n)
+    url = get_url(y,m,d,h,t,n,is_control)
     logger.debug("Downloading {}".format(savename))
 
     download(url, f"{args.savedir}/temp/{savename}.grb2")
@@ -92,11 +97,16 @@ def get_savename(y,m,d,h,t,n):
     savename = base_string + "_" + str(t).zfill(3) + "_" + predstring + "_" + str(n).zfill(2)
     return savename
 
-def get_url(y,m,d,h,t,n):
-
-    m, d, h, n = map(lambda x: str(x).zfill(2), [m, d, h, n])
+def get_url(y,m,d,h,t,n,is_control=False):
+    m, d, h = map(lambda x: str(x).zfill(2), [m, d, h])
+    n_str = str(n).zfill(2)
     t = str(t).zfill(3)
-    url = f"https://nomads.ncep.noaa.gov/pub/data/nccf/com/gens/prod/gefs.{y}{m}{d}/{h}/atmos/pgrb2bp5/gep{n}.t{h}z.pgrb2b.0p50.f{t}"
+    
+    # Control run uses 'gec00', perturbed members use 'gep01', 'gep02', etc.
+    model_prefix = 'gec' if is_control else 'gep'
+    model_num = '00' if is_control else n_str
+    
+    url = f"https://nomads.ncep.noaa.gov/pub/data/nccf/com/gens/prod/gefs.{y}{m}{d}/{h}/atmos/pgrb2bp5/{model_prefix}{model_num}.t{h}z.pgrb2b.0p50.f{t}"
     return url
     
 def grb2_to_array(filename): 
@@ -121,7 +131,13 @@ def grb2_to_array(filename):
 def combine_files():
     filesets = []
     
-    for i in range(1, NUM_MEMBERS+1):
+    # Collect all model files (control + perturbed members)
+    model_ids = []
+    if DOWNLOAD_CONTROL:
+        model_ids.append(0)
+    model_ids.extend(range(1, NUM_PERTURBED_MEMBERS+1))
+    
+    for i in model_ids:
         files = glob.glob(f'{args.savedir}/temp/{args.timestamp}_*_{str(i).zfill(2)}.npy')
         files.sort()
         filesets.append(files)

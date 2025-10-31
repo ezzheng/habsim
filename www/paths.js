@@ -4,7 +4,7 @@
 rawpathcache = []
 
 // Shows a single compound path, mode unaware
-function makepaths(btype, allpaths){
+function makepaths(btype, allpaths, isControl = false){
     rawpathcache.push(allpaths)
     for (index in allpaths) {
         var pathpoints = [];
@@ -16,12 +16,14 @@ function makepaths(btype, allpaths){
                 };
                 pathpoints.push(position);
         }
+        
+        // Control model (gec00) gets thicker, solid line; perturbed models get thinner lines
         var drawpath = new google.maps.Polyline({
             path: pathpoints,
             geodesic: true,
             strokeColor: getcolor(index),
-            strokeOpacity: 1.0,
-            strokeWeight: 2
+            strokeOpacity: isControl ? 1.0 : 0.7,
+            strokeWeight: isControl ? 3 : 2
         });
         drawpath.setMap(map);
         currpaths.push(drawpath);
@@ -94,7 +96,7 @@ function showWaypoints() {
 circleslist = [];
 
 // Shows a single compound path, but is mode-aware
-function showpath(path) {
+function showpath(path, modelId = 1) {
     switch(btype) {
         case 'STANDARD':
             var rise = path[0];
@@ -117,7 +119,8 @@ function showpath(path) {
             var fpath = path;
     }
     var allpaths = [rise, equil, fall, fpath];
-    makepaths(btype, allpaths);
+    const isControl = (modelId === 0);
+    makepaths(btype, allpaths, isControl);
 
 }
 
@@ -195,7 +198,8 @@ async function simulate() {
         var onlyonce = true;
         if(checkNumPos(allValues) && checkasc(asc,alt,equil)){
             const isHistorical = Number(document.getElementById('yr').value) < 2019;
-            const modelIds = isHistorical ? [1] : [1, 2];
+            // Model 0 = control (gec00), Models 1-2 = perturbed ensemble members (gep01, gep02)
+            const modelIds = isHistorical ? [1] : [0, 1, 2];
 
             for (const modelId of modelIds) {
                 const urlWithModel = url + "&model=" + modelId;
@@ -217,7 +221,7 @@ async function simulate() {
                         }
                     }
                     else {
-                        showpath(payload);
+                        showpath(payload, modelId);
                     }
                 } catch (error) {
                     console.error('Simulation fetch failed', error);

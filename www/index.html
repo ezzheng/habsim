@@ -50,27 +50,36 @@
             display: flex;
             flex-direction: column;
             gap: var(--space-xs);
-            padding: 4px 24px 0 24px;
+            padding: 12px 24px;
+            background: linear-gradient(to bottom, var(--soft2), var(--bg));
+            border-bottom: 2px solid var(--line);
+            box-shadow: 0 2px 8px rgba(0,0,0,0.04);
         }
         .topbar-firstline {
             display: flex;
             align-items: center;
-            gap: var(--space);
-            flex-wrap: nowrap;
             justify-content: space-between;
+            gap: var(--space);
         }
         .topbar-left-group {
             display: flex;
             align-items: center;
             gap: var(--space);
-            flex: 0 1 auto;
+            flex: 0 0 auto;
+        }
+        .topbar-center-group {
+            display: flex;
+            align-items: center;
+            gap: var(--space-sm);
+            justify-content: center;
+            flex: 1 1 auto;
         }
         .topbar-actions { display: inline-flex; align-items: center; gap: var(--space-sm); flex-wrap: wrap; }
         .brand {
-            font-weight: 600;
-            letter-spacing: 0.2px;
+            font-weight: 700;
+            letter-spacing: 0.5px;
             color: var(--fg);
-            font-size: 15px;
+            font-size: 16px;
             cursor: pointer;
             text-decoration: none;
             display: inline-block;
@@ -80,33 +89,34 @@
         }
         .mode-indicator {
             font-size: 11px;
-            font-weight: 400;
+            font-weight: 500;
             color: var(--muted);
-            letter-spacing: 0;
+            letter-spacing: 0.3px;
             margin-left: 8px;
-        }
-        .topbar-right-group {
-            display: flex;
-            align-items: center;
-            gap: var(--space-sm);
-            flex-wrap: nowrap;
-            flex: 0 1 auto;
-            justify-content: flex-end;
+            text-transform: uppercase;
         }
         .waypoint-toggle {
             border: 1px solid var(--line);
-            background: transparent;
+            background: var(--bg);
             color: var(--fg);
-            padding: 6px 12px;
+            padding: 8px 16px;
             border-radius: var(--radius);
+            cursor: pointer;
             font-size: 13px;
-            transition: background .15s ease,border-color .15s ease,color .15s ease;
+            font-weight: 500;
+            transition: all 0.2s;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+        }
+        .waypoint-toggle:hover { 
+            background: var(--soft);
+            box-shadow: 0 2px 6px rgba(0,0,0,0.1);
         }
         .waypoint-toggle.on {
             background: var(--brand);
             color: #fff;
             border-color: var(--brand);
         }
+        .waypoint-toggle.on:hover { opacity: 0.85; }
         /* Segmented button styles - commented out for Standard-only version
         .segmented {
             display: inline-flex;
@@ -127,39 +137,66 @@
         .segment.active { background: var(--brand); color: #ffffff; }
         .divider { width: 1px; background: var(--line); }
         */
-        .status { font-size: 12px; color: var(--muted); white-space: nowrap; }
+        .status {
+            font-size: 11px;
+            color: var(--muted);
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 8px;
+            background: var(--soft2);
+            border-radius: 4px;
+        }
+        .status span { 
+            font-weight: 500;
+            color: var(--fg);
+        }
         .btn-primary-modern {
             background: var(--brand);
             color: #fff;
-            border: 1px solid var(--brand);
-            padding: 6px 12px;
+            border: none;
+            padding: 8px 20px;
             border-radius: var(--radius);
-            transition: background .15s ease,border-color .15s ease,box-shadow .15s ease;
-            font-size: 12.5px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 600;
+            transition: all 0.2s;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.15);
         }
         .btn-primary-modern.loading {
             cursor: wait;
             opacity: 0.75;
         }
-        .btn-primary-modern:hover{ background: var(--brand-600); border-color: var(--brand-600); }
-        .btn-ghost {
-            background: #0b0b0f;
-            border: 1px solid #0b0b0f;
-            color: #fff;
-            padding: 6px 12px;
-            border-radius: var(--radius);
-            transition: background .15s ease,border-color .15s ease,opacity .15s ease;
-            font-size: 12.5px;
+        .btn-primary-modern:hover{ 
+            background: var(--brand-600); 
+            border-color: var(--brand-600);
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
         }
-        .btn-ghost:hover{ opacity: 0.9; }
+        .btn-ghost {
+            background: var(--bg);
+            border: 1px solid var(--line);
+            color: var(--muted);
+            padding: 8px 16px;
+            border-radius: var(--radius);
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 500;
+            transition: all 0.2s;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+        }
+        .btn-ghost:hover{ 
+            background: var(--soft); 
+            color: var(--fg);
+            box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+        }
         .toggle {
             border: solid 1px #a2a2a2;
         }
         /* Parameter panel */
         #param-panel {
-            border-top: 1px solid var(--soft);
-            padding: 12px 24px 16px 24px;
-            background: var(--soft2);
+            padding: 20px 24px 24px 24px;
+            background: var(--bg);
             max-height: 60vh;
             overflow-y: auto;
             overflow-x: hidden;
@@ -184,7 +221,7 @@
             flex-direction: column;
             gap: var(--space-sm);
             min-width: 0;
-            flex: 0 1 auto;
+            flex: 1 1 0;
         }
         .param-field {
             display: grid;
@@ -281,11 +318,30 @@
             .status { white-space: normal; }
         }
         @media (max-width: 768px) {
-            .topbar { padding-left: 12px; padding-right: 12px; }
-            #param-panel { padding-left: 12px; padding-right: 12px; }
-            .topbar-firstline { gap: var(--space-sm); flex-wrap: wrap; flex-direction: column; align-items: stretch; }
-            .topbar-left-group { width: 100%; }
-            .topbar-right-group { width: 100%; flex-direction: column; flex-wrap: wrap; }
+            .topbar { padding: 12px; }
+            #param-panel { padding: 16px 12px; }
+            .topbar-firstline {
+                flex-wrap: wrap;
+                gap: 8px;
+            }
+            .topbar-left-group {
+                width: 100%;
+                justify-content: space-between;
+            }
+            .topbar-center-group {
+                width: 100%;
+                justify-content: stretch;
+                gap: 8px;
+            }
+            .topbar-center-group button {
+                flex: 1;
+            }
+            .topbar-actions {
+                display: none;
+            }
+            .status {
+                font-size: 10px;
+            }
             .param-grid { flex-direction: column; }
             .param-field {
                 grid-template-columns: 1fr;
@@ -299,8 +355,6 @@
                 justify-self: stretch;
                 flex-wrap: wrap;
             }
-            .topbar-actions { flex-direction: column; align-items: stretch; gap: var(--space-xs); }
-            .btn-primary-modern, .btn-ghost { width: 100%; display: inline-flex; justify-content: center; }
             .param-extra { grid-template-columns: 1fr; }
         }
     </style>
@@ -321,15 +375,15 @@
                     <button class="segment" data-mode="floatbln">Float</button>
                 </div>
                 -->
+                <button id="simulate-btn" class="btn-primary-modern" type="button" onclick="simulate()">Simulate</button>
             </div>
-            <div class="topbar-right-group">
+            <div class="topbar-center-group">
                 <button id="waypoint-toggle" type="button" class="waypoint-toggle on">Waypoints</button>
-                <div class="topbar-actions">
-                    <button id="simulate-btn" class="btn-primary-modern" type="button" onclick="simulate()">Simulate</button>
-                    <div id="sim-spinner" class="spinner" aria-hidden="true"></div>
-                    <div class="status" role="status">Model run: <span id="run">Unavailable</span> • Server: <span id="status">Unavailable</span></div>
-                    <button id="collapse-toggle" class="btn-ghost" title="Show/Hide parameters">Toggle panel</button>
-                </div>
+                <button id="collapse-toggle" class="btn-ghost" title="Show/Hide parameters">Toggle panel</button>
+            </div>
+            <div class="topbar-actions">
+                <div id="sim-spinner" class="spinner" aria-hidden="true"></div>
+                <div class="status" role="status">Model: <span id="run">Unavailable</span> • Server: <span id="status">Unavailable</span></div>
             </div>
         </div>
     </div>
