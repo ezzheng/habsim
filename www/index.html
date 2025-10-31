@@ -217,7 +217,8 @@
         .param-grid {
             display: flex;
             justify-content: space-between;
-            gap: 60px;
+            align-items: flex-start;
+            gap: var(--space);
             width: 100%;
         }
         .param-column {
@@ -225,7 +226,16 @@
             flex-direction: column;
             gap: var(--space-sm);
             min-width: 0;
-            flex: 1 1 0;
+            flex: 0 0 auto;
+        }
+        .param-column.center {
+            flex: 1 1 auto;
+            max-width: 600px;
+            margin: 0 auto;
+            align-items: center;
+        }
+        .param-column.right {
+            align-items: flex-end;
         }
         .param-field {
             display: grid;
@@ -358,7 +368,18 @@
             .status {
                 font-size: 10px;
             }
-            .param-grid { flex-direction: column; }
+            .param-grid { 
+                flex-direction: column;
+                align-items: stretch;
+            }
+            .param-column,
+            .param-column.center,
+            .param-column.right {
+                flex: 1 1 auto;
+                max-width: none;
+                margin: 0;
+                align-items: stretch;
+            }
             .param-field {
                 grid-template-columns: 1fr;
                 row-gap: 6px;
@@ -442,7 +463,7 @@
                 </div>
                 -->
             </div>
-            <div class="param-column">
+            <div class="param-column center">
                 <div class="param-field">
                     <span class="field-label">Lat</span>
                     <div class="field-inputs">
@@ -463,7 +484,7 @@
                     </div>
                 </div>
             </div>
-            <div class="param-column">
+            <div class="param-column right">
                 <div class="param-field">
                     <span class="field-label">Ascent rate</span>
                     <div class="field-inputs">
