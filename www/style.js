@@ -89,33 +89,36 @@ function setMode(mode){
         gdur.style.display = "none";
         gstep.style.display = "none";
         if (gtimer) gtimer.style.display = "flex";
-        eqbtn.style.visibility = "visible";
+        if (eqbtn) eqbtn.style.visibility = "visible";
         document.getElementById("asc").value = 4;
         document.getElementById("equil").value = 30000;
         document.getElementById("desc").value = 8;
-        document.getElementById("timeremain").style.visibility = "visible";
+        var remain = document.getElementById("timeremain");
+        if (remain) remain.style.visibility = "visible";
     } else if (mode === "ZPB"){
         geqtime.style.display = "flex";
         gcoeff.style.display = "none";
         gdur.style.display = "none";
         gstep.style.display = "none";
         if (gtimer) gtimer.style.display = "flex";
-        eqbtn.style.visibility = "visible";
+        if (eqbtn) eqbtn.style.visibility = "visible";
         document.getElementById("asc").value = 3.7;
         document.getElementById("equil").value = 29000;
         document.getElementById("eqtime").value = 1;
         document.getElementById("desc").value = 15;
-        document.getElementById("timeremain").style.visibility = "visible";
+        var remain = document.getElementById("timeremain");
+        if (remain) remain.style.visibility = "visible";
     } else { // FLOAT
         geqtime.style.display = "none";
         gcoeff.style.display = "flex";
         gdur.style.display = "flex";
         gstep.style.display = "flex";
         if (gtimer) gtimer.style.display = "none";
-        eqbtn.style.visibility = "hidden";
+        if (eqbtn) eqbtn.style.visibility = "hidden";
         document.getElementById("coeff").value = 0.5;
         document.getElementById("dur").value = 48;
         document.getElementById("step").value = 240;
-        document.getElementById("timeremain").style.visibility = "hidden";
+        var remain = document.getElementById("timeremain");
+        if (remain) remain.style.visibility = "hidden";
     }
 }

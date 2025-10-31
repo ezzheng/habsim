@@ -62,13 +62,16 @@
         }
         .topbar-group-left { flex: 1 1 420px; }
         .topbar-group-right {
-            flex: 1 1 320px;
-            justify-content: flex-end;
-            text-align: right;
+            flex: 0 0 240px;
+            display: flex;
+            flex-direction: column;
+            align-items: stretch;
+            justify-content: flex-start;
+            gap: var(--space-xs);
+            text-align: left;
         }
-        .topbar-group-right,
-        .topbar-buttons { display: flex; align-items: center; gap: var(--space-sm); flex-wrap: wrap; }
-        .topbar-buttons { justify-content: flex-end; }
+        .topbar-buttons { display: flex; align-items: stretch; gap: var(--space-sm); flex-wrap: wrap; width: 100%; }
+        .topbar-buttons button { width: 100%; }
         .brand {
             font-weight: 600;
             letter-spacing: 0.2px;
@@ -214,8 +217,9 @@
         @media (max-width: 900px) {
             .topbar { flex-direction: column; align-items: stretch; gap: var(--space-sm); }
             .topbar-group { justify-content: space-between; }
-            .topbar-group-right { text-align: left; justify-content: space-between; }
-            .topbar-buttons { justify-content: flex-start; width: 100%; }
+            .topbar-group-right { flex: 1 1 100%; flex-direction: row; align-items: center; justify-content: space-between; gap: var(--space-sm); }
+            .topbar-buttons { width: auto; justify-content: flex-start; }
+            .topbar-buttons button { width: auto; }
             .status { white-space: normal; }
         }
         @media (max-width: 768px) {
@@ -252,11 +256,11 @@
             <button id="collapse-toggle" class="btn-ghost" title="Show/Hide parameters">Toggle panel</button>
         </div>
         <div class="topbar-group topbar-group-right">
-            <div class="status" role="status">Model run: <span id="run">Unavailable</span> • Server: <span id="status">Unavailable</span></div>
             <div class="topbar-buttons">
                 <button class="btn-primary-modern" type="button" onclick="simulate()">Simulate</button>
-                <button id="eqtimebtn" class="btn-ghost" type="button" onclick="getTimeremain()">Remaining Time</button>
+                <!-- <button id="eqtimebtn" class="btn-ghost" type="button" onclick="getTimeremain()">Remaining Time</button> -->
             </div>
+            <div class="status" role="status">Model run: <span id="run">Unavailable</span> • Server: <span id="status">Unavailable</span></div>
         </div>
     </div>
     <div id="param-panel">
@@ -304,7 +308,7 @@
                 <div class="param-field param-field-button">
                     <span class="field-label field-label-empty" aria-hidden="true">Get ground elevation</span>
                     <div class="field-inputs">
-                        <button class="btn-ghost" onclick="getElev()">Get ground elevation</button>
+                <!-- <button class="btn-ghost" onclick="getElev()">Get ground elevation</button> -->
                     </div>
                 </div>
             </div>
@@ -359,12 +363,12 @@
                         <span class="unit">s</span>
                     </div>
                 </div>
-                <div class="param-field param-field-status" id="group-timeremain">
+                <!-- <div class="param-field param-field-status" id="group-timeremain">
                     <span class="field-label">Remaining</span>
                     <div class="field-inputs">
                         <span id="timeremain"></span>
                     </div>
-                </div>
+                </div> -->
             </div>
             <p class="help">Click on map to get coordinates</p>
         </div>

@@ -7,6 +7,7 @@ var map = new google.maps.Map(element, {
     zoomControl: false,
     gestureHandling: 'greedy'
 });
+var clickMarker = null;
 google.maps.event.addListener(map, 'click', function (event) {
     displayCoordinates(event.latLng);
 });
@@ -37,7 +38,17 @@ function displayCoordinates(pnt) {
     lng = lng.toFixed(4);
     document.getElementById("lat").value = lat;
     document.getElementById("lon").value = lng;
+    updateClickMarker(new google.maps.LatLng(parseFloat(lat), parseFloat(lng)));
     getElev();
+}
+function updateClickMarker(position) {
+    if (clickMarker) {
+        clickMarker.setMap(null);
+    }
+    clickMarker = new google.maps.Marker({
+        position: position,
+        map: map
+    });
 }
 function getElev() {
     lat = document.getElementById("lat").value;
@@ -53,6 +64,10 @@ function getElev() {
         });
 }
 function getTimeremain() {
+    var remainNode = document.getElementById("timeremain");
+    if (!remainNode) {
+        return;
+    }
     alt = document.getElementById("alt").value;
     eqalt = document.getElementById("equil").value;
     if (parseFloat(alt) < parseFloat(eqalt)) {
@@ -60,7 +75,7 @@ function getTimeremain() {
         console.log(alt,eqalt,ascr);
         time = (eqalt - alt)/(3600*ascr);
         console.log(time)
-        document.getElementById("timeremain").textContent = time.toFixed(2) + " hr ascent remaining"
+        remainNode.textContent = time.toFixed(2) + " hr ascent remaining"
     }
     else {
         descr = document.getElementById("desc").value;
@@ -70,7 +85,7 @@ function getTimeremain() {
             .then(res => res.json())
             .then((ground) => {
                 time = (alt - ground)/(3600*descr);
-                document.getElementById("timeremain").textContent = time.toFixed(2) + " hr descent remaining"
+                remainNode.textContent = time.toFixed(2) + " hr descent remaining"
             })
             .catch(err => {
                 console.error('Elevation fetch failed', err);
