@@ -40,11 +40,13 @@
         /* Top bar */
         #info {
             width: 100%;
+            max-width: none !important;
+            padding: 0 !important;
+            margin: 0 !important;
             top: 0px;
-            background-color: var(--bg);
-            color: var(--fg);
-            border-bottom: 1px solid var(--line);
-            box-shadow: 0 1px 0 rgba(0,0,0,0.03);
+            background-color: transparent;
+            border-bottom: none;
+            box-shadow: none;
         }
         .topbar {
             display: flex;
@@ -54,12 +56,14 @@
             background: linear-gradient(to bottom, var(--soft2), var(--bg));
             border-bottom: 2px solid var(--line);
             box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+            width: 100%;
         }
         .topbar-firstline {
             display: flex;
             align-items: center;
             justify-content: space-between;
             gap: var(--space);
+            width: 100%;
         }
         .topbar-left-group {
             display: flex;
@@ -73,8 +77,16 @@
             gap: var(--space-sm);
             justify-content: center;
             flex: 1 1 auto;
+            max-width: 600px;
+            margin: 0 auto;
         }
-        .topbar-actions { display: inline-flex; align-items: center; gap: var(--space-sm); flex-wrap: wrap; }
+        .topbar-actions {
+            display: inline-flex;
+            align-items: center;
+            gap: var(--space-sm);
+            flex-wrap: wrap;
+            flex: 0 0 auto;
+        }
         .brand {
             font-weight: 700;
             letter-spacing: 0.5px;
@@ -86,14 +98,6 @@
         }
         .brand:hover {
             opacity: 0.8;
-        }
-        .mode-indicator {
-            font-size: 11px;
-            font-weight: 500;
-            color: var(--muted);
-            letter-spacing: 0.3px;
-            margin-left: 8px;
-            text-transform: uppercase;
         }
         .waypoint-toggle {
             border: 1px solid var(--line);
@@ -365,7 +369,6 @@
         <div class="topbar-firstline">
             <div class="topbar-left-group">
                 <a href="https://www.stanfordssi.org/" target="_blank" rel="noopener noreferrer" class="brand">HABSIM</a>
-                <span class="mode-indicator">Standard</span>
                 <!-- Segmented mode selector - commented out for Standard-only version
                 <div class="segmented" role="group" aria-label="Mode">
                     <button class="segment active" data-mode="standardbln">Standard</button>
