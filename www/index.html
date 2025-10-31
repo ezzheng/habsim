@@ -129,7 +129,7 @@
         /* Parameter panel */
         #param-panel {
             border-top: 1px solid var(--soft);
-            padding: 8px 12px 10px 12px;
+            padding: 6px 12px 8px 12px;
             background: var(--soft2);
             max-height: 60vh;
             overflow-y: auto;
@@ -142,23 +142,61 @@
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
             gap: var(--space-sm);
-            align-items: stretch;
+            align-items: start;
             width: 100%;
             box-sizing: border-box;
         }
-        .inputs-row > div { min-width: 0; }
+        .inputs-row > div {
+            min-width: 0;
+            display: grid;
+            gap: var(--space-xs);
+        }
         #contentwrap {
             grid-column: 1 / -1;
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-            gap: var(--space-sm);
-            align-items: end;
+            grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+            gap: var(--space-xs);
+            align-items: center;
         }
-        #contentwrap .input { padding-bottom: 0; }
-        .input { font-size: 13px; padding-bottom: 4px; color: var(--fg); display: flex; flex-direction: column; gap: 4px; }
-        .input input { border: 1px solid #d1d5db; border-radius: 6px; padding: 6px 8px; background: var(--bg); color: var(--fg); width: 100%; }
+        .input {
+            font-size: 13px;
+            color: var(--fg);
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 6px;
+            min-height: 28px;
+        }
+        .input-label {
+            font-weight: 600;
+            white-space: nowrap;
+        }
+        .input-inline {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            flex-wrap: nowrap;
+        }
+        .input input {
+            border: 1px solid #d1d5db;
+            border-radius: 6px;
+            padding: 5px 8px;
+            background: var(--bg);
+            color: var(--fg);
+            flex: 0 1 auto;
+        }
         .input input:focus{ outline: 2px solid var(--brand-600); outline-offset: 1px; }
-        .help { font-size: 11px; color: var(--muted); margin: 4px 0 0 0; }
+        .unit {
+            font-size: 12px;
+            color: var(--muted);
+            white-space: nowrap;
+        }
+        .input-sep {
+            color: var(--muted);
+            white-space: nowrap;
+        }
+        #timeremain { font-weight: 600; }
+        .help { font-size: 11px; color: var(--muted); margin: 2px 0 0 0; }
         @media (max-width: 900px) {
             .topbar { flex-direction: column; align-items: stretch; gap: var(--space-sm); }
             .topbar-group { justify-content: space-between; }
@@ -204,27 +242,96 @@
     <div id="param-panel">
         <div class="inputs-row">
             <div>
-                <div class="input">Date: <input id = "yr" type="text" size="4" name="yr">/<input id = "mo" type="text" size="2" name="mo">/<input id = "day" type="text" size="2" name="day"></div>
-                <div class="input">Time (UTC): <input id = "hr" type="text" size="2" name="hr">:<input id = "mn" type="text" size="2" name="mn"></div>
+                <div class="input">
+                    <span class="input-label">Date</span>
+                    <div class="input-inline">
+                        <input id="yr" type="text" size="4" name="yr">
+                        <span class="input-sep">/</span>
+                        <input id="mo" type="text" size="2" name="mo">
+                        <span class="input-sep">/</span>
+                        <input id="day" type="text" size="2" name="day">
+                    </div>
+                </div>
+                <div class="input">
+                    <span class="input-label">Time (UTC)</span>
+                    <div class="input-inline">
+                        <input id="hr" type="text" size="2" name="hr">
+                        <span class="input-sep">:</span>
+                        <input id="mn" type="text" size="2" name="mn">
+                    </div>
+                </div>
             </div>
             <div>
-                <div class="input">Lat: <input id="lat" type="text" size="8" name="lat"></div>
-                <div class="input">Lon: <input id="lon" type="text" size="8" name="lon"></div>
+                <div class="input">
+                    <span class="input-label">Lat</span>
+                    <input id="lat" type="text" size="8" name="lat">
+                </div>
+                <div class="input">
+                    <span class="input-label">Lon</span>
+                    <input id="lon" type="text" size="8" name="lon">
+                </div>
                 <p class="help">Click on map to get coordinates</p>
             </div>
             <div>
-                <div class="input">Launch altitude: <input id="alt" type="text" size="5" name="alt"> m</div>
+                <div class="input">
+                    <span class="input-label">Launch altitude</span>
+                    <div class="input-inline">
+                        <input id="alt" type="text" size="5" name="alt">
+                        <span class="unit">m</span>
+                    </div>
+                </div>
                 <button class="btn-ghost" onclick="getElev()">Get ground elevation</button>
             </div>
             <div id="contentwrap">
-                <div class="input">Ascent rate: <input id="asc" type="text" size="4" name="asc"> m/s</div>
-                <div class="input">Burst/Equilibrium altitude: <input id="equil" type="text" size="5" name="equil"> m</div>
-                <div class="input">Descent rate: <input id="desc" type="text" size="4" name="desc"> m/s</div>
-                <div class="input" id="group-eqtime" style="visibility:hidden;">Time at Equilibrium: <input id="eqtime" type="text" size="4" name="eqtime"> h</div>
-                <div class="input" id="group-coeff" style="visibility:hidden;">Floating Coefficient: <input id="coeff" type="text" size="4" name="coeff"></div>
-                <div class="input" id="group-dur" style="visibility:hidden;">Simulate for: <input id="dur" type="text" size="4" name="dur"> h</div>
-                <div class="input" id="group-step" style="visibility:hidden;">Step Size: <input id="step" type="text" size="4" name="step"> s</div>
-                <div class="input"><span id="timeremain"></span></div>
+                <div class="input">
+                    <span class="input-label">Ascent rate</span>
+                    <div class="input-inline">
+                        <input id="asc" type="text" size="4" name="asc">
+                        <span class="unit">m/s</span>
+                    </div>
+                </div>
+                <div class="input">
+                    <span class="input-label">Burst/Equilibrium altitude</span>
+                    <div class="input-inline">
+                        <input id="equil" type="text" size="5" name="equil">
+                        <span class="unit">m</span>
+                    </div>
+                </div>
+                <div class="input">
+                    <span class="input-label">Descent rate</span>
+                    <div class="input-inline">
+                        <input id="desc" type="text" size="4" name="desc">
+                        <span class="unit">m/s</span>
+                    </div>
+                </div>
+                <div class="input" id="group-eqtime" style="visibility:hidden;">
+                    <span class="input-label">Time at Equilibrium</span>
+                    <div class="input-inline">
+                        <input id="eqtime" type="text" size="4" name="eqtime">
+                        <span class="unit">h</span>
+                    </div>
+                </div>
+                <div class="input" id="group-coeff" style="visibility:hidden;">
+                    <span class="input-label">Floating Coefficient</span>
+                    <input id="coeff" type="text" size="4" name="coeff">
+                </div>
+                <div class="input" id="group-dur" style="visibility:hidden;">
+                    <span class="input-label">Simulate for</span>
+                    <div class="input-inline">
+                        <input id="dur" type="text" size="4" name="dur">
+                        <span class="unit">h</span>
+                    </div>
+                </div>
+                <div class="input" id="group-step" style="visibility:hidden;">
+                    <span class="input-label">Step Size</span>
+                    <div class="input-inline">
+                        <input id="step" type="text" size="4" name="step">
+                        <span class="unit">s</span>
+                    </div>
+                </div>
+                <div class="input">
+                    <span id="timeremain"></span>
+                </div>
             </div>
         </div>
         <div style="padding-top:6px; font-size:13px; color:#6b7280;">
