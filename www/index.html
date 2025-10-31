@@ -49,15 +49,39 @@
         .topbar {
             display: flex;
             align-items: center;
+            justify-content: space-between;
             gap: var(--space);
             padding: var(--space-sm) var(--space);
+            flex-wrap: wrap;
         }
+        .topbar-group {
+            display: flex;
+            align-items: center;
+            gap: var(--space);
+            flex-wrap: wrap;
+        }
+        .topbar-group-left { flex: 1 1 420px; }
+        .topbar-group-right {
+            flex: 1 1 320px;
+            justify-content: flex-end;
+            text-align: right;
+        }
+        .topbar-group-right,
+        .topbar-buttons { display: flex; align-items: center; gap: var(--space-sm); flex-wrap: wrap; }
+        .topbar-buttons { justify-content: flex-end; }
         .brand {
             font-weight: 600;
             letter-spacing: 0.2px;
             color: var(--fg);
         }
-        .spacer { flex: 1; }
+        .toggle-label {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 14px;
+            margin: 0;
+        }
+        .toggle-label .toggle { margin: 0; }
         .segmented {
             display: inline-flex;
             border: 1px solid var(--line);
@@ -76,7 +100,7 @@
         .segment:hover{ background: var(--soft2); }
         .segment.active { background: var(--brand); color: #ffffff; }
         .divider { width: 1px; background: var(--line); }
-        .status { font-size: 13px; color: var(--muted); }
+        .status { font-size: 13px; color: var(--muted); white-space: nowrap; }
         .btn-primary-modern {
             background: var(--brand);
             color: #fff;
@@ -115,31 +139,46 @@
         .input input { border: 1px solid #d1d5db; border-radius: 6px; padding: 6px 8px; background: var(--bg); color: var(--fg); }
         .input input:focus{ outline: 2px solid var(--brand-600); outline-offset: 1px; }
         .help { font-size: 12px; color: var(--muted); margin: 4px 0 0 0; }
+        @media (max-width: 900px) {
+            .topbar { flex-direction: column; align-items: stretch; gap: var(--space-sm); }
+            .topbar-group { justify-content: space-between; }
+            .topbar-group-right { text-align: left; justify-content: space-between; }
+            .topbar-buttons { justify-content: flex-start; width: 100%; }
+            .status { white-space: normal; }
+        }
         @media (max-width: 768px) {
-            .topbar { flex-wrap: wrap; gap: 10px; }
+            .topbar-group { gap: var(--space-sm); }
             .inputs-row { grid-template-columns: 1fr; }
+            .topbar-buttons { flex-direction: column; align-items: stretch; gap: var(--space-xs); }
+            .btn-primary-modern, .btn-ghost { width: 100%; display: inline-flex; justify-content: center; }
         }
     </style>
 </head>
 <body>
 <nav id="info" class="navbar navbar-light bg-light" style="position:fixed; top:0; left:0; right:0; z-index:1000;">
     <div class="topbar">
-        <div class="brand">HABSIM</div>
-        <div class="segmented" role="group" aria-label="Mode">
-            <button class="segment active" data-mode="standardbln">Standard</button>
-            <div class="divider"></div>
-            <button class="segment" data-mode="zpbbln">ZPB</button>
-            <div class="divider"></div>
-            <button class="segment" data-mode="floatbln">Float</button>
+        <div class="topbar-group topbar-group-left">
+            <div class="brand">HABSIM</div>
+            <div class="segmented" role="group" aria-label="Mode">
+                <button class="segment active" data-mode="standardbln">Standard</button>
+                <div class="divider"></div>
+                <button class="segment" data-mode="zpbbln">ZPB</button>
+                <div class="divider"></div>
+                <button class="segment" data-mode="floatbln">Float</button>
+            </div>
+            <label class="toggle-label" for="toggle-event">
+                <span>Waypoints</span>
+                <input id="toggle-event" type="checkbox" checked data-toggle="toggle" data-on="Enabled" data-off="Disabled" data-size="small" data-onstyle="success">
+            </label>
+            <button id="collapse-toggle" class="btn-ghost" title="Show/Hide parameters">Toggle panel</button>
         </div>
-        <label style="margin:0 8px 0 12px; font-size:14px;">Waypoints:
-            <input id="toggle-event" type="checkbox" checked data-toggle="toggle" data-on="Enabled" data-off="Disabled" data-size="small" data-onstyle="success">
-        </label>
-        <button id="collapse-toggle" class="btn-ghost" title="Show/Hide parameters">Toggle panel</button>
-        <div class="spacer"></div>
-        <div class="status">Model run: <span id="run">Unavailable</span> • Server: <span id="status">Unavailable</span></div>
-        <button class="btn-primary-modern" type="button" onclick="simulate()">Simulate</button>
-        <button id="eqtimebtn" class="btn-ghost" type="button" onclick="getTimeremain()">Remaining Time</button>
+        <div class="topbar-group topbar-group-right">
+            <div class="status" role="status">Model run: <span id="run">Unavailable</span> • Server: <span id="status">Unavailable</span></div>
+            <div class="topbar-buttons">
+                <button class="btn-primary-modern" type="button" onclick="simulate()">Simulate</button>
+                <button id="eqtimebtn" class="btn-ghost" type="button" onclick="getTimeremain()">Remaining Time</button>
+            </div>
+        </div>
     </div>
     <div id="param-panel">
         <div class="inputs-row">
