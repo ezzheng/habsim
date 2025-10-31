@@ -67,10 +67,18 @@
             font-size: 15px;
             cursor: pointer;
             text-decoration: none;
-            display: inline-block;
+            display: inline-flex;
+            align-items: baseline;
+            gap: 8px;
         }
         .brand:hover {
             opacity: 0.8;
+        }
+        .mode-indicator {
+            font-size: 11px;
+            font-weight: 400;
+            color: var(--muted);
+            letter-spacing: 0;
         }
         .waypoint-toggle {
             border: 1px solid var(--line);
@@ -87,6 +95,7 @@
             color: #fff;
             border-color: var(--brand);
         }
+        /* Segmented button styles - commented out for Standard-only version
         .segmented {
             display: inline-flex;
             border: 1px solid var(--line);
@@ -105,6 +114,7 @@
         }
         .segment.active { background: var(--brand); color: #ffffff; }
         .divider { width: 1px; background: var(--line); }
+        */
         .status { font-size: 12px; color: var(--muted); white-space: nowrap; }
         .btn-primary-modern {
             background: var(--brand);
@@ -286,14 +296,19 @@
 <nav id="info" class="navbar navbar-light bg-light" style="position:fixed; top:0; left:0; right:0; z-index:1000;">
     <div class="topbar">
         <div class="topbar-firstline">
-            <a href="https://www.stanfordssi.org/" target="_blank" rel="noopener noreferrer" class="brand">HABSIM</a>
+            <a href="https://www.stanfordssi.org/" target="_blank" rel="noopener noreferrer" class="brand">
+                <span>HABSIM</span>
+                <span class="mode-indicator">Standard</span>
+            </a>
+            <!-- Segmented mode selector - commented out for Standard-only version
             <div class="segmented" role="group" aria-label="Mode">
                 <button class="segment active" data-mode="standardbln">Standard</button>
-                <!-- <div class="divider"></div>
+                <div class="divider"></div>
                 <button class="segment" data-mode="zpbbln">ZPB</button>
                 <div class="divider"></div>
-                <button class="segment" data-mode="floatbln">Float</button> -->
+                <button class="segment" data-mode="floatbln">Float</button>
             </div>
+            -->
             <button id="waypoint-toggle" type="button" class="waypoint-toggle on">Waypoints</button>
             <div class="topbar-spacer"></div>
             <div class="topbar-actions">
