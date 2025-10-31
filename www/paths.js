@@ -138,92 +138,105 @@ var currpaths = new Array();
 
 // Self explanatory
 async function simulate() {
-    clearWaypoints();
-    for (path in currpaths) {currpaths[path].setMap(null);}
-    currpaths = new Array();
-    rawpathcache = new Array()
-    console.log("Clearing");
+    const simBtn = document.getElementById('simulate-btn');
+    const spinner = document.getElementById('sim-spinner');
+    const originalButtonText = simBtn ? simBtn.textContent : null;
+    if (simBtn) {
+        simBtn.disabled = true;
+        simBtn.classList.add('loading');
+        simBtn.textContent = 'Simulating…';
+    }
+    if (spinner) { spinner.classList.add('active'); }
+    try {
+        clearWaypoints();
+        for (path in currpaths) {currpaths[path].setMap(null);}
+        currpaths = new Array();
+        rawpathcache = new Array()
+        console.log("Clearing");
 
-    allValues = [];
-    var time = toTimestamp(Number(document.getElementById('yr').value),
-        Number(document.getElementById('mo').value),
-        Number(document.getElementById('day').value),
-        Number(document.getElementById('hr').value),
-        Number(document.getElementById('mn').value));
-    var lat = document.getElementById('lat').value;
-    var lon = document.getElementById('lon').value;
-    var alt = document.getElementById('alt').value;
-    var url = "";
-    allValues.push(time,alt);
-    switch(btype) {
-        case 'STANDARD':
-            // code block
-            var equil = document.getElementById('equil').value;
-            var asc = document.getElementById('asc').value;
-            var desc = document.getElementById('desc').value;
-            url = URL_ROOT + "/singlezpb?timestamp="
-                + time + "&lat=" + lat + "&lon=" + lon + "&alt=" + alt + "&equil=" + equil + "&eqtime=" + 0 + "&asc=" + asc + "&desc=" + desc;
-            allValues.push(equil,asc,desc);
-            break;
-        case 'ZPB':
-            // code block
-            var equil = document.getElementById('equil').value;
-            var eqtime = document.getElementById('eqtime').value;
-            var asc = document.getElementById('asc').value;
-            var desc = document.getElementById('desc').value;
-            url = URL_ROOT + "/singlezpb?timestamp="
-                + time + "&lat=" + lat + "&lon=" + lon + "&alt=" + alt + "&equil=" + equil + "&eqtime=" + eqtime + "&asc=" + asc + "&desc=" + desc
-            allValues.push(equil,eqtime,asc,desc);
-            break;
-        case 'FLOAT':
-            // code block
-            var coeff = document.getElementById('coeff').value;
-            var step = document.getElementById('step').value;
-            var dur = document.getElementById('dur').value;
-            url = URL_ROOT + "/singlepredict?timestamp="
-                + time + "&lat=" + lat + "&lon=" + lon + "&alt=" + alt + "&rate=0&coeff=" + coeff + "&step=" + step + "&dur=" + dur
-            allValues.push(coeff,step,dur);
-            break;
-    }
-    var onlyonce = true;
-    if(checkNumPos(allValues) && checkasc(asc,alt,equil)){
-        // Backend currently caches 2 members; extend back to 20 when ready
-        for (i = 1; i < 3; i++) {
-            var url2 = url + "&model=" + i;
-            console.log(url2);
-            await fetch(url2)
-            .then(res => res.json())
-            .then(function(resjson){
-                if(resjson==="error"){
-                    if(onlyonce) {
-                            alert("Simulation failed on the server. Please verify inputs or try again in a few minutes.");
-                        onlyonce = false;
-                    }
-                    //break;
-                 }
-                else if (resjson==="alt error") {
-                    if(onlyonce) {
-                        alert("ERROR: Please make sure your entire flight altitude is within 45km.");
-                        onlyonce = false;
-                    }
-                }
-                else {
-                    showpath(resjson);
-                }
-            })
-            .catch(function(err){
-                console.error('Simulation fetch failed', err);
-                if(onlyonce){
-                    alert('Failed to contact simulation server. Please try again later.');
-                    onlyonce = false;
-                }
-            });
-            if (Number(document.getElementById('yr').value) < 2019){
-                console.log("Historical flight, breaking after one run");
+        allValues = [];
+        var time = toTimestamp(Number(document.getElementById('yr').value),
+            Number(document.getElementById('mo').value),
+            Number(document.getElementById('day').value),
+            Number(document.getElementById('hr').value),
+            Number(document.getElementById('mn').value));
+        var lat = document.getElementById('lat').value;
+        var lon = document.getElementById('lon').value;
+        var alt = document.getElementById('alt').value;
+        var url = "";
+        allValues.push(time,alt);
+        switch(btype) {
+            case 'STANDARD':
+                var equil = document.getElementById('equil').value;
+                var asc = document.getElementById('asc').value;
+                var desc = document.getElementById('desc').value;
+                url = URL_ROOT + "/singlezpb?timestamp="
+                    + time + "&lat=" + lat + "&lon=" + lon + "&alt=" + alt + "&equil=" + equil + "&eqtime=" + 0 + "&asc=" + asc + "&desc=" + desc;
+                allValues.push(equil,asc,desc);
                 break;
-            }
+            case 'ZPB':
+                var equil = document.getElementById('equil').value;
+                var eqtime = document.getElementById('eqtime').value;
+                var asc = document.getElementById('asc').value;
+                var desc = document.getElementById('desc').value;
+                url = URL_ROOT + "/singlezpb?timestamp="
+                    + time + "&lat=" + lat + "&lon=" + lon + "&alt=" + alt + "&equil=" + equil + "&eqtime=" + eqtime + "&asc=" + asc + "&desc=" + desc
+                allValues.push(equil,eqtime,asc,desc);
+                break;
+            case 'FLOAT':
+                var coeff = document.getElementById('coeff').value;
+                var step = document.getElementById('step').value;
+                var dur = document.getElementById('dur').value;
+                url = URL_ROOT + "/singlepredict?timestamp="
+                    + time + "&lat=" + lat + "&lon=" + lon + "&alt=" + alt + "&rate=0&coeff=" + coeff + "&step=" + step + "&dur=" + dur
+                allValues.push(coeff,step,dur);
+                break;
         }
-        onlyonce = true;
+        var onlyonce = true;
+        if(checkNumPos(allValues) && checkasc(asc,alt,equil)){
+            for (i = 1; i < 3; i++) {
+                var url2 = url + "&model=" + i;
+                console.log(url2);
+                await fetch(url2)
+                .then(res => res.json())
+                .then(function(resjson){
+                    if(resjson==="error"){
+                        if(onlyonce) {
+                            alert("Simulation failed on the server. Please verify inputs or try again in a few minutes.");
+                            onlyonce = false;
+                        }
+                     }
+                    else if (resjson==="alt error") {
+                        if(onlyonce) {
+                            alert("ERROR: Please make sure your entire flight altitude is within 45km.");
+                            onlyonce = false;
+                        }
+                    }
+                    else {
+                        showpath(resjson);
+                    }
+                })
+                .catch(function(err){
+                    console.error('Simulation fetch failed', err);
+                    if(onlyonce){
+                        alert('Failed to contact simulation server. Please try again later.');
+                        onlyonce = false;
+                    }
+                });
+                if (Number(document.getElementById('yr').value) < 2019){
+                    console.log("Historical flight, breaking after one run");
+                    break;
+                }
+            }
+            onlyonce = true;
+        }
+        if (waypointsToggle) {showWaypoints()}
+    } finally {
+        if (spinner) { spinner.classList.remove('active'); }
+        if (simBtn) {
+            simBtn.disabled = false;
+            simBtn.classList.remove('loading');
+            if (originalButtonText !== null) simBtn.textContent = originalButtonText;
+        }
     }
-    if (waypointsToggle) {showWaypoints()}
 }

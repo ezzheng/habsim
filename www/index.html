@@ -59,31 +59,27 @@
             flex-wrap: wrap;
         }
         .topbar-firstline .topbar-spacer { flex: 1 1 auto; }
-        .topbar-secondline {
-            display: flex;
-            justify-content: flex-end;
-            padding-bottom: 4px;
-        }
-        .topbar-buttons { display: inline-flex; align-items: stretch; gap: var(--space-sm); }
-        .topbar-divider {
-            width: 100%;
-            height: 1px;
-            background: var(--line);
-        }
+        .topbar-actions { display: inline-flex; align-items: center; gap: var(--space-sm); flex-wrap: wrap; }
         .brand {
             font-weight: 600;
             letter-spacing: 0.2px;
             color: var(--fg);
             font-size: 15px;
         }
-        .toggle-label {
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
+        .waypoint-toggle {
+            border: 1px solid var(--line);
+            background: transparent;
+            color: var(--fg);
+            padding: 6px 12px;
+            border-radius: var(--radius);
             font-size: 13px;
-            margin: 0;
+            transition: background .15s ease,border-color .15s ease,color .15s ease;
         }
-        .toggle-label .toggle { margin: 0; }
+        .waypoint-toggle.on {
+            background: var(--brand);
+            color: #fff;
+            border-color: var(--brand);
+        }
         .segmented {
             display: inline-flex;
             border: 1px solid var(--line);
@@ -113,6 +109,10 @@
             transition: background .15s ease,border-color .15s ease,box-shadow .15s ease;
             font-size: 12.5px;
         }
+        .btn-primary-modern.loading {
+            cursor: wait;
+            opacity: 0.75;
+        }
         .btn-primary-modern:hover{ background: var(--brand-600); border-color: var(--brand-600); }
         .btn-ghost {
             background: transparent;
@@ -140,13 +140,14 @@
             -webkit-overflow-scrolling: touch;
         }
         .param-grid {
-            display: flex;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
             gap: var(--space-sm);
-            flex-wrap: wrap;
+            width: 100%;
         }
         .param-column {
-            flex: 1 1 240px;
-            display: grid;
+            display: flex;
+            flex-direction: column;
             gap: var(--space-sm);
         }
         .param-field {
@@ -197,7 +198,25 @@
         .field-input-sm { width: 64px; }
         .field-input-md { width: 88px; }
         .field-input-lg { width: 120px; }
-        .help { font-size: 11px; color: var(--muted); margin: 4px 0 0 0; }
+        .param-extra {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+            gap: var(--space-sm);
+            width: 100%;
+            margin-top: var(--space-sm);
+        }
+        .spinner {
+            width: 14px;
+            height: 14px;
+            border: 2px solid var(--line);
+            border-top-color: var(--brand);
+            border-radius: 50%;
+            animation: spin 0.6s linear infinite;
+            display: none;
+            margin: 0 6px;
+        }
+        .spinner.active { display: inline-block; }
+        @keyframes spin { to { transform: rotate(360deg); } }
         .visually-hidden {
             position: absolute;
             width: 1px;
@@ -213,20 +232,21 @@
             .topbar-firstline {
                 justify-content: space-between;
             }
-            .topbar-buttons { width: 100%; justify-content: flex-start; }
+            .topbar-actions { width: 100%; justify-content: flex-start; }
             .status { white-space: normal; }
         }
         @media (max-width: 768px) {
             .topbar-firstline { gap: var(--space-sm); }
-            .param-grid { flex-direction: column; }
+            .param-grid { grid-template-columns: 1fr; }
             .param-field {
                 flex-wrap: wrap;
                 gap: 6px;
             }
             .param-field .field-label { flex: 1 1 100px; }
             .param-field .field-inputs { flex: 1 1 100%; }
-            .topbar-buttons { flex-direction: column; align-items: stretch; gap: var(--space-xs); }
+            .topbar-actions { flex-direction: column; align-items: stretch; gap: var(--space-xs); }
             .btn-primary-modern, .btn-ghost { width: 100%; display: inline-flex; justify-content: center; }
+            .param-extra { grid-template-columns: 1fr; }
         }
     </style>
 </head>
@@ -242,20 +262,14 @@
                 <div class="divider"></div>
                 <button class="segment" data-mode="floatbln">Float</button>
             </div>
-            <label class="toggle-label" for="toggle-event">
-                <span>Waypoints</span>
-                <input id="toggle-event" type="checkbox" checked data-toggle="toggle" data-on="Enabled" data-off="Disabled" data-size="small" data-onstyle="success">
-            </label>
-            <button id="collapse-toggle" class="btn-ghost" title="Show/Hide parameters">Toggle panel</button>
+            <button id="waypoint-toggle" type="button" class="waypoint-toggle on">Waypoints</button>
             <div class="topbar-spacer"></div>
-            <div class="topbar-buttons">
-                <button class="btn-primary-modern" type="button" onclick="simulate()">Simulate</button>
-                <!-- <button id="eqtimebtn" class="btn-ghost" type="button" onclick="getTimeremain()">Remaining Time</button> -->
+            <div class="topbar-actions">
+                <button id="simulate-btn" class="btn-primary-modern" type="button" onclick="simulate()">Simulate</button>
+                <div id="sim-spinner" class="spinner" aria-hidden="true"></div>
+                <div class="status" role="status">Model run: <span id="run">Unavailable</span> • Server: <span id="status">Unavailable</span></div>
+                <button id="collapse-toggle" class="btn-ghost" title="Show/Hide parameters">Toggle panel</button>
             </div>
-        </div>
-        <div id="topbar-divider" class="topbar-divider"></div>
-        <div class="topbar-secondline">
-            <div class="status" role="status">Model run: <span id="run">Unavailable</span> • Server: <span id="status">Unavailable</span></div>
         </div>
     </div>
     <div id="param-panel">
@@ -360,7 +374,6 @@
                 </div>
             </div> -->
         </div>
-        <p class="help">Click on map to get coordinates</p>
         <div class="visually-hidden" aria-hidden="true">
             <input type="radio" name="optradio" class="radiobtn" value="standardbln" checked>
             <input type="radio" name="optradio" class="radiobtn" value="zpbbln">
@@ -400,20 +413,14 @@
             });
             const collapseBtn = document.getElementById('collapse-toggle');
             const panel = document.getElementById('param-panel');
-            const divider = document.getElementById('topbar-divider');
             collapseBtn.addEventListener('click', () => {
                 if (panel.style.display === 'none') {
                     panel.style.display = '';
-                    if (divider) divider.style.display = '';
                 } else {
                     panel.style.display = 'none';
-                    if (divider) divider.style.display = 'none';
                 }
                 adjustLayout();
             });
-            if (panel && panel.style.display === 'none' && divider) {
-                divider.style.display = 'none';
-            }
         });
 </script>
 </body>

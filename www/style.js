@@ -18,17 +18,17 @@ $(document).ready(function() {
 
 var waypointsToggle = true;
 $(function() {
-    $('#toggle-event').change(function() {
-        var state = $(this).prop('checked');
-        if(!state){
-            waypointsToggle = false
+    const waypointBtn = $('#waypoint-toggle');
+    waypointBtn.on('click', function() {
+        waypointsToggle = !waypointsToggle;
+        waypointBtn.toggleClass('on', waypointsToggle);
+        if (waypointsToggle) {
+            showWaypoints();
+        } else {
             clearWaypoints();
         }
-        else{
-            waypointsToggle = true;
-            showWaypoints()
-        }
-    })
+    });
+    waypointBtn.toggleClass('on', waypointsToggle);
 });
 
 var now = new Date(Date.now());
