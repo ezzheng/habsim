@@ -60,7 +60,7 @@ def singlepredicth():
     try:
         path = simulate.simulate(datetime(yr, mo, day, hr, mn).replace(tzinfo=timezone.utc), lat, lon, rate, step, dur, alt, model, coefficient=coeff)
     except:
-        return "error"
+        return jsonify("error")
     return jsonify(path)
 
 @app.route('/sim/singlepredict')
@@ -78,7 +78,7 @@ def singlepredict():
     try:
         path = simulate.simulate(timestamp, lat, lon, rate, step, dur, alt, model, coefficient=coeff)
     except:
-        return "error"
+        return jsonify("error")
     return jsonify(path)
 
 
