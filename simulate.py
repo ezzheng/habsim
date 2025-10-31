@@ -15,8 +15,9 @@ EARTH_RADIUS = float(6.371e6)
 DATA_STEP = 6 # hrs
 
 ### Cache of datacubes and files. ###
-### Filecache is in the form (timestamp, modelnumber). ###
-filecache = []
+### filecache maps model number -> Simulator instance ###
+filecache = {}
+elevation_cache = None
 
 currgefs = "Unavailable"
 
@@ -33,10 +34,23 @@ def refresh():
 
 # opens and stores 20 Simulators in filecache
 def reset():
-    global filecache
-    filecache = []
-    for i in range(1, 3): # TODO: change 3 back to 21
-        filecache.append(Simulator(WindFile(load_gefs(f'{currgefs}_{str(i).zfill(2)}.npz')), load_gefs('worldelev.npy')))
+    global filecache, elevation_cache
+    filecache = {}
+    elevation_cache = None
+
+
+def _get_elevation_data():
+    global elevation_cache
+    if elevation_cache is None:
+        elevation_cache = load_gefs('worldelev.npy')
+    return elevation_cache
+
+
+def _get_simulator(model):
+    if model not in filecache:
+        wind_file = WindFile(load_gefs(f'{currgefs}_{str(model).zfill(2)}.npz'))
+        filecache[model] = Simulator(wind_file, _get_elevation_data())
+    return filecache[model]
 
 
 def lin_to_angular_velocities(lat, lon, u, v): 
@@ -45,8 +59,9 @@ def lin_to_angular_velocities(lat, lon, u, v):
     return dlat, dlon
 
 def simulate(simtime, lat, lon, rate, step, max_duration, alt, model, coefficient=1, elevation=True):
+    simulator = _get_simulator(model)
     balloon = Balloon(location=(lat, lon), alt=alt, time=simtime, ascent_rate=rate)
-    traj = filecache[model-1].simulate(balloon, step, coefficient, elevation, dur=max_duration)
+    traj = simulator.simulate(balloon, step, coefficient, elevation, dur=max_duration)
     path = list()
     for i in traj:
         if i.wind_vector is None:
