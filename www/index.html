@@ -141,8 +141,8 @@
         }
         .param-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-            gap: 40px;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 60px;
             width: 100%;
         }
         .param-column {
@@ -150,9 +150,6 @@
             flex-direction: column;
             gap: var(--space-sm);
             min-width: 0;
-        }
-        .param-column.first {
-            margin-right: 0;
         }
         .param-field {
             display: grid;
@@ -275,11 +272,11 @@
         <div class="topbar-firstline">
             <div class="brand">HABSIM</div>
             <div class="segmented" role="group" aria-label="Mode">
-                <button class="segment active" data-mode="standardbln">Standard</button>
-                <div class="divider"></div>
+                <button class="segment active" data-mode="standardbln" style="cursor: default;">Standard</button>
+                <!-- <div class="divider"></div>
                 <button class="segment" data-mode="zpbbln">ZPB</button>
                 <div class="divider"></div>
-                <button class="segment" data-mode="floatbln">Float</button>
+                <button class="segment" data-mode="floatbln">Float</button> -->
             </div>
             <button id="waypoint-toggle" type="button" class="waypoint-toggle on">Waypoints</button>
             <div class="topbar-spacer"></div>
@@ -293,7 +290,7 @@
     </div>
     <div id="param-panel">
         <div class="param-grid">
-            <div class="param-column first">
+            <div class="param-column">
                 <div class="param-field param-field-date">
                     <span class="field-label">Date</span>
                     <div class="field-inputs">
@@ -312,6 +309,7 @@
                         <input id="mn" class="field-input field-input-xs" type="text" name="mn">
                     </div>
                 </div>
+                <!-- ZPB mode field - commented out
                 <div class="param-field" id="group-eqtime" style="display:none;">
                     <span class="field-label">Time at Equilibrium</span>
                     <div class="field-inputs">
@@ -319,6 +317,8 @@
                         <span class="unit">h</span>
                     </div>
                 </div>
+                -->
+                <!-- Float mode field - commented out
                 <div class="param-field" id="group-dur" style="display:none;">
                     <span class="field-label">Simulate for</span>
                     <div class="field-inputs">
@@ -326,6 +326,7 @@
                         <span class="unit">h</span>
                     </div>
                 </div>
+                -->
             </div>
             <div class="param-column">
                 <div class="param-field">
@@ -371,6 +372,7 @@
                     </div>
                 </div>
             </div>
+            <!-- Float mode column - commented out
             <div class="param-column">
                 <div class="param-field" id="group-coeff" style="display:none;">
                     <span class="field-label">Floating Coefficient</span>
@@ -387,11 +389,12 @@
                 </div>
                 <div class="param-field placeholder" aria-hidden="true"></div>
             </div>
+            -->
         </div>
         <div class="visually-hidden" aria-hidden="true">
             <input type="radio" name="optradio" class="radiobtn" value="standardbln" checked>
-            <input type="radio" name="optradio" class="radiobtn" value="zpbbln">
-            <input type="radio" name="optradio" class="radiobtn" value="floatbln">
+            <!-- <input type="radio" name="optradio" class="radiobtn" value="zpbbln">
+            <input type="radio" name="optradio" class="radiobtn" value="floatbln"> -->
         </div>
     </div>
 </nav>
@@ -413,18 +416,19 @@
     }
     window.addEventListener('load', adjustLayout);
     window.addEventListener('resize', adjustLayout);
-        // topbar segmented buttons
+        // topbar segmented buttons - disabled since only Standard mode is available
         window.addEventListener('DOMContentLoaded', function(){
-            const segs = document.querySelectorAll('.segment');
-            segs.forEach(btn => {
-                btn.addEventListener('click', () => {
-                    segs.forEach(b=>b.classList.remove('active'));
-                    btn.classList.add('active');
-                    const val = btn.getAttribute('data-mode');
-                    const radio = document.querySelector(`input[name="optradio"][value="${val}"]`);
-                    if (radio) { radio.checked = true; radio.dispatchEvent(new Event('change')); }
-                });
-            });
+            // Mode switching disabled - only Standard mode available
+            // const segs = document.querySelectorAll('.segment');
+            // segs.forEach(btn => {
+            //     btn.addEventListener('click', () => {
+            //         segs.forEach(b=>b.classList.remove('active'));
+            //         btn.classList.add('active');
+            //         const val = btn.getAttribute('data-mode');
+            //         const radio = document.querySelector(`input[name="optradio"][value="${val}"]`);
+            //         if (radio) { radio.checked = true; radio.dispatchEvent(new Event('change')); }
+            //     });
+            // });
             const collapseBtn = document.getElementById('collapse-toggle');
             const panel = document.getElementById('param-panel');
             collapseBtn.addEventListener('click', () => {
