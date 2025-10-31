@@ -48,30 +48,28 @@
         }
         .topbar {
             display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: var(--space);
-            padding: 4px 12px;
-            flex-wrap: wrap;
-        }
-        .topbar-group {
-            display: flex;
-            align-items: center;
-            gap: var(--space);
-            flex-wrap: wrap;
-        }
-        .topbar-group-left { flex: 1 1 420px; }
-        .topbar-group-right {
-            flex: 0 0 240px;
-            display: flex;
             flex-direction: column;
-            align-items: stretch;
-            justify-content: flex-start;
             gap: var(--space-xs);
-            text-align: left;
+            padding: 4px 12px 0 12px;
         }
-        .topbar-buttons { display: flex; align-items: stretch; gap: var(--space-sm); flex-wrap: wrap; width: 100%; }
-        .topbar-buttons button { width: 100%; }
+        .topbar-firstline {
+            display: flex;
+            align-items: center;
+            gap: var(--space);
+            flex-wrap: wrap;
+        }
+        .topbar-firstline .topbar-spacer { flex: 1 1 auto; }
+        .topbar-secondline {
+            display: flex;
+            justify-content: flex-end;
+            padding-bottom: 4px;
+        }
+        .topbar-buttons { display: inline-flex; align-items: stretch; gap: var(--space-sm); }
+        .topbar-divider {
+            width: 100%;
+            height: 1px;
+            background: var(--line);
+        }
         .brand {
             font-weight: 600;
             letter-spacing: 0.2px;
@@ -143,14 +141,13 @@
         }
         .param-grid {
             display: flex;
-            flex-direction: column;
-            gap: var(--space-xs);
-        }
-        .param-row {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
             gap: var(--space-sm);
-            align-items: center;
+            flex-wrap: wrap;
+        }
+        .param-column {
+            flex: 1 1 240px;
+            display: grid;
+            gap: var(--space-sm);
         }
         .param-field {
             display: flex;
@@ -173,8 +170,6 @@
             flex: 1 1 auto;
             min-width: 0;
         }
-        .param-field-button .field-inputs { flex: 0 0 auto; }
-        .param-field-button .btn-ghost { min-width: 180px; }
         .param-field-status {
             font-weight: 600;
             gap: 6px;
@@ -215,23 +210,21 @@
             border: 0;
         }
         @media (max-width: 900px) {
-            .topbar { flex-direction: column; align-items: stretch; gap: var(--space-sm); }
-            .topbar-group { justify-content: space-between; }
-            .topbar-group-right { flex: 1 1 100%; flex-direction: row; align-items: center; justify-content: space-between; gap: var(--space-sm); }
-            .topbar-buttons { width: auto; justify-content: flex-start; }
-            .topbar-buttons button { width: auto; }
+            .topbar-firstline {
+                justify-content: space-between;
+            }
+            .topbar-buttons { width: 100%; justify-content: flex-start; }
             .status { white-space: normal; }
         }
         @media (max-width: 768px) {
-            .topbar-group { gap: var(--space-sm); }
-            .param-row { grid-template-columns: 1fr; }
+            .topbar-firstline { gap: var(--space-sm); }
+            .param-grid { flex-direction: column; }
             .param-field {
                 flex-wrap: wrap;
                 gap: 6px;
             }
             .param-field .field-label { flex: 1 1 100px; }
             .param-field .field-inputs { flex: 1 1 100%; }
-            .param-field-button .btn-ghost { width: 100%; }
             .topbar-buttons { flex-direction: column; align-items: stretch; gap: var(--space-xs); }
             .btn-primary-modern, .btn-ghost { width: 100%; display: inline-flex; justify-content: center; }
         }
@@ -240,7 +233,7 @@
 <body>
 <nav id="info" class="navbar navbar-light bg-light" style="position:fixed; top:0; left:0; right:0; z-index:1000;">
     <div class="topbar">
-        <div class="topbar-group topbar-group-left">
+        <div class="topbar-firstline">
             <div class="brand">HABSIM</div>
             <div class="segmented" role="group" aria-label="Mode">
                 <button class="segment active" data-mode="standardbln">Standard</button>
@@ -254,18 +247,20 @@
                 <input id="toggle-event" type="checkbox" checked data-toggle="toggle" data-on="Enabled" data-off="Disabled" data-size="small" data-onstyle="success">
             </label>
             <button id="collapse-toggle" class="btn-ghost" title="Show/Hide parameters">Toggle panel</button>
-        </div>
-        <div class="topbar-group topbar-group-right">
+            <div class="topbar-spacer"></div>
             <div class="topbar-buttons">
                 <button class="btn-primary-modern" type="button" onclick="simulate()">Simulate</button>
                 <!-- <button id="eqtimebtn" class="btn-ghost" type="button" onclick="getTimeremain()">Remaining Time</button> -->
             </div>
+        </div>
+        <div id="topbar-divider" class="topbar-divider"></div>
+        <div class="topbar-secondline">
             <div class="status" role="status">Model run: <span id="run">Unavailable</span> • Server: <span id="status">Unavailable</span></div>
         </div>
     </div>
     <div id="param-panel">
         <div class="param-grid">
-            <div class="param-row">
+            <div class="param-column">
                 <div class="param-field param-field-date">
                     <span class="field-label">Date</span>
                     <div class="field-inputs">
@@ -276,10 +271,26 @@
                         <input id="yr" class="field-input field-input-lg" type="text" name="yr">
                     </div>
                 </div>
+                <div class="param-field param-field-time">
+                    <span class="field-label">Time (UTC)</span>
+                    <div class="field-inputs">
+                        <input id="hr" class="field-input field-input-xs" type="text" name="hr">
+                        <span class="field-sep">:</span>
+                        <input id="mn" class="field-input field-input-xs" type="text" name="mn">
+                    </div>
+                </div>
+            </div>
+            <div class="param-column">
                 <div class="param-field">
                     <span class="field-label">Lat</span>
                     <div class="field-inputs">
                         <input id="lat" class="field-input field-input-md" type="text" name="lat">
+                    </div>
+                </div>
+                <div class="param-field">
+                    <span class="field-label">Lon</span>
+                    <div class="field-inputs">
+                        <input id="lon" class="field-input field-input-md" type="text" name="lon">
                     </div>
                 </div>
                 <div class="param-field">
@@ -290,29 +301,7 @@
                     </div>
                 </div>
             </div>
-            <div class="param-row">
-                <div class="param-field param-field-time">
-                    <span class="field-label">Time (UTC)</span>
-                    <div class="field-inputs">
-                        <input id="hr" class="field-input field-input-xs" type="text" name="hr">
-                        <span class="field-sep">:</span>
-                        <input id="mn" class="field-input field-input-xs" type="text" name="mn">
-                    </div>
-                </div>
-                <div class="param-field">
-                    <span class="field-label">Lon</span>
-                    <div class="field-inputs">
-                        <input id="lon" class="field-input field-input-md" type="text" name="lon">
-                    </div>
-                </div>
-                <div class="param-field param-field-button">
-                    <span class="field-label field-label-empty" aria-hidden="true">Get ground elevation</span>
-                    <div class="field-inputs">
-                <!-- <button class="btn-ghost" onclick="getElev()">Get ground elevation</button> -->
-                    </div>
-                </div>
-            </div>
-            <div class="param-row">
+            <div class="param-column">
                 <div class="param-field">
                     <span class="field-label">Ascent rate</span>
                     <div class="field-inputs">
@@ -335,43 +324,43 @@
                     </div>
                 </div>
             </div>
-            <div class="param-row extra-row">
-                <div class="param-field" id="group-eqtime" style="display:none;">
-                    <span class="field-label">Time at Equilibrium</span>
-                    <div class="field-inputs">
-                        <input id="eqtime" class="field-input field-input-md" type="text" name="eqtime">
-                        <span class="unit">h</span>
-                    </div>
-                </div>
-                <div class="param-field" id="group-coeff" style="display:none;">
-                    <span class="field-label">Floating Coefficient</span>
-                    <div class="field-inputs">
-                        <input id="coeff" class="field-input field-input-md" type="text" name="coeff">
-                    </div>
-                </div>
-                <div class="param-field" id="group-dur" style="display:none;">
-                    <span class="field-label">Simulate for</span>
-                    <div class="field-inputs">
-                        <input id="dur" class="field-input field-input-md" type="text" name="dur">
-                        <span class="unit">h</span>
-                    </div>
-                </div>
-                <div class="param-field" id="group-step" style="display:none;">
-                    <span class="field-label">Step Size</span>
-                    <div class="field-inputs">
-                        <input id="step" class="field-input field-input-md" type="text" name="step">
-                        <span class="unit">s</span>
-                    </div>
-                </div>
-                <!-- <div class="param-field param-field-status" id="group-timeremain">
-                    <span class="field-label">Remaining</span>
-                    <div class="field-inputs">
-                        <span id="timeremain"></span>
-                    </div>
-                </div> -->
-            </div>
-            <p class="help">Click on map to get coordinates</p>
         </div>
+        <div class="param-extra">
+            <div class="param-field" id="group-eqtime" style="display:none;">
+                <span class="field-label">Time at Equilibrium</span>
+                <div class="field-inputs">
+                    <input id="eqtime" class="field-input field-input-md" type="text" name="eqtime">
+                    <span class="unit">h</span>
+                </div>
+            </div>
+            <div class="param-field" id="group-coeff" style="display:none;">
+                <span class="field-label">Floating Coefficient</span>
+                <div class="field-inputs">
+                    <input id="coeff" class="field-input field-input-md" type="text" name="coeff">
+                </div>
+            </div>
+            <div class="param-field" id="group-dur" style="display:none;">
+                <span class="field-label">Simulate for</span>
+                <div class="field-inputs">
+                    <input id="dur" class="field-input field-input-md" type="text" name="dur">
+                    <span class="unit">h</span>
+                </div>
+            </div>
+            <div class="param-field" id="group-step" style="display:none;">
+                <span class="field-label">Step Size</span>
+                <div class="field-inputs">
+                    <input id="step" class="field-input field-input-md" type="text" name="step">
+                    <span class="unit">s</span>
+                </div>
+            </div>
+            <!-- <div class="param-field param-field-status" id="group-timeremain">
+                <span class="field-label">Remaining</span>
+                <div class="field-inputs">
+                    <span id="timeremain"></span>
+                </div>
+            </div> -->
+        </div>
+        <p class="help">Click on map to get coordinates</p>
         <div class="visually-hidden" aria-hidden="true">
             <input type="radio" name="optradio" class="radiobtn" value="standardbln" checked>
             <input type="radio" name="optradio" class="radiobtn" value="zpbbln">
@@ -411,11 +400,20 @@
             });
             const collapseBtn = document.getElementById('collapse-toggle');
             const panel = document.getElementById('param-panel');
+            const divider = document.getElementById('topbar-divider');
             collapseBtn.addEventListener('click', () => {
-                if (panel.style.display === 'none') panel.style.display = '';
-                else panel.style.display = 'none';
+                if (panel.style.display === 'none') {
+                    panel.style.display = '';
+                    if (divider) divider.style.display = '';
+                } else {
+                    panel.style.display = 'none';
+                    if (divider) divider.style.display = 'none';
+                }
                 adjustLayout();
             });
+            if (panel && panel.style.display === 'none' && divider) {
+                divider.style.display = 'none';
+            }
         });
 </script>
 </body>
