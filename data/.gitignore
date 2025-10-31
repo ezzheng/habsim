@@ -1,0 +1,12 @@
+# Ignore large binary datasets by default
+*.npz
+*.npy
+*.grb2
+*.xml
+*.adf
+*.npy.zip
+
+# Allow keeping the README and whichgefs tracked if desired
+!README.md
+!whichgefs
+

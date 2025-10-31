@@ -23,7 +23,7 @@ logging.basicConfig(
 )
 
 levels = [1, 2, 3, 5, 7, 20, 30, 70, 150, 350, 450, 550, 600, 650, 750, 800, 900, 950, 975]
-NUM_MEMBERS = 20
+NUM_MEMBERS = 2
 MAX_HOURS = 384
 FORECAST_INTERVAL = 6
 TIMEOUT = timedelta(hours=12)
