@@ -50,7 +50,7 @@
             display: flex;
             flex-direction: column;
             gap: var(--space-xs);
-            padding: 4px 12px 0 12px;
+            padding: 4px 24px 0 24px;
         }
         .topbar-firstline {
             display: flex;
@@ -146,7 +146,7 @@
         /* Parameter panel */
         #param-panel {
             border-top: 1px solid var(--soft);
-            padding: 6px 12px 8px 12px;
+            padding: 12px 24px 16px 24px;
             background: var(--soft2);
             max-height: 60vh;
             overflow-y: auto;
@@ -154,15 +154,12 @@
             width: 100%;
             box-sizing: border-box;
             -webkit-overflow-scrolling: touch;
-            transition: max-height 0.3s ease, opacity 0.3s ease;
+            transition: opacity 0.15s ease;
             opacity: 1;
         }
         #param-panel.collapsed {
-            max-height: 0;
+            display: none;
             opacity: 0;
-            padding-top: 0;
-            padding-bottom: 0;
-            overflow: hidden;
         }
         .param-grid {
             display: grid;
@@ -271,6 +268,8 @@
             .status { white-space: normal; }
         }
         @media (max-width: 768px) {
+            .topbar { padding-left: 12px; padding-right: 12px; }
+            #param-panel { padding-left: 12px; padding-right: 12px; }
             .topbar-firstline { gap: var(--space-sm); }
             .waypoint-toggle { margin-left: 0; }
             .param-grid { grid-template-columns: 1fr; }
@@ -463,8 +462,21 @@
             const collapseBtn = document.getElementById('collapse-toggle');
             const panel = document.getElementById('param-panel');
             collapseBtn.addEventListener('click', () => {
-                panel.classList.toggle('collapsed');
-                setTimeout(adjustLayout, 300); // Wait for transition to complete
+                if (panel.classList.contains('collapsed')) {
+                    // Fade in: remove display:none first, then fade in
+                    panel.classList.remove('collapsed');
+                    panel.style.opacity = '0';
+                    requestAnimationFrame(() => {
+                        panel.style.opacity = '1';
+                    });
+                } else {
+                    // Fade out: fade first, then set display:none
+                    panel.style.opacity = '0';
+                    setTimeout(() => {
+                        panel.classList.add('collapsed');
+                    }, 150);
+                }
+                setTimeout(adjustLayout, 150);
             });
         });
 </script>
