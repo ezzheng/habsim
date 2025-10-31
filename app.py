@@ -4,6 +4,7 @@ from flask_cors import CORS
 app = Flask(__name__)
 CORS(app)
 
+import logging
 import elev
 from datetime import datetime, timezone
 from gefs import listdir_gefs, open_gefs
@@ -99,6 +100,7 @@ def singlezpb(timestamp, lat, lon, alt, equil, eqtime, asc, desc, model):
         fall = simulate.simulate(timestamp, lat, lon, -desc, 240, dur, alt, model)
         return (rise, coast, fall)
     except Exception as e:
+        app.logger.exception("singlezpb failed")
         if str(e) == "alt out of range":
             return "alt error"
         return "error"
