@@ -188,7 +188,7 @@ async function simulate() {
     var onlyonce = true;
     if(checkNumPos(allValues) && checkasc(asc,alt,equil)){
         // Backend currently caches 2 members; extend back to 20 when ready
-        for (i = 1; i < 3; i++) {
+        for (i = 1; i < 2; i++) {
             var url2 = url + "&model=" + i;
             console.log(url2);
             await fetch(url2)
