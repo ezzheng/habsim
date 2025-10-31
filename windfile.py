@@ -117,8 +117,10 @@ class WindFile:
     def get_pressure_index(self, alt):
         pressure = self.alt_to_hpa(alt)
 
-        if pressure < self._interp_min or pressure > self._interp_max:
-            raise Exception(f"Altitude {alt} out of bounds")
+        if pressure <= self._interp_min:
+            return float(self._interp_indices[0])
+        if pressure >= self._interp_max:
+            return float(self._interp_indices[-1])
 
         return float(np.interp(pressure, self._interp_levels, self._interp_indices))
 
