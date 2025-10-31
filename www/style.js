@@ -1,66 +1,14 @@
 var btype = "STANDARD"
 $(document).ready(function() {
     $('input[name="optradio"]').on('change', function () {
-
-        if ($(this).val() === "standardbln") {
-            var codeBlock = "<div class = \"input\">\n" +
-                "                Ascent rate: <input id=\"asc\" type=\"text\" size=\"4\" name=\"asc\"> m/s <br/>\n" +
-                "                </div>\n" +
-                "                <div class = \"input\">\n" +
-                "                Burst altitude: <input id=\"equil\" type=\"text\" size=\"5\" name=\"equil\"> m <br/>\n" +
-                "                </div>\n" +
-                "                <div class = \"input\">\n" +
-                "                Descent rate: <input id=\"desc\" type=\"text\" size=\"4\" name=\"desc\"> m/s <br/>\n" +
-                "                </div>"
-            document.getElementById("contentwrap").innerHTML = codeBlock;
-            document.getElementById("asc").value = 4;
-            document.getElementById("equil").value = 30000;
-            document.getElementById("desc").value = 8;
-            btype = "STANDARD"
-        }
-
-        else if ($(this).val() === "zpbbln") {
-            var codeBlock = "<div class = \"input\">\n" +
-                "                Ascent rate: <input id=\"asc\" type=\"text\" size=\"4\" name=\"asc\"> m/s <br/>\n" +
-                "                </div>\n" +
-                "                <div class = \"input\">\n" +
-                "                Equilibrium altitude: <input id=\"equil\" type=\"text\" size=\"5\" name=\"equil\"> m <br/>\n" +
-                "                </div>\n" + "<div class = \"input\">\n" +
-                "                Time at Equilibrium: <input id=\"eqtime\" type=\"text\" size=\"4\" name=\"eqtime\"> h <br/>\n" +
-                "                </div>\n" +
-                "                <div class = \"input\">\n" +
-                "                Descent rate: <input id=\"desc\" type=\"text\" size=\"4\" name=\"desc\"> m/s <br/>\n" +
-                "                </div>"
-            document.getElementById("contentwrap").innerHTML = codeBlock;
-            document.getElementById("asc").value = 3.7;
-            document.getElementById("equil").value = 29000;
-            document.getElementById("eqtime").value = 1;
-            document.getElementById("desc").value = 15;
-            btype = "ZPB"
-            document.getElementById("eqtimebtn").style.visibility = "visible";
-
-
-        } else if ($(this).val() === "floatbln") {
-            var codeBlock = "<div class = \"input\">\n" +
-                "                Floating Coefficient: <input id=\"coeff\" type=\"text\" size=\"4\" name=\"coeff\"> <br/>\n" +
-                "                </div>\n" +
-                "                <div class = \"input\">\n" +
-                "                Simulate for: <input id=\"dur\" type=\"text\" size=\"4\" name=\"dur\"> h <br/>\n" +
-                "                </div>\n" +
-                "                <div class = \"input\">\n" +
-                "                Step Size: <input id=\"step\" type=\"text\" size=\"4\" name=\"step\"> m/s <br/>\n" +
-                "                </div>"
-            document.getElementById("contentwrap").innerHTML = codeBlock;
-            document.getElementById("coeff").value = 0.5;
-            document.getElementById("dur").value = 48;
-            document.getElementById("step").value = 240;
-            btype = "FLOAT"
-            document.getElementById("eqtimebtn").style.visibility = "hidden";
-            document.getElementById("timeremain").style.visibility = "hidden";
-        }
+        if ($(this).val() === "standardbln") setMode("STANDARD");
+        else if ($(this).val() === "zpbbln") setMode("ZPB");
+        else if ($(this).val() === "floatbln") setMode("FLOAT");
     });
 
     setMissions();
+    // initialize defaults and visibility
+    setMode("STANDARD");
 });
 
 var waypointsToggle = true;
@@ -111,6 +59,10 @@ fetch(URL_ROOT + "/status").then(res => res.text()).then((result) => {
 document.getElementById("asc").value = 4;
 document.getElementById("equil").value = 30000;
 document.getElementById("desc").value = 8;
+document.getElementById("coeff").value = 0.5;
+document.getElementById("dur").value = 48;
+document.getElementById("step").value = 240;
+document.getElementById("eqtime").value = 1;
 
 
 //ACTIVE MISSIONS
@@ -145,4 +97,46 @@ function setMissions(){
 function setActiveMission(msn){
     CURRENT_MISSION = msn;
     document.getElementById("activeMission").innerText = CURRENT_MISSION;
+}
+
+function setMode(mode){
+    btype = mode;
+    // groups
+    var geqtime = document.getElementById("group-eqtime");
+    var gcoeff = document.getElementById("group-coeff");
+    var gdur = document.getElementById("group-dur");
+    var gstep = document.getElementById("group-step");
+    // buttons
+    var eqbtn = document.getElementById("eqtimebtn");
+
+    if (mode === "STANDARD"){
+        geqtime.style.display = "none";
+        gcoeff.style.display = "none";
+        gdur.style.display = "none";
+        gstep.style.display = "none";
+        eqbtn.style.visibility = "visible";
+        document.getElementById("asc").value = 4;
+        document.getElementById("equil").value = 30000;
+        document.getElementById("desc").value = 8;
+    } else if (mode === "ZPB"){
+        geqtime.style.display = "block";
+        gcoeff.style.display = "none";
+        gdur.style.display = "none";
+        gstep.style.display = "none";
+        eqbtn.style.visibility = "visible";
+        document.getElementById("asc").value = 3.7;
+        document.getElementById("equil").value = 29000;
+        document.getElementById("eqtime").value = 1;
+        document.getElementById("desc").value = 15;
+    } else { // FLOAT
+        geqtime.style.display = "none";
+        gcoeff.style.display = "block";
+        gdur.style.display = "block";
+        gstep.style.display = "block";
+        eqbtn.style.visibility = "hidden";
+        document.getElementById("coeff").value = 0.5;
+        document.getElementById("dur").value = 48;
+        document.getElementById("step").value = 240;
+        document.getElementById("timeremain").style.visibility = "hidden";
+    }
 }
