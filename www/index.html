@@ -65,6 +65,12 @@
             letter-spacing: 0.2px;
             color: var(--fg);
             font-size: 15px;
+            cursor: pointer;
+            text-decoration: none;
+            display: inline-block;
+        }
+        .brand:hover {
+            opacity: 0.8;
         }
         .waypoint-toggle {
             border: 1px solid var(--line);
@@ -89,15 +95,14 @@
             background: var(--bg);
         }
         .segment {
-            padding: 4px 9px;
+            padding: 6px 12px;
             background: var(--bg);
-            cursor: pointer;
+            cursor: default;
             border: none;
             font-weight: 500;
             color: var(--fg);
-            font-size: 12.5px;
+            font-size: 13px;
         }
-        .segment:hover{ background: var(--soft2); }
         .segment.active { background: var(--brand); color: #ffffff; }
         .divider { width: 1px; background: var(--line); }
         .status { font-size: 12px; color: var(--muted); white-space: nowrap; }
@@ -139,6 +144,15 @@
             width: 100%;
             box-sizing: border-box;
             -webkit-overflow-scrolling: touch;
+            transition: max-height 0.3s ease, opacity 0.3s ease;
+            opacity: 1;
+        }
+        #param-panel.collapsed {
+            max-height: 0;
+            opacity: 0;
+            padding-top: 0;
+            padding-bottom: 0;
+            overflow: hidden;
         }
         .param-grid {
             display: grid;
@@ -272,9 +286,9 @@
 <nav id="info" class="navbar navbar-light bg-light" style="position:fixed; top:0; left:0; right:0; z-index:1000;">
     <div class="topbar">
         <div class="topbar-firstline">
-            <div class="brand">HABSIM</div>
+            <a href="https://www.stanfordssi.org/" target="_blank" rel="noopener noreferrer" class="brand">HABSIM</a>
             <div class="segmented" role="group" aria-label="Mode">
-                <button class="segment active" data-mode="standardbln" style="cursor: default;">Standard</button>
+                <button class="segment active" data-mode="standardbln">Standard</button>
                 <!-- <div class="divider"></div>
                 <button class="segment" data-mode="zpbbln">ZPB</button>
                 <div class="divider"></div>
@@ -434,12 +448,8 @@
             const collapseBtn = document.getElementById('collapse-toggle');
             const panel = document.getElementById('param-panel');
             collapseBtn.addEventListener('click', () => {
-                if (panel.style.display === 'none') {
-                    panel.style.display = '';
-                } else {
-                    panel.style.display = 'none';
-                }
-                adjustLayout();
+                panel.classList.toggle('collapsed');
+                setTimeout(adjustLayout, 300); // Wait for transition to complete
             });
         });
 </script>
