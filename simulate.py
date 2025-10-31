@@ -1,5 +1,6 @@
 import numpy as np 
 import math
+import gc
 import elev
 from datetime import datetime, timedelta, timezone
 import math
@@ -15,8 +16,9 @@ EARTH_RADIUS = float(6.371e6)
 DATA_STEP = 6 # hrs
 
 ### Cache of datacubes and files. ###
-### filecache maps model number -> Simulator instance ###
-filecache = {}
+### Keep at most one simulator resident to stay within tight memory budgets. ###
+filecache = None
+filecache_model = None
 elevation_cache = None
 
 currgefs = "Unavailable"
@@ -34,9 +36,11 @@ def refresh():
 
 # opens and stores 20 Simulators in filecache
 def reset():
-    global filecache, elevation_cache
-    filecache = {}
+    global filecache, filecache_model, elevation_cache
+    filecache = None
+    filecache_model = None
     elevation_cache = None
+    gc.collect()
 
 
 def _get_elevation_data():
@@ -47,10 +51,19 @@ def _get_elevation_data():
 
 
 def _get_simulator(model):
-    if model not in filecache:
-        wind_file = WindFile(load_gefs(f'{currgefs}_{str(model).zfill(2)}.npz'))
-        filecache[model] = Simulator(wind_file, _get_elevation_data())
-    return filecache[model]
+    global filecache, filecache_model
+    if filecache_model == model and filecache is not None:
+        return filecache
+
+    # Drop the previous simulator to free memory before loading the next one.
+    filecache = None
+    filecache_model = None
+    gc.collect()
+
+    wind_file = WindFile(load_gefs(f'{currgefs}_{str(model).zfill(2)}.npz'))
+    filecache = Simulator(wind_file, _get_elevation_data())
+    filecache_model = model
+    return filecache
 
 
 def lin_to_angular_velocities(lat, lon, u, v): 
