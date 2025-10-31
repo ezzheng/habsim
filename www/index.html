@@ -3,6 +3,9 @@
 <head>
     <meta name="viewport" content="initial-scale=1.0, user-scalable=yes" />
     <title>HABSIM: High Altitude Balloon Simulator</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/4.0.0/css/bootstrap.min.css" integrity="sha384-Gn5384xqQ1aoWXA+058RXPxPg6fy4IWvTNh0E263XmFcJlSAwiGgFAW/dAiS6JXm" crossorigin="anonymous">
     <script src="https://code.jquery.com/jquery-3.2.1.slim.min.js" integrity="sha384-KJ3o2DKtIkvYIK3UENzmM7KCkRr/rE9/Qpg6aAZGJwFDMVNA/GpGFF93hXpG5KkN" crossorigin="anonymous"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/popper.js/1.12.9/umd/popper.min.js" integrity="sha384-ApNbgh9B+Y1QKtv3Rn7W3mgPxhU9K/ScQsAP7hUibX39j7fakFPskvXusvfa0b4Q" crossorigin="anonymous"></script>
@@ -14,163 +17,158 @@
     const URL_ROOT = "sim"
     </script>
     <style type="text/css">
+        :root{
+            --bg:#ffffff; --fg:#111827; --muted:#6b7280; --line:#e5e7eb; --soft:#f3f4f6; --soft2:#fafafa; --brand:#111827; --brand-600:#0b1220;
+            --radius:8px; --space:16px; --space-sm:10px; --space-xs:6px;
+        }
+        @media (prefers-color-scheme: dark){
+            :root{ --bg:#0b0f14; --fg:#e5e7eb; --muted:#9ca3af; --line:#1f2937; --soft:#0f1520; --soft2:#0d131d; --brand:#93c5fd; --brand-600:#60a5fa; }
+        }
         html, body { height: 100%; margin: 0; padding: 0; }
         body {
             display: flex;
             flex-direction: column;
+            font-family: 'Inter', system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+            color: var(--fg);
+            background: var(--bg);
         }
         main {
             flex: 1;
             display: flex;
         }
         #map{ flex: 1; height: 100%; width: 100%; margin: 0; padding: 0}
+        /* Top bar */
         #info {
             width: 100%;
-            height: 170px;
-            /* bottom: 0px; */
-            /* right: 0px; */
             top: 0px;
-            background-color: #111;
-            color: #a2a2a2;
-            font-family: Helvetica;
-            font-size: 1vw;
+            background-color: var(--bg);
+            color: var(--fg);
+            border-bottom: 1px solid var(--line);
+            box-shadow: 0 1px 0 rgba(0,0,0,0.03);
         }
-        /* Keep input rows consistent height to prevent bar shifting */
-        #contentwrap .input { min-height: 28px; }
-        .nav-item {
-            padding-right: 35px;
+        .topbar {
+            display: flex;
+            align-items: center;
+            gap: var(--space);
+            padding: var(--space-sm) var(--space);
         }
-        .input {
-            padding-bottom: 5px;
+        .brand {
+            font-weight: 600;
+            letter-spacing: 0.2px;
+            color: var(--fg);
         }
-        #navbarSupportedContent {
-            margin-top: 5px;
+        .spacer { flex: 1; }
+        .segmented {
+            display: inline-flex;
+            border: 1px solid var(--line);
+            border-radius: var(--radius);
+            overflow: hidden;
+            background: var(--bg);
         }
-        .radio-inline {
-            margin-right: 5px;
+        .segment {
+            padding: var(--space-xs) 10px;
+            background: var(--bg);
+            cursor: pointer;
+            border: none;
+            font-weight: 500;
+            color: var(--fg);
         }
-        .radiobtn {
-            margin-right: 5px;
+        .segment:hover{ background: var(--soft2); }
+        .segment.active { background: var(--brand); color: #ffffff; }
+        .divider { width: 1px; background: var(--line); }
+        .status { font-size: 13px; color: var(--muted); }
+        .btn-primary-modern {
+            background: var(--brand);
+            color: #fff;
+            border: 1px solid var(--brand);
+            padding: var(--space-xs) 12px;
+            border-radius: var(--radius);
+            transition: background .15s ease,border-color .15s ease,box-shadow .15s ease;
         }
-        @media (max-width: 768px) {
-            #info {
-                overflow-y: scroll;
-                overflow-x: scroll;
-                font-size: 5vw;
-                text-align: center;
-            }
-            .nav-item {
-                width: 100% !important;
-            }
-            .navbar-brand img{
-                margin-left: 75%;
-            }
-            body{
-                overflow-y: scroll;
-            }
+        .btn-primary-modern:hover{ background: var(--brand-600); border-color: var(--brand-600); }
+        .btn-ghost {
+            background: transparent;
+            border: 1px solid var(--line);
+            color: var(--fg);
+            padding: var(--space-xs) 10px;
+            border-radius: var(--radius);
+            transition: background .15s ease,border-color .15s ease;
         }
+        .btn-ghost:hover{ background: var(--soft2); }
         .toggle {
             border: solid 1px #a2a2a2;
+        }
+        /* Parameter panel */
+        #param-panel {
+            border-top: 1px solid var(--soft);
+            padding: 8px var(--space) 12px var(--space);
+            background: var(--soft2);
+        }
+        .inputs-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: var(--space); align-items: end; }
+        .input { font-size: 14px; padding-bottom: 6px; color: var(--fg); }
+        .input input { border: 1px solid #d1d5db; border-radius: 6px; padding: 6px 8px; background: var(--bg); color: var(--fg); }
+        .input input:focus{ outline: 2px solid var(--brand-600); outline-offset: 1px; }
+        .help { font-size: 12px; color: var(--muted); margin: 4px 0 0 0; }
+        @media (max-width: 768px) {
+            .topbar { flex-wrap: wrap; gap: 10px; }
+            .inputs-row { grid-template-columns: 1fr; }
         }
     </style>
 </head>
 <body>
-<nav id="info" class="navbar navbar-expand-lg navbar-light bg-light" style="position:fixed; top:0; left:0; right:0; z-index:1000;">
-    <a class="navbar-brand" href="https://stanfordssi.org"><img src="https://s3-us-west-1.amazonaws.com/habmc/assets/Logo_BlackSubText.png" style="width: 120px;"></a>
-
-    <div  id="navbarSupportedContent">
-        <ul class="navbar-nav mr-auto">
-
-            <li class="nav-item" style="width: 20%">
-                <a class="navbar-brand" href="#">Stanford SSI HABSIM</a><br>
-
-                <label class="radio-inline"><input type="radio" name="optradio" class="radiobtn" value="standardbln" checked>Standard</label>
-                <label class="radio-inline"><input type="radio" name="optradio" class="radiobtn" value="zpbbln">ZPB</label>
-                <label class="radio-inline"><input type="radio" name="optradio" class="radiobtn" value="floatbln" >Float</label>
-                <label class="switch">Waypoints:
-                    <input id="toggle-event" type="checkbox" checked data-toggle="toggle" data-on="Enabled" data-off="Disabled" data-size="small" data-onstyle="success">
-                </label>
-
-            </li>
-            <li class="nav-item" style="width: 15%">
-                <div class = "input">
-                    Date: <input id = "yr" type="text" size="4" name="yr">/<input id = "mo" type="text" size="2" name="mo">/<input id = "day" type="text" size="2" name="day"><br/>
-                </div>
-                <div class = "input">
-                    Time (UTC): <input id = "hr" type="text" size="2" name="hr">:<input id = "mn" type="text" size="2" name="mn"><br/><br/>
-                </div>
-            </li>
-            <li class="nav-item">
-                <div class = "input">
-                    Lat: <input id="lat" type="text" size="8" name="lat"> <br/>
-                </div>
-                <div class = "input">
-                    Lon: <input id="lon" type="text" size="8" name="lon"> <br/>
-                </div>
-                <p style="font-size: 12px;">Click on map to get coordinates</p>
-
-            </li>
-            <li class="nav-item">
-                <div class = "input">
-                    Launch altitude: <input id="alt" type="text" size="5" name="alt"> m <br/>
-                </div>
-                <button class="btn-sm" onclick="getElev()">Get Ground elevation</button><br>
-                <div class="btn-group">
-                    <!--
-                    <button type="button" class="btn btn-warning btn-sm" onclick="habmc()">Get Live HABMC Data</button>
-                    <button type="button" class="btn btn-warning dropdown-toggle dropdown-toggle-split" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
-                        <span class="sr-only">Toggle Dropdown</span>
-                    </button>
-                    <div class="dropdown-menu"></div>
-                    -->
-                </div>
-                <!-- <p style="font-size: 12px;" id="activeMission">SSI-</p> -->
-
-                
-            </li>
-            <li class="nav-item" id = "contentwrap">
-                <div class = "input">
-                    Ascent rate: <input id="asc" type="text" size="4" name="asc"> m/s <br/>
-                </div>
-                <div class = "input">
-                    Burst/Equilibrium altitude: <input id="equil" type="text" size="5" name="equil"> m <br/>
-                </div>
-                <div class = "input">
-                    Descent rate: <input id="desc" type="text" size="4" name="desc"> m/s <br/>
-                </div>
-                <div class = "input" id="group-eqtime" style="visibility:hidden;">
-                    Time at Equilibrium: <input id="eqtime" type="text" size="4" name="eqtime"> h <br/>
-                </div>
-                <div class = "input" id="group-coeff" style="visibility:hidden;">
-                    Floating Coefficient: <input id="coeff" type="text" size="4" name="coeff"> <br/>
-                </div>
-                <div class = "input" id="group-dur" style="visibility:hidden;">
-                    Simulate for: <input id="dur" type="text" size="4" name="dur"> h <br/>
-                </div>
-                <div class = "input" id="group-step" style="visibility:hidden;">
-                    Step Size: <input id="step" type="text" size="4" name="step"> s <br/>
-                </div>
-            </li>
-            <li class="nav-item" style="width: 20%">
-                <div class = "input">
-                    Model run: <span id="run">Unavailable</span></br>
-                </div>
-                
-                <div class = "input">
-                    Server status: <span id="status">Unavailable</span></br>
-                </div>
-                <div class = "input">
-                    <button class="btn-sm btn-info" onclick="simulate()">Simulate</button><button class="btn-sm" id="eqtimebtn" onclick="getTimeremain()">Remaining Time</button><br/>
-                </div>
-                <div class = "input">
-                        <span id="timeremain"></span></br>
-                </div>
-            </li>
-        </ul>
+<nav id="info" class="navbar navbar-light bg-light" style="position:fixed; top:0; left:0; right:0; z-index:1000;">
+    <div class="topbar">
+        <div class="brand">HABSIM</div>
+        <div class="segmented" role="group" aria-label="Mode">
+            <button class="segment active" data-mode="standardbln">Standard</button>
+            <div class="divider"></div>
+            <button class="segment" data-mode="zpbbln">ZPB</button>
+            <div class="divider"></div>
+            <button class="segment" data-mode="floatbln">Float</button>
+        </div>
+        <label style="margin:0 8px 0 12px; font-size:14px;">Waypoints:
+            <input id="toggle-event" type="checkbox" checked data-toggle="toggle" data-on="Enabled" data-off="Disabled" data-size="small" data-onstyle="success">
+        </label>
+        <button id="collapse-toggle" class="btn-ghost" title="Show/Hide parameters">Toggle panel</button>
+        <div class="spacer"></div>
+        <div class="status">Model run: <span id="run">Unavailable</span> • Server: <span id="status">Unavailable</span></div>
+        <button class="btn-primary-modern" onclick="simulate()">Simulate</button>
+        <button id="eqtimebtn" class="btn-ghost" onclick="getTimeremain()">Remaining Time</button>
     </div>
-
+    <div id="param-panel">
+        <div class="inputs-row">
+            <div>
+                <div class="input">Date: <input id = "yr" type="text" size="4" name="yr">/<input id = "mo" type="text" size="2" name="mo">/<input id = "day" type="text" size="2" name="day"></div>
+                <div class="input">Time (UTC): <input id = "hr" type="text" size="2" name="hr">:<input id = "mn" type="text" size="2" name="mn"></div>
+            </div>
+            <div>
+                <div class="input">Lat: <input id="lat" type="text" size="8" name="lat"></div>
+                <div class="input">Lon: <input id="lon" type="text" size="8" name="lon"></div>
+                <p class="help">Click on map to get coordinates</p>
+            </div>
+            <div>
+                <div class="input">Launch altitude: <input id="alt" type="text" size="5" name="alt"> m</div>
+                <button class="btn-ghost" onclick="getElev()">Get ground elevation</button>
+            </div>
+            <div id="contentwrap">
+                <div class="input">Ascent rate: <input id="asc" type="text" size="4" name="asc"> m/s</div>
+                <div class="input">Burst/Equilibrium altitude: <input id="equil" type="text" size="5" name="equil"> m</div>
+                <div class="input">Descent rate: <input id="desc" type="text" size="4" name="desc"> m/s</div>
+                <div class="input" id="group-eqtime" style="visibility:hidden;">Time at Equilibrium: <input id="eqtime" type="text" size="4" name="eqtime"> h</div>
+                <div class="input" id="group-coeff" style="visibility:hidden;">Floating Coefficient: <input id="coeff" type="text" size="4" name="coeff"></div>
+                <div class="input" id="group-dur" style="visibility:hidden;">Simulate for: <input id="dur" type="text" size="4" name="dur"> h</div>
+                <div class="input" id="group-step" style="visibility:hidden;">Step Size: <input id="step" type="text" size="4" name="step"> s</div>
+                <div class="input"><span id="timeremain"></span></div>
+            </div>
+        </div>
+        <div style="padding-top:6px; font-size:13px; color:#6b7280;">
+            Mode:
+            <label class="radio-inline" style="margin-left:8px;"><input type="radio" name="optradio" class="radiobtn" value="standardbln" checked> Standard</label>
+            <label class="radio-inline" style="margin-left:8px;"><input type="radio" name="optradio" class="radiobtn" value="zpbbln"> ZPB</label>
+            <label class="radio-inline" style="margin-left:8px;"><input type="radio" name="optradio" class="radiobtn" value="floatbln"> Float</label>
+        </div>
+    </div>
 </nav>
-</div>
 <main id="main-container">
     <div id="map"></div>
 </main>
@@ -189,6 +187,26 @@
     }
     window.addEventListener('load', adjustLayout);
     window.addEventListener('resize', adjustLayout);
+        // topbar segmented buttons
+        window.addEventListener('DOMContentLoaded', function(){
+            const segs = document.querySelectorAll('.segment');
+            segs.forEach(btn => {
+                btn.addEventListener('click', () => {
+                    segs.forEach(b=>b.classList.remove('active'));
+                    btn.classList.add('active');
+                    const val = btn.getAttribute('data-mode');
+                    const radio = document.querySelector(`input[name="optradio"][value="${val}"]`);
+                    if (radio) { radio.checked = true; radio.dispatchEvent(new Event('change')); }
+                });
+            });
+            const collapseBtn = document.getElementById('collapse-toggle');
+            const panel = document.getElementById('param-panel');
+            collapseBtn.addEventListener('click', () => {
+                if (panel.style.display === 'none') panel.style.display = '';
+                else panel.style.display = 'none';
+                adjustLayout();
+            });
+        });
 </script>
 </body>
 </html>

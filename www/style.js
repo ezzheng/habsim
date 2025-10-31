@@ -4,6 +4,12 @@ $(document).ready(function() {
         if ($(this).val() === "standardbln") setMode("STANDARD");
         else if ($(this).val() === "zpbbln") setMode("ZPB");
         else if ($(this).val() === "floatbln") setMode("FLOAT");
+        // sync segmented control visual state
+        const val = $(this).val();
+        document.querySelectorAll('.segment').forEach(btn => {
+            if (btn.getAttribute('data-mode') === val) btn.classList.add('active');
+            else btn.classList.remove('active');
+        });
     });
 
     // initialize defaults and visibility
