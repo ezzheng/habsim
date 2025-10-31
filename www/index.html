@@ -150,6 +150,9 @@
             flex-direction: column;
             gap: var(--space-sm);
         }
+        .param-column.first {
+            margin-right: 24px;
+        }
         .param-field {
             display: grid;
             grid-template-columns: 130px auto;
@@ -288,7 +291,7 @@
     </div>
     <div id="param-panel">
         <div class="param-grid">
-            <div class="param-column">
+            <div class="param-column first">
                 <div class="param-field param-field-date">
                     <span class="field-label">Date</span>
                     <div class="field-inputs">
@@ -296,7 +299,7 @@
                         <span class="field-sep">/</span>
                         <input id="day" class="field-input field-input-xs" type="text" name="day">
                         <span class="field-sep">/</span>
-                        <input id="yr" class="field-input field-input-md" type="text" name="yr">
+                        <input id="yr" class="field-input field-input-sm" type="text" name="yr">
                     </div>
                 </div>
                 <div class="param-field param-field-time">
