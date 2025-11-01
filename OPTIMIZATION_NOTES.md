@@ -67,37 +67,6 @@ Total Usage:                  ~660 MB
 Available for requests:       ~1340 MB (plenty of headroom)
 ```
 
-## Performance Improvements
-
-| Optimization | Speed Gain | Memory Impact |
-|-------------|------------|---------------|
-| Prediction caching | Instant (cache hit) | +10 MB |
-| Math caching | +20-30% | +0.2 MB |
-| Early termination | Variable (0-50%) | 0 |
-| Garbage collection | -5% CPU, +10% memory headroom | Reduces usage |
-| Interpolation optimization | +10-15% | Slight reduction |
-| **Total (no cache)** | **~30-45% faster** | **~0.2 MB overhead** |
-| **Total (cache hit)** | **~99% faster** | **~10 MB overhead** |
-
-## Future Optimizations (If Needed)
-
-### Would require more RAM:
-- ❌ Load multiple models simultaneously (would need ~150MB × 3 = 450MB extra)
-- ❌ Larger prediction cache (100+ entries = 20MB+)
-
-### Could still implement:
-- ✅ Adaptive time stepping (variable step size based on altitude change rate)
-- ✅ Coarser time steps for "quick preview" mode
-- ✅ Parallel model execution if upgraded to 4GB+ RAM instance
-- ✅ Redis/external cache for cross-instance caching
-
-## Testing Recommendations
-
-1. **Memory monitoring**: Add logging to track peak memory usage
-2. **Cache hit rate**: Monitor `_prediction_cache` hit/miss ratio
-3. **Garbage collection**: Log GC pauses (should be <20ms)
-4. **End-to-end latency**: Measure with/without optimizations
-
 ## Rollback Plan
 
 Original files backed up as:
