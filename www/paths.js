@@ -75,8 +75,8 @@ function showWaypoints() {
                         // Will display time in 10:30:23 format
                         var formattedTime = hours + ':' + minutes.substr(-2) + ':' + seconds.substr(-2);
                         var infowindow = new google.maps.InfoWindow({
-                            content: '<div style="font-family: -apple-system, BlinkMacSystemFont, \'Segoe UI\', Roboto, \'Helvetica Neue\', Arial, sans-serif; padding: 8px; line-height: 1.6;">' +
-                                     '<div style="margin-bottom: 6px;"><strong style="font-weight: 600;">Altitude:</strong> ' + allpaths[index][point][3] + 'm</div>' +
+                            content: '<div style="font-family: -apple-system, BlinkMacSystemFont, \'Segoe UI\', Roboto, \'Helvetica Neue\', Arial, sans-serif; padding: 4px 6px; line-height: 1.5;">' +
+                                     '<div style="margin-bottom: 4px;"><strong style="font-weight: 600;">Altitude:</strong> ' + allpaths[index][point][3] + 'm</div>' +
                                      '<div><strong style="font-weight: 600;">Time:</strong> ' + formattedTime + '</div>' +
                                      '</div>'
                         });
