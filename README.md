@@ -1,6 +1,5 @@
 # HABSIM
 High Altitude Balloon Simulator
-http://habsim.org
 
 ## Overview
 This is a prediction server developed for the Stanford Space Initiative's Balloons team. The aims of the prediction server, in comparison to existing ones, are as follows:
@@ -98,18 +97,3 @@ UI interface for the prediction server.
 
 ### simulate.py
 Core sim module.
-
-## Notes
-
-### Installing eccodes/pygrib
-The purpose of the server is to run eccodes/pygrib on one computer to unpack grb2 files so that not everyone has to do it.
-
-If you still want to do this yourself, download and install eccodes: https://confluence.ecmwf.int//display/ECC/Releases.
-Follow the instructions to unpack the tar and install eccodes. Make sure you have CMake and gfortran installed.
-
-To expediate pygrib installation, make sure you install eccodes in your preprocessor/linker path, or otherwise set said path to the eccodes directory.
-
-### Running the server
-`docker build . -t habsim-root`
-`docker run -d -v $(pwd):/home/run -v /gefs:/gefs --name=habsim-$USER -p 80:5000 habsim-root`
-`python3 downloaderd.py --dlogfile=/var/log/downloaderd.log --logfile=/var/log/downloader.log --savedir=/gefs/gefs --statusfile=/gefs/whichgefs`
