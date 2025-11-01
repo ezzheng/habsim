@@ -237,11 +237,14 @@
             width: 100%;
             box-sizing: border-box;
             -webkit-overflow-scrolling: touch;
-            transition: opacity 0.15s ease;
+            transition: max-height 0.3s ease-in-out, padding 0.3s ease-in-out, opacity 0.3s ease-in-out;
             opacity: 1;
         }
         #param-panel.collapsed {
-            display: none;
+            max-height: 0;
+            padding-top: 0;
+            padding-bottom: 0;
+            overflow: hidden;
             opacity: 0;
         }
         .param-grid {
@@ -600,22 +603,13 @@
             const panel = document.getElementById('param-panel');
             collapseBtn.addEventListener('click', () => {
                 if (panel.classList.contains('collapsed')) {
-                    // Fade in: remove display:none first, then fade in
                     panel.classList.remove('collapsed');
                     collapseBtn.classList.add('active');
-                    panel.style.opacity = '0';
-                    requestAnimationFrame(() => {
-                        panel.style.opacity = '1';
-                    });
                 } else {
-                    // Fade out: fade first, then set display:none
-                    panel.style.opacity = '0';
+                    panel.classList.add('collapsed');
                     collapseBtn.classList.remove('active');
-                    setTimeout(() => {
-                        panel.classList.add('collapsed');
-                    }, 150);
                 }
-                setTimeout(adjustLayout, 150);
+                setTimeout(adjustLayout, 300);
             });
         });
 </script>

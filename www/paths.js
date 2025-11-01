@@ -23,7 +23,7 @@ function makepaths(btype, allpaths, isControl = false){
             geodesic: true,
             strokeColor: getcolor(index),
             strokeOpacity: isControl ? 1.0 : 0.7,
-            strokeWeight: isControl ? 3 : 2
+            strokeWeight: isControl ? 4.5 : 2
         });
         drawpath.setMap(map);
         currpaths.push(drawpath);
