@@ -122,7 +122,7 @@ function showpath(path, modelId = 1) {
             var fpath = path;
     }
     var allpaths = [rise, equil, fall, fpath];
-    const isControl = (modelId === 0);
+    const isControl = (modelId === 1); // Model 1 is the control run
     makepaths(btype, allpaths, isControl);
 
 }
@@ -201,8 +201,9 @@ async function simulate() {
         var onlyonce = true;
         if(checkNumPos(allValues) && checkasc(asc,alt,equil)){
             const isHistorical = Number(document.getElementById('yr').value) < 2019;
-            // Model 0 = control (gec00), Models 1-2 = perturbed ensemble members (gep01, gep02)
-            const modelIds = isHistorical ? [1] : [0, 1, 2];
+            // Models 1-3 = ensemble members (gep01, gep02, gep03)
+            // Model 1 is control, Models 2-3 are perturbed
+            const modelIds = isHistorical ? [1] : [1, 2, 3];
 
             for (const modelId of modelIds) {
                 const urlWithModel = url + "&model=" + modelId;
