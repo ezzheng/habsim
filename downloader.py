@@ -145,7 +145,8 @@ def combine_files():
     for i in range(len(filesets)):
         data = combine_npy_for_member(filesets[i])
         
-        savename = args.timestamp + "_" + str(i+1).zfill(2) + ".npz"
+        # Use actual model ID (0, 1, 2) not index+1
+        savename = args.timestamp + "_" + str(model_ids[i]).zfill(2) + ".npz"
         dt = datetime.strptime(args.timestamp, "%Y%m%d%H")
         timestamp = (dt - datetime(1970, 1, 1)).total_seconds()
         
