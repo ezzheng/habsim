@@ -375,6 +375,7 @@
                 flex: 0 0 auto;
                 order: 1;
                 justify-self: unset;
+                width: auto;
             }
             .topbar-center-group {
                 /* Break out of grouped layout on mobile */
@@ -385,15 +386,21 @@
             #simulate-btn {
                 order: 2;
                 flex: 0 0 auto;
+                margin-left: auto;
+                white-space: nowrap;
             }
-            /* Waypoints and Toggle Panel on second line, full width each */
+            /* Force line break before waypoint button */
             #waypoint-toggle {
                 order: 3;
                 flex: 1 1 calc(50% - 4px);
+                width: calc(50% - 4px);
+                flex-basis: calc(50% - 4px);
             }
             #collapse-toggle {
                 order: 4;
                 flex: 1 1 calc(50% - 4px);
+                width: calc(50% - 4px);
+                flex-basis: calc(50% - 4px);
             }
             .topbar-actions {
                 order: 5;
