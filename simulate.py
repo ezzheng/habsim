@@ -143,8 +143,9 @@ def simulate(simtime, lat, lon, rate, step, max_duration, alt, model, coefficien
                 raise Exception("alt out of range")
             
             timestamp = (i.time - epoch).total_seconds()
-            path.append((timestamp, i.location.getLat(), i.location.getLon(), 
-                        i.alt, i.wind_vector[0], i.wind_vector[1], 0, 0))
+            # Convert numpy types to native Python types for JSON serialization
+            path.append((float(timestamp), float(i.location.getLat()), float(i.location.getLon()), 
+                        float(i.alt), float(i.wind_vector[0]), float(i.wind_vector[1]), 0, 0))
             
             # Early termination if balloon goes way out of bounds
             lat_check = i.location.getLat()
