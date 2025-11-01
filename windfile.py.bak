@@ -4,7 +4,6 @@ import threading
 from io import BytesIO
 from pathlib import Path
 from typing import Union
-from functools import lru_cache
 
 import numpy as np
 from numpy.lib.format import open_memmap
@@ -12,10 +11,12 @@ from numpy.lib.format import open_memmap
 _MEMMAP_LOCKS: dict[Path, threading.Lock] = {}
 _MEMMAP_LOCKS_LOCK = threading.Lock()
 
+
 def _normalize_path(path: Union[BytesIO, str]) -> Union[BytesIO, Path]:
     if isinstance(path, (str, Path)):
         return Path(path)
     return path
+
 
 def _get_memmap_lock(path: Path) -> threading.Lock:
     with _MEMMAP_LOCKS_LOCK:
@@ -25,15 +26,6 @@ def _get_memmap_lock(path: Path) -> threading.Lock:
             _MEMMAP_LOCKS[path] = lock
         return lock
 
-# Cache altitude-to-pressure conversions (common altitudes in HAB simulations)
-@lru_cache(maxsize=10000)
-def _alt_to_hpa_cached(altitude_rounded):
-    """Cached altitude to pressure conversion"""
-    pa_to_hpa = 1.0/100.0
-    if altitude_rounded < 11000:
-        return pa_to_hpa * (1-altitude_rounded/44330.7)**5.2558 * 101325
-    else:
-        return pa_to_hpa * math.exp(altitude_rounded / -6341.73) * 128241
 
 class WindFile:
     def __init__(self, path: Union[BytesIO, str]):
@@ -77,9 +69,6 @@ class WindFile:
         self._interp_indices = interp_indices
         self._interp_min = float(interp_levels[0])
         self._interp_max = float(interp_levels[-1])
-        
-        # Pre-compute time bounds for faster validation
-        self._time_max = self.time + self.interval * (self.data.shape[-2]-1)
 
     def _load_memmap_data(self, npz: np.lib.npyio.NpzFile, path: Path):
         memmap_path = Path(f"{path}.data.npy")
@@ -97,7 +86,6 @@ class WindFile:
         return np.load(memmap_path, mmap_mode='r')
 
     def get(self, lat, lon, altitude, time):
-        """Optimized wind data retrieval with bounds checking"""
         if lat < -90 or lat > 90:
             raise Exception(f"Latitude {lat} out of bounds")
         if lon < -180 or lon > 360:
@@ -109,8 +97,8 @@ class WindFile:
         if isinstance(time, datetime.datetime):
             time = time.timestamp()
         
-        # Use pre-computed time bound
-        if time < self.time or time > self._time_max:
+        tmax = self.time + self.interval * (self.data.shape[-2]-1)
+        if time < self.time or time > tmax:
             raise Exception(f"Time {time} out of bounds")
 
         indices = self.get_indices(lat, lon, altitude, time)
@@ -118,19 +106,16 @@ class WindFile:
         return self.interpolate(*indices)
 
     def get_indices(self, lat, lon, alt, time):
-        """Convert physical coordinates to data indices"""
         lat = (90 - lat) * self.resolution_lat_multiplier
         lon = (lon % 360) * self.resolution_lon_multiplier
+
         time = (time - self.time)/self.interval
         pressure = self.get_pressure_index(alt)
         
         return lat, lon, pressure, time
 
     def get_pressure_index(self, alt):
-        """Convert altitude to pressure level index with caching"""
-        # Round altitude to nearest meter for caching
-        alt_rounded = round(alt)
-        pressure = _alt_to_hpa_cached(alt_rounded)
+        pressure = self.alt_to_hpa(alt)
 
         if pressure <= self._interp_min:
             return float(self._interp_indices[0])
@@ -140,40 +125,29 @@ class WindFile:
         return float(np.interp(pressure, self._interp_levels, self._interp_indices))
 
     def interpolate(self, lat, lon, level, time):
-        """Optimized 4D interpolation"""
-        # Pre-compute integer indices
-        lat_i = int(lat)
-        lon_i = int(lon)
-        level_i = int(level)
-        time_i = int(time)
-        
-        # Pre-compute fractional parts
-        lat_frac = lat - lat_i
-        lon_frac = lon - lon_i
-        level_frac = level - level_i
-        time_frac = time - time_i
-        
-        # Build interpolation weights (optimized memory layout)
-        pressure_filter = np.array([1-level_frac, level_frac], dtype=np.float32).reshape(1, 1, 2, 1, 1)
-        time_filter = np.array([1-time_frac, time_frac], dtype=np.float32).reshape(1, 1, 1, 2, 1) 
-        lat_filter = np.array([1-lat_frac, lat_frac], dtype=np.float32).reshape(2, 1, 1, 1, 1)
-        lon_filter = np.array([1-lon_frac, lon_frac], dtype=np.float32).reshape(1, 2, 1, 1, 1)
+        pressure_filter = np.array([1-level % 1, level % 1]).reshape(1, 1, 2, 1, 1)
+        time_filter = np.array([1-time % 1, time % 1]).reshape(1, 1, 1, 2, 1) 
+        lat_filter = np.array([1-lat % 1, lat % 1]).reshape(2, 1, 1, 1, 1)
+        lon_filter = np.array([1-lon % 1, lon % 1]).reshape(1, 2, 1, 1, 1)
 
-        # Extract data cube (memmap makes this efficient)
-        cube = self.data[lat_i:lat_i+2, lon_i:lon_i+2, level_i:level_i+2, time_i:time_i+2, :]
+        lat = int(lat)
+        lon = int(lon)
+        level = int(level)
+        time = int(time)
+
+        cube = self.data[lat:lat+2, lon:lon+2, level:level+2, time:time+2, :]
        
-        # Single vectorized interpolation operation
         return np.sum(cube * lat_filter * lon_filter * pressure_filter * time_filter, axis=(0,1,2,3))
 
     def alt_to_hpa(self, altitude):
-        """Convert altitude to hectopascals (with caching)"""
-        alt_rounded = round(altitude)
-        return _alt_to_hpa_cached(alt_rounded)
+        pa_to_hpa = 1.0/100.0
+        if altitude < 11000:
+            return pa_to_hpa * (1-altitude/44330.7)**5.2558 * 101325
+        else:
+            return pa_to_hpa * math.exp(altitude / -6341.73) * 128241
 
     def hpa_to_alt(self, p):
-        """Convert hectopascals to altitude"""
-        if p > 226.325:
+        if p >  226.325:
             return 44330.7 * (1 - (p / 1013.25) ** 0.190266)
         else:
             return -6341.73 * (math.log(p) - 7.1565)
-
