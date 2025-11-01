@@ -73,9 +73,3 @@ Original files backed up as:
 - `simulate.py.bak`
 - `windfile.py.bak`
 
-To rollback:
-```bash
-mv simulate.py.bak simulate.py
-mv windfile.py.bak windfile.py
-```
-
