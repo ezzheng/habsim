@@ -33,15 +33,13 @@ This is an offshoot of the prediction server developed for the Stanford Space In
   - Implements fast 4D interpolation (lat, lon, altitude, time)
   - Uses memory-mapped files for efficient large dataset handling
 
-- **`habsim/`** - Python package module containing simulation classes and utilities
+- **`habsim/`** - Python package module containing core simulation classes
   - **`classes.py`** - Balloon physics classes and data structures
     - `Balloon` - Represents balloon state (position, altitude, ascent rate)
-    - `Simulator` - Physics engine that steps balloon through time
+    - `Simulator` - Physics engine that steps balloon through time  
     - `ElevationFile` - Ground elevation data wrapper
     - `Trajectory` - Container for trajectory points
-  - **`__init__.py`** - Package initializer, exports main classes for import
-  - **`util.py`** - Utility functions for trajectory calculations and optimization
-  - **`ioutil.py`** - Input/output utilities for loading/saving trajectory data
+  - **`__init__.py`** - Package initializer, exports classes for `from habsim import ...`
 
 ### Data Management
 - **`gefs.py`** - GEFS weather file downloader and cache manager
