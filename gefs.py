@@ -171,14 +171,47 @@ def _ensure_cached(file_name: str) -> Path:
 
         tmp_path = cache_path.with_suffix(cache_path.suffix + ".tmp")
         try:
+            # Get expected content length if available
+            expected_size = resp.headers.get('Content-Length')
+            if expected_size:
+                expected_size = int(expected_size)
+            
+            bytes_written = 0
             with open(tmp_path, 'wb') as fh:
                 for chunk in _iter_content(resp):
-                    fh.write(chunk)
-            os.replace(tmp_path, cache_path)
+                    if chunk:
+                        fh.write(chunk)
+                        bytes_written += len(chunk)
             
-            # Verify file exists and is not empty
+            # Verify download completed successfully
+            if not tmp_path.exists():
+                raise IOError(f"Download failed: temp file not created for {file_name}")
+            
+            actual_size = tmp_path.stat().st_size
+            if actual_size == 0:
+                raise IOError(f"Download failed: file {file_name} is empty")
+            
+            if expected_size and actual_size != expected_size:
+                raise IOError(f"Download incomplete: {file_name} expected {expected_size} bytes, got {actual_size}")
+            
+            # Validate NPZ file structure before committing
+            if file_name.endswith('.npz'):
+                try:
+                    import numpy as np
+                    test_npz = np.load(tmp_path)
+                    test_npz.close()  # Close immediately after validation
+                except Exception as e:
+                    raise IOError(f"Downloaded file {file_name} is corrupted (invalid NPZ): {e}")
+            
+            # Only rename if temp file exists and is valid
+            if tmp_path.exists():
+                os.replace(tmp_path, cache_path)
+            else:
+                raise IOError(f"Temp file disappeared before rename: {file_name}")
+            
+            # Verify final file exists and is not empty
             if not cache_path.exists() or cache_path.stat().st_size == 0:
-                raise IOError(f"Downloaded file {file_name} is missing or empty")
+                raise IOError(f"Downloaded file {file_name} is missing or empty after rename")
         except Exception as e:
             # Clean up partial download
             if tmp_path.exists():
