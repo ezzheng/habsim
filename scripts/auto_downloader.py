@@ -206,7 +206,9 @@ def download_and_upload_model(timestamp: datetime) -> bool:
                 else:
                     logger.warning(f"Failed to delete old file: {old_filename}")
         
-        # Update local status file
+        # Update local status file (create directory if needed)
+        statusfile_path = Path(args.statusfile)
+        statusfile_path.parent.mkdir(parents=True, exist_ok=True)
         with open(args.statusfile, 'w') as f:
             f.write(timestamp_str)
         
