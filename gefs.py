@@ -177,11 +177,20 @@ def _ensure_cached(file_name: str) -> Path:
                 expected_size = int(expected_size)
             
             bytes_written = 0
-            with open(tmp_path, 'wb') as fh:
-                for chunk in _iter_content(resp):
-                    if chunk:
-                        fh.write(chunk)
-                        bytes_written += len(chunk)
+            try:
+                with open(tmp_path, 'wb') as fh:
+                    for chunk in _iter_content(resp):
+                        if chunk:
+                            fh.write(chunk)
+                            bytes_written += len(chunk)
+            except Exception as write_error:
+                # If file was created but write failed, clean it up
+                if tmp_path.exists():
+                    try:
+                        tmp_path.unlink()
+                    except:
+                        pass
+                raise IOError(f"Download failed: error writing {file_name}: {write_error}")
             
             # Verify download completed successfully
             if not tmp_path.exists():

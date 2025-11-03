@@ -13,20 +13,36 @@ gunicorn --config gunicorn_config.py app:app
 
 ### Startup Pre-warming
 - **Function**: `_prewarm_cache()` runs in background thread on startup
-- **Models**: Pre-loads all configured models via `_get_simulator()`
-- **Elevation**: Pre-loads elevation data via `elev.getElevation()`
 - **Timing**: 2-second delay after app initialization to allow full startup
-- **Memory Impact**: 
-  - All 3 simulators loaded into cache (~150-300MB per worker)
-  - Elevation data memory-mapped (no additional RAM)
 - **Benefits**: Eliminates cold start delay (40-70s → 5s for first request)
 
-### Pre-warming Process
+### What Gets Pre-warmed
+
+**Models vs Simulators:**
+- **Model**: A weather forecast dataset (e.g., Model 0 = control run, Model 1-2 = perturbed ensemble members)
+  - Each model has its own weather data file (e.g., `2025110306_00.npz`, `2025110306_01.npz`, `2025110306_02.npz`); stored on disk
+- **Simulator**: A simulation engine object that runs trajectory calculations
+  - Each simulator contains: one `WindFile` (loaded from one model's `.npz` file) + elevation data; stored in RAM
+
+**Pre-warming Process:**
 1. Waits 2 seconds for app initialization
 2. Fetches model configuration from `downloader.py` (respects `DOWNLOAD_CONTROL` and `NUM_PERTURBED_MEMBERS`)
-3. Loads each model sequentially into simulator cache
-4. Loads elevation data singleton
+   - Current config: Models 0, 1, 2 (3 models total)
+3. For each model:
+   - Downloads weather data file from Supabase if not cached: `{timestamp}_{model_id}.npz` (~307.83 MB each)
+   - Creates `WindFile` object
+   - Creates `Simulator` object (combines WindFile + elevation data)
+   - Stores simulator in cache: `_simulator_cache[model_id] = Simulator(...)`
+4. Loads elevation data singleton via `elev.getElevation(0, 0)`
+   - Loads with memory-mapping (`mmap_mode='r'`)
+   - Shared across all simulators and workers
 5. Logs completion status
+
+**Memory Impact:**
+- **Disk**: ~1.35 GB (3 weather files × 307.83 MB + 1 elevation file × 430.11 MB)
+- **RAM**: ~150-300MB per worker (3 simulators × 50-100MB each)
+
+**Result**: All 3 simulators are ready in memory, allowing instant ensemble runs without waiting for downloads or loading.
 
 ## Caching Layers
 
