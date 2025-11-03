@@ -377,55 +377,68 @@
             .status { white-space: normal; }
         }
         @media (max-width: 768px) {
-            .topbar { padding: 12px; }
+            .topbar { padding: 10px 12px; }
             #param-panel { padding: 16px 12px; }
+            
+            /* Complete mobile redesign - 2 line layout */
             .topbar-firstline {
-                display: flex;
-                flex-wrap: wrap;
+                display: grid;
+                grid-template-columns: 1fr 1fr 1fr;
                 gap: 8px;
-                align-items: stretch;
+                align-items: center;
             }
+            
+            /* Line 1: Brand, Status, Simulate */
             .topbar-left-group {
-                flex: 0 0 auto;
-                order: 1;
-                justify-self: unset;
-                width: auto;
-            }
-            .topbar-center-group {
-                /* Break out of grouped layout on mobile */
-                display: contents;
-                justify-self: unset;
-            }
-            /* First line: HABSIM brand and Simulate button */
-            #simulate-btn {
-                order: 2;
-                flex: 0 0 auto;
-                white-space: nowrap;
-                margin-left: auto;
-            }
-            /* Second line: Three equal-width buttons - sized to guarantee wrap */
-            /* Each button is 31% wide, so 3 buttons = 93% which won't fit with Simulate on line 1 */
-            #ensemble-toggle {
-                order: 3;
-                flex: 0 0 31%;
-                max-width: 31%;
-            }
-            #waypoint-toggle {
-                order: 4;
-                flex: 0 0 31%;
-                max-width: 31%;
-            }
-            #collapse-toggle {
-                order: 5;
-                flex: 0 0 31%;
-                max-width: 31%;
+                grid-column: 1;
+                grid-row: 1;
             }
             .topbar-actions {
-                order: 6;
-                display: none;
+                grid-column: 2;
+                grid-row: 1;
+                display: flex !important;
+                justify-content: center;
+                align-items: center;
+            }
+            .topbar-actions .spinner {
+                display: none !important;
+            }
+            #simulate-btn {
+                grid-column: 3;
+                grid-row: 1;
+            }
+            
+            /* Line 2: Three equal buttons */
+            #ensemble-toggle {
+                grid-column: 1;
+                grid-row: 2;
+            }
+            #waypoint-toggle {
+                grid-column: 2;
+                grid-row: 2;
+            }
+            #collapse-toggle {
+                grid-column: 3;
+                grid-row: 2;
+            }
+            
+            /* Hide center group wrapper */
+            .topbar-center-group {
+                display: contents;
+            }
+            
+            /* Responsive text sizing */
+            .brand {
+                font-size: 14px;
             }
             .status {
-                font-size: 10px;
+                font-size: 9px;
+                padding: 2px 4px;
+                text-align: center;
+            }
+            .status span {
+                display: block;
+                line-height: 1.2;
             }
             .param-grid { 
                 display: flex;
