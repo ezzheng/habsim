@@ -27,14 +27,14 @@ gunicorn --config gunicorn_config.py app:app
 **Pre-warming Process:**
 1. Waits 2 seconds for app initialization
 2. Fetches model configuration from `downloader.py` (respects `DOWNLOAD_CONTROL` and `NUM_PERTURBED_MEMBERS`)
-   - Current config: Models 0, 1, 2 (3 models total)
+   - Current config: Models 0, 1, 2
 3. Pre-warms only first 2 models (0 and 1) to prevent memory spikes on startup
    - For each model (0, 1):
      - Downloads weather data file from Supabase if not cached: `{timestamp}_{model_id}.npz` (~307.83 MB each)
      - Creates `WindFile` object
      - Creates `Simulator` object (combines WindFile + elevation data)
      - Stores simulator in cache: `_simulator_cache[model_id] = Simulator(...)`
-   - Model 2 loads on-demand when needed
+   - Additional models load on-demand when needed
 4. Loads elevation data singleton via `elev.getElevation(0, 0)`
    - Loads with memory-mapping (`mmap_mode='r'`)
    - Shared across all simulators and workers
@@ -97,12 +97,6 @@ HABSIM uses a multi-layer caching strategy to optimize performance while managin
 **Memory Usage**:
 - ~200KB per prediction
 - 30 predictions: ~6MB
-
-**Features**:
-- Hash-based lookup: `_cache_key()` generates MD5 from simulation parameters
-- Checks cache before running simulation
-- Automatically expires entries after 1 hour
-- Cleared when GEFS model changes (`refresh()`)
 
 ### 4. Math Function Cache (`windfile.py`, `simulate.py`) - **RAM Cache**
 **Location**: In-memory (RAM)  
