@@ -2,7 +2,18 @@
 High Altitude Balloon Simulator
 
 ## Overview
-This is an offshoot of the prediction server developed for the Stanford Space Initiative's Balloons team. It restores core functionality and introduces a simple UI that suits the current needs of the balloons team. 
+This is an offshoot of the prediction server developed for the Stanford Space Initiative's Balloons team. It restores core functionality and introduces a simple UI that suits the current needs of the balloons team.
+
+### Architecture Changes
+**Old Version (Client Library):** The original `habsim` package was a Python client library that made HTTP requests to `habsim.org` API server. Users would install the package and call prediction functions, which would contact the remote server.
+
+**Current Version (Self-Contained Server):** This version IS the server. It runs a Flask application that:
+- Hosts the web UI at the root URL
+- Provides REST API endpoints (`/sim/*`)
+- Performs simulations locally using GEFS data from Supabase
+- No longer depends on external prediction servers
+
+**Note on `habsim/` folder:** This directory serves a dual purpose - it's both the Python package (containing `classes.py` for simulation) AND a Python virtual environment (containing installed dependencies in `lib/`, `bin/`). Legacy client utilities (`util.py`, `ioutil.py`) have been moved to `deprecated/` as they're no longer needed. 
 
 ## How It Works
 
