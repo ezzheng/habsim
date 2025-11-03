@@ -380,18 +380,21 @@
             .topbar { padding: 10px 12px; }
             #param-panel { padding: 16px 12px; }
             
-            /* Complete mobile redesign - 2 line layout */
+            /* Complete mobile redesign - 2 line layout with equal button widths */
             .topbar-firstline {
                 display: grid;
-                grid-template-columns: 1fr 1fr 1fr;
-                gap: 8px;
+                grid-template-columns: auto 1fr 1fr 1fr;
+                grid-template-rows: auto auto;
+                gap: 6px;
                 align-items: center;
             }
             
-            /* Line 1: Brand, Status, Simulate */
+            /* Line 1: Brand, Status (stacked), empty space, Simulate */
             .topbar-left-group {
                 grid-column: 1;
-                grid-row: 1;
+                grid-row: 1 / 3;  /* Spans both rows */
+                display: flex;
+                align-items: center;
             }
             .topbar-actions {
                 grid-column: 2;
@@ -399,36 +402,38 @@
                 display: flex !important;
                 flex-direction: column;
                 justify-content: center;
-                align-items: center;
-                gap: 2px;
+                align-items: flex-start;
+                gap: 1px;
+                padding-left: 4px;
             }
             .topbar-actions .spinner {
                 display: none !important;
             }
             #simulate-btn {
-                grid-column: 3;
+                grid-column: 4;
                 grid-row: 1;
                 white-space: nowrap;
+                font-size: 12px;
             }
             
-            /* Line 2: Three equal buttons - prevent text wrapping */
+            /* Line 2: Three equal buttons aligned with Simulate */
             #ensemble-toggle {
-                grid-column: 1;
-                grid-row: 2;
-                white-space: nowrap;
-                font-size: 13px;
-            }
-            #waypoint-toggle {
                 grid-column: 2;
                 grid-row: 2;
                 white-space: nowrap;
-                font-size: 13px;
+                font-size: 11px;
             }
-            #collapse-toggle {
+            #waypoint-toggle {
                 grid-column: 3;
                 grid-row: 2;
                 white-space: nowrap;
-                font-size: 13px;
+                font-size: 11px;
+            }
+            #collapse-toggle {
+                grid-column: 4;
+                grid-row: 2;
+                white-space: nowrap;
+                font-size: 11px;
             }
             
             /* Hide center group wrapper */
@@ -439,15 +444,18 @@
             /* Responsive text sizing */
             .brand {
                 font-size: 14px;
+                font-weight: 700;
             }
             .status {
-                font-size: 8px;
-                padding: 1px 3px;
-                text-align: center;
-                line-height: 1.3;
+                font-size: 7px;
+                padding: 0;
+                text-align: left;
+                line-height: 1.4;
+                background: none;
             }
             .status span {
-                display: inline;
+                display: block;
+                font-weight: 500;
             }
             .param-grid { 
                 display: flex;
