@@ -60,7 +60,7 @@ HABSIM uses a multi-layer caching strategy to optimize performance while managin
 - Memory 70-85%: 2 simulators (moderate reduction)
 - Memory > 85%: 1 simulator (aggressive reduction)
 
-**Proactive Monitoring**: Memory is checked on every cache access when cache is at capacity (3 simulators), or periodically (every 30s) when below capacity. If memory pressure increases, simulators are evicted immediately even if already loaded, preventing OOM shutdowns during execution spikes.
+**Proactive Monitoring**: Memory is checked on every cache access when cache is at capacity (3 simulators), or periodically (every 30s) when below capacity. If memory pressure increases, simulators are evicted immediately even if already loaded.
 
 **Memory Usage**:
 - ~50-100MB per simulator (includes WindFile metadata + OS page cache)

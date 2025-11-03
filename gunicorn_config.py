@@ -17,8 +17,6 @@ timeout = 120  # Allow 2 minutes for long-running simulations
 keepalive = 5
 
 # Memory optimization for 2GB limit
-# Each worker: ~400-600MB (with GEFS cache)
-# 2 workers = ~1.2GB, leaving 800MB buffer for OS + cache
 preload_app = True  # Share memory between workers (critical for 2GB!)
 reuse_port = True
 

@@ -10,7 +10,7 @@ This is an offshoot of the prediction server developed for the Stanford Space In
 2. **API Server**: Flask application (`app.py`, deployed on Render) receives requests and coordinates simulations
 3. **Wind Data**: GEFS (Global Ensemble Forecast System) weather files from Supabase are cached locally (`gefs.py`)
 4. **Simulation**: Physics engine (`simulate.py`) calculates balloon trajectory using wind data
-5. **Results**: JSON (JavaScript Object Notation) trajectory data is returned to browser and rendered on Google Maps
+5. **Results**: JSON trajectory data is returned to browser and rendered on Google Maps
 
 ## Files
 
