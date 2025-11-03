@@ -56,7 +56,7 @@ def getElevation(lat, lon):
         # Interpolate in y direction
         result = v0 * (1 - fy) + v1 * fy
         
-        return max(0, result)
+        return max(0, round(result, 2))
     except Exception:
         # Fallback to nearest neighbor if interpolation fails
         x = int(round(x_float))
@@ -64,6 +64,6 @@ def getElevation(lat, lon):
         x = max(0, min(x, shape[1] - 1))
         y = max(0, min(y, shape[0] - 1))
         try:
-            return max(0, float(data[y, x]))
+            return max(0, round(float(data[y, x]), 2))
         except Exception:
             return 0
