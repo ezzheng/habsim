@@ -37,6 +37,12 @@ def _prewarm_cache():
         app.logger.info("Pre-warming cache: loading model 0...")
         # This will download and cache model 0
         simulate._get_simulator(0)
+        # Pre-warm elevation memmap used by /elev endpoint
+        try:
+            _ = elev.getElevation(0, 0)
+            app.logger.info("Elevation pre-warmed successfully")
+        except Exception as ee:
+            app.logger.warning(f"Elevation pre-warm failed (non-critical): {ee}")
         app.logger.info("Cache pre-warming complete!")
     except Exception as e:
         app.logger.warning(f"Cache pre-warming failed (non-critical): {e}")
