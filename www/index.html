@@ -390,8 +390,6 @@
                 order: 1;
                 justify-self: unset;
                 width: auto;
-                /* Ensure brand + simulate fills line 1 */
-                min-width: 40%;
             }
             .topbar-center-group {
                 /* Break out of grouped layout on mobile */
@@ -404,6 +402,14 @@
                 flex: 0 0 auto;
                 white-space: nowrap;
                 margin-left: auto;
+            }
+            /* Force line break after Simulate using ::after pseudo-element */
+            #simulate-btn::after {
+                content: '';
+                order: 2.5;
+                flex-basis: 100%;
+                height: 0;
+                width: 100%;
             }
             /* Second line: Three equal-width buttons */
             #ensemble-toggle {
