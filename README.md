@@ -32,10 +32,11 @@ This is an offshoot of the prediction server developed for the Stanford Space In
 
 ### Core Application
 - **`app.py`** - Flask (Python web framework) WSGI (Web Server Gateway Interface) application serving REST API and static files
-  - Routes: `/sim/singlezpb` (ZPB prediction), `/sim/spaceshot` (ensemble), `/sim/elev` (elevation)
-  - Background thread pre-warms cache on startup
+  - Routes: `/sim/singlezpb` (ZPB prediction), `/sim/spaceshot` (ensemble), `/sim/elev` (elevation), `/sim/models` (model configuration)
+  - Background thread pre-warms cache on startup (model 0 + elevation data)
   - `ThreadPoolExecutor` (concurrent execution) parallelizes ensemble requests (max_workers=2)
   - HTTP caching headers (`Cache-Control`) + Flask-Compress Gzip compression
+  - Exposes model configuration dynamically based on `downloader.py` settings
 
 ### Simulation Engine
 - **`simulate.py`** - Main simulation orchestrator
@@ -51,26 +52,35 @@ This is an offshoot of the prediction server developed for the Stanford Space In
 
 - **`habsim/classes.py`** - Core physics classes
   - `Balloon`: State container (lat, lon, alt, time, ascent_rate, burst_alt)
-  - `Simulator`: Numerical integrator using Euler method (numerical approximation) with wind advection
+  - `Simulator`: Numerical integrator using Runge-Kutta 2nd order (RK2 / Midpoint method) with wind advection
   - `ElevationFile`: Wrapper for `worldelev.npy` array with lat/lon → elevation lookup
   - `Trajectory`: Time-series container for path points
 
 ### Data Pipeline
-- **`gefs.py`** - GEFS file downloader with LRU cache
+- **`gefs.py`** - GEFS file downloader with LRU cache and Supabase integration
   - Downloads from Supabase Storage via REST API
   - LRU eviction policy (Least Recently Used): max 3 files (~450MB) to respect 2GB RAM (Random Access Memory) limit
   - Files cached in `/tmp` (temporary directory) with access-time tracking
   - Automatic cleanup before new downloads when limit exceeded
+  - Upload/delete functions for automated data management (`upload_gefs()`, `delete_gefs()`)
 
 - **`elev.py`** - Elevation data loader
   - Loads preprocessed `worldelev.npy` (global 0.008° resolution array)
   - Fast bilinear interpolation (2D interpolation method) for lat/lon → meters above sea level
 
-- **`downloader.py`** - GEFS data pipeline script (offline use)
-  - Fetches GRIB2 files (Gridded Binary format) from NOAA NOMADS, converts to `.npz` format
-  - Not used in production (Supabase pre-populated)
+### Automation & Scripts (`scripts/`)
+- **`scripts/auto_downloader.py`** - Automated GEFS downloader daemon
+  - Downloads GEFS models every 6 hours and uploads to Supabase
+  - Configurable via `downloader.DOWNLOAD_CONTROL` and `downloader.NUM_PERTURBED_MEMBERS`
+  - Runs via GitHub Actions (scheduled every 6 hours) or as a background daemon
+  - Test mode: `python3 scripts/auto_downloader.py --test`
 
-- **`save_elevation.py`** - One-time elevation preprocessing utility
+- **`downloader.py`** - GEFS data pipeline script
+  - Fetches GRIB2 files (Gridded Binary format) from NOAA NOMADS, converts to `.npz` format
+  - Configuration: `DOWNLOAD_CONTROL` (download control model), `NUM_PERTURBED_MEMBERS` (ensemble count)
+  - Used by auto-downloader and can be run manually: `python3 downloader.py YYYYMMDDHH`
+
+- **`scripts/save_elevation.py`** - One-time elevation preprocessing utility
   - Converts GMTED2010 GeoTIFF (Geographic Tagged Image File Format) → NumPy array format
 
 ### Frontend (`www/`)
@@ -82,10 +92,15 @@ This is an offshoot of the prediction server developed for the Stanford Space In
 
 - **`paths.js`** - Map rendering and API client
   - Fetches trajectories via `fetch()` (JavaScript HTTP client) from `/sim/singlezpb` or `/sim/spaceshot`
+  - Fetches model configuration from `/sim/models` endpoint on page load
+  - Dynamically uses server-configured model IDs for ensemble runs
   - Draws `google.maps.Polyline` objects with color-coded paths
   - Waypoint circles with click handlers showing altitude/time info windows
+  - Debounced elevation fetching (150ms) to prevent rapid-fire requests
 
 - **`style.js`** - Mode switching logic (Standard/ZPB/Float balloon types)
+  - Server status polling (every 5 seconds) for live updates
+  - Fetches model configuration on page load
 
 - **`util.js`** - Map utilities and coordinate helpers
   - Google Maps initialization, lat/lon formatting, elevation API calls
@@ -109,6 +124,13 @@ This is an offshoot of the prediction server developed for the Stanford Space In
 - **`OPTIMIZATIONS.md`** - Performance tuning reference
   - Caching strategies, memory budget breakdown, Gunicorn tuning
   - Troubleshooting for `/tmp` storage limits, worker crashes
+  - Model configuration details (ensemble toggle, configurable model counts)
+
+### Automation
+- **`.github/workflows/gefs-downloader.yml`** - GitHub Actions workflow
+  - Automatically downloads and uploads GEFS models every 6 hours
+  - Requires `SUPABASE_URL` and `SUPABASE_SECRET` secrets in GitHub repository settings
+  - Runs in test mode (single download/upload cycle) on schedule
 
 ### Data Storage
 - **`data/gefs/`** - GEFS file cache directory
@@ -118,7 +140,6 @@ This is an offshoot of the prediction server developed for the Stanford Space In
 
 - **`data/worldelev.npy`** - Global elevation dataset
   - NumPy array format, loaded once on import
-  - ~250MB file, accessed via memory mapping (direct file-to-memory mapping) in production
 
 ### Virtual Environment
 - **`habsim/`** - Dual-purpose directory: Python package + virtual environment

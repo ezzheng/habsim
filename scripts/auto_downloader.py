@@ -13,6 +13,9 @@ import subprocess
 from datetime import datetime, timedelta
 from pathlib import Path
 
+# Add parent directory to path to import root modules
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 import gefs
 import downloader  # Import to access DOWNLOAD_CONTROL and NUM_PERTURBED_MEMBERS
 
