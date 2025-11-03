@@ -257,6 +257,11 @@ async function simulate() {
     } finally {
         window.__simRunning = false;
         window.__simAbort = null;
+        // Blank out elevation to require refetch before next simulation
+        try {
+            var altInput = document.getElementById('alt');
+            if (altInput) altInput.value = '';
+        } catch (e) {}
         if (spinner) { spinner.classList.remove('active'); }
         if (simBtn) {
             simBtn.disabled = false;
