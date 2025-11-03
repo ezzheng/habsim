@@ -1,9 +1,17 @@
-import numpy as np
-import pygrib
+# Lightweight imports (always available)
 import urllib.request
 import time, logging, socket, sys, os, argparse, shutil, glob
 from datetime import datetime, timedelta
 socket.setdefaulttimeout(10)
+
+# Configuration constants (available when module is imported)
+levels = [1, 2, 3, 5, 7, 20, 30, 70, 150, 350, 450, 550, 600, 650, 750, 800, 900, 950, 975]
+NUM_PERTURBED_MEMBERS = 2  # Number of perturbed ensemble members (gep01, gep02, etc.)
+DOWNLOAD_CONTROL = True     # Whether to download control run (gec00)
+MAX_HOURS = 384
+FORECAST_INTERVAL = 6
+TIMEOUT = timedelta(hours=12)
+start = datetime.now()
 
 # Argument parsing only when run directly (not when imported)
 args = None
@@ -26,13 +34,16 @@ if __name__ == "__main__":
             datefmt='%Y-%m-%d %H:%M:%S'
     )
 
-levels = [1, 2, 3, 5, 7, 20, 30, 70, 150, 350, 450, 550, 600, 650, 750, 800, 900, 950, 975]
-NUM_PERTURBED_MEMBERS = 2  # Number of perturbed ensemble members (gep01, gep02, etc.)
-DOWNLOAD_CONTROL = True     # Whether to download control run (gec00)
-MAX_HOURS = 384
-FORECAST_INTERVAL = 6
-TIMEOUT = timedelta(hours=12)
-start = datetime.now()
+# Lazy imports for heavy dependencies (only loaded when functions are called)
+def _get_numpy():
+    """Lazy import numpy - only loaded when actually needed"""
+    import numpy as np
+    return np
+
+def _get_pygrib():
+    """Lazy import pygrib - only loaded when actually needed"""
+    import pygrib
+    return pygrib
 
 def main():
     if args is None:
@@ -75,6 +86,7 @@ def complete_run(model_timestamp, timestamp_str=None, savedir=None):
     logger.info(f'Downloader finished run {timestamp_str}')
 
 def single_run(y,m,d,h,t,n,is_control=False,savedir=None):
+    np = _get_numpy()  # Lazy import
     if savedir is None:
         savedir = args.savedir if args else "./gefs"
     savename = get_savename(y,m,d,h,t,n)
@@ -128,6 +140,8 @@ def get_url(y,m,d,h,t,n,is_control=False):
     return url
     
 def grb2_to_array(filename): 
+    np = _get_numpy()  # Lazy import
+    pygrib = _get_pygrib()  # Lazy import
     ## Array format: array[u,v][Pressure][Lat][Lon] ##
     ## Currently [lat 90 to -90][lon 0 to 359]
     grbs = pygrib.open(filename + ".grb2")
@@ -147,6 +161,7 @@ def grb2_to_array(filename):
 
 ## save data as npz file of ['data', 'timestamp (unix)', 'interval', 'levels']
 def combine_files(timestamp_str=None, savedir=None):
+    np = _get_numpy()  # Lazy import
     if timestamp_str is None:
         timestamp_str = args.timestamp if args else None
     if savedir is None:
@@ -182,6 +197,7 @@ def combine_files(timestamp_str=None, savedir=None):
 
 ## change shape of data from (2, 19, 181, 360) to (181, 360, 19, 65, 2), with the 65 timestamps added
 def combine_npy_for_member(file_list):
+    np = _get_numpy()  # Lazy import
     data = np.stack(list(map(np.load, file_list)))
     data = np.transpose(data, (3, 4, 2, 0, 1))
     data = np.append(data, data[:, 0:1], axis=1)
