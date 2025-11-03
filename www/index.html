@@ -418,27 +418,30 @@
                 padding: 8px 12px;
             }
             
-            /* Row 2: Ensemble | Waypoints | Data Panel - all equal */
+            /* Row 2: Ensemble | Waypoints | Data Panel - all equal width */
             #ensemble-toggle {
                 grid-column: 1;
                 grid-row: 2;
                 white-space: nowrap;
-                font-size: 12px;
-                padding: 8px 6px;
+                font-size: 11px;
+                padding: 8px 4px;
+                min-width: 0;
             }
             #waypoint-toggle {
                 grid-column: 2;
                 grid-row: 2;
                 white-space: nowrap;
-                font-size: 12px;
-                padding: 8px 6px;
+                font-size: 11px;
+                padding: 8px 4px;
+                min-width: 0;
             }
             #collapse-toggle {
                 grid-column: 3;
                 grid-row: 2;
                 white-space: nowrap;
-                font-size: 12px;
-                padding: 8px 6px;
+                font-size: 11px;
+                padding: 8px 4px;
+                min-width: 0;
             }
             
             /* Hide center group wrapper */
@@ -455,12 +458,21 @@
                 font-size: 8px;
                 padding: 0;
                 text-align: center;
-                line-height: 1.3;
+                line-height: 1.2;
                 background: none;
+                display: flex;
+                flex-direction: column;
+                gap: 1px;
+            }
+            .status::before {
+                content: none !important;
             }
             .status span {
-                display: block;
+                display: inline;
                 font-weight: 500;
+            }
+            .status span::before {
+                content: none !important;
             }
             .param-grid { 
                 display: flex;
