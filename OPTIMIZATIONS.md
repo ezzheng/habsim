@@ -96,12 +96,6 @@ HABSIM uses a multi-layer caching strategy to optimize performance while managin
 - ~200KB per prediction
 - 30 predictions: ~6MB
 
-**Features**:
-- Hash-based lookup: `_cache_key()` generates MD5 from simulation parameters
-- Checks cache before running simulation
-- Automatically expires entries after 1 hour
-- Cleared when GEFS model changes (`refresh()`)
-
 ### 4. Math Function Cache (`windfile.py`, `simulate.py`) - **RAM Cache**
 **Location**: In-memory (RAM)  
 **Storage**: Python `@lru_cache` decorators  
