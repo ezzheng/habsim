@@ -61,10 +61,9 @@ gunicorn --config gunicorn_config.py app:app
 
 ### Ensemble Toggle (`www/index.html`, `www/paths.js`)
 - Button between "Simulate" and "Waypoints"
-- Default: OFF (runs model 0 only)
-- Enabled: Emerald green border (`border-color: #10b981`), runs models 0, 1, 2
-- State: `window.ensembleEnabled` boolean
-- Logic: `paths.js` checks state, sets `modelIds = ensembleEnabled ? [0,1,2] : [0]`
+- Default: OFF (runs control model only, typically model 0)
+- Logic: `paths.js` fetches model config from `/sim/models` endpoint, sets `modelIds` based on server configuration
+- Model configuration: Controlled by `DOWNLOAD_CONTROL` and `NUM_PERTURBED_MEMBERS` in `downloader.py`
 
 ## Tuning
 

@@ -1,6 +1,7 @@
 import io
 import os
 import tempfile
+import logging
 from pathlib import Path
 from typing import Iterator
 import threading
@@ -8,6 +9,27 @@ import threading
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+
+# Try to load from .env and/or supabase.env if available (non-fatal)
+def _load_env_file():
+    """Load environment variables from .env or supabase.env file if present.
+    Does not override existing environment variables and does not raise on failure.
+    """
+    env_files = [Path('.env'), Path('supabase.env')]
+    for env_file in env_files:
+        if env_file.exists():
+            try:
+                with open(env_file) as f:
+                    for line in f:
+                        line = line.strip()
+                        if line and not line.startswith('#') and '=' in line:
+                            key, value = line.split('=', 1)
+                            os.environ.setdefault(key.strip(), value.strip())
+            except Exception:
+                # Non-fatal: rely on existing os.environ
+                pass
+
+_load_env_file()
 
 _BASE_URL = os.environ.get("SUPABASE_URL", "").rstrip('/')
 _KEY = os.environ.get("SUPABASE_SECRET", "")
@@ -182,3 +204,57 @@ def _iter_content(resp: requests.Response) -> Iterator[bytes]:
     for chunk in resp.iter_content(chunk_size=_CHUNK_SIZE):
         if chunk:
             yield chunk
+
+
+def upload_gefs(file_path: Path, file_name: str) -> bool:
+    """Upload a file to Supabase storage bucket.
+    
+    Args:
+        file_path: Local path to file to upload
+        file_name: Name to store file as in bucket
+        
+    Returns:
+        True if successful, False otherwise
+    """
+    try:
+        file_size = file_path.stat().st_size
+        # For large files, use streaming upload
+        with open(file_path, 'rb') as f:
+            # Supabase storage uses PUT for uploads
+            resp = _SESSION.put(
+                _object_url(f"{_BUCKET}/{file_name}"),
+                headers={
+                    **_COMMON_HEADERS,
+                    "Content-Type": "application/octet-stream",
+                    "Content-Length": str(file_size),
+                },
+                data=f,
+                timeout=(10, 600),  # Longer timeout for large uploads (10 min)
+            )
+            resp.raise_for_status()
+            return True
+    except Exception as e:
+        logging.error(f"Failed to upload {file_name}: {e}")
+        return False
+
+
+def delete_gefs(file_name: str) -> bool:
+    """Delete a file from Supabase storage bucket.
+    
+    Args:
+        file_name: Name of file to delete from bucket
+        
+    Returns:
+        True if successful, False otherwise
+    """
+    try:
+        resp = _SESSION.delete(
+            _object_url(f"{_BUCKET}/{file_name}"),
+            headers=_COMMON_HEADERS,
+            timeout=_DEFAULT_TIMEOUT,
+        )
+        resp.raise_for_status()
+        return True
+    except Exception as e:
+        logging.warning(f"Failed to delete {file_name}: {e}")
+        return False

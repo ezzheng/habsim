@@ -13,3 +13,5 @@ plot_test.html
 .vercel
 gefs/*
 .env*.local
+.env
+supabase.env

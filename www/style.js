@@ -51,6 +51,18 @@ fetch(URL_ROOT + "/which").then(res => res.text()).then((result) => {
             document.getElementById("run").textContent = result
         });
 
+// Fetch available model configuration from server
+fetch(URL_ROOT + "/models").then(res => res.json()).then((config) => {
+    window.availableModels = config.models;
+    window.modelConfig = config;
+    console.log("Available models:", config.models);
+}).catch(err => {
+    console.warn("Failed to fetch model config, using defaults:", err);
+    // Fallback to default configuration
+    window.availableModels = [0, 1, 2];
+    window.modelConfig = { download_control: true, num_perturbed: 2 };
+});
+
 function updateServerStatus() {
     fetch(URL_ROOT + "/status")
         .then(res => res.text())

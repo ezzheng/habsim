@@ -27,6 +27,7 @@ from gefs import listdir_gefs, open_gefs
 
 # Import simulate at module level to avoid circular import issues
 import simulate
+import downloader  # Import to access model configuration
 
 # Pre-warm cache on startup in background
 def _prewarm_cache():
@@ -68,6 +69,19 @@ def status():
         return "Ready"
     except Exception:
         return "Unavailable"
+
+@app.route('/sim/models')
+def models():
+    """Return available model IDs based on configuration"""
+    model_ids = []
+    if downloader.DOWNLOAD_CONTROL:
+        model_ids.append(0)
+    model_ids.extend(range(1, 1 + downloader.NUM_PERTURBED_MEMBERS))
+    return jsonify({
+        "models": model_ids,
+        "download_control": downloader.DOWNLOAD_CONTROL,
+        "num_perturbed": downloader.NUM_PERTURBED_MEMBERS
+    })
 
 @app.route('/sim/ls')
 def ls():
@@ -164,6 +178,10 @@ def singlezpbh():
 
 @app.route('/sim/spaceshot')
 def spaceshot():
+    """
+    Run all available ensemble models (respects DOWNLOAD_CONTROL and NUM_PERTURBED_MEMBERS).
+    Note: This endpoint is designed for the full ensemble spread, so it uses all configured models.
+    """
     args = request.args
     timestamp = datetime.utcfromtimestamp(float(args['timestamp'])).replace(tzinfo=timezone.utc)
     lat, lon = float(args['lat']), float(args['lon'])
@@ -172,26 +190,34 @@ def spaceshot():
     eqtime = float(args['eqtime'])
     asc, desc = float(args['asc']), float(args['desc'])
     
+    # Build model list based on configuration
+    model_ids = []
+    if downloader.DOWNLOAD_CONTROL:
+        model_ids.append(0)
+    model_ids.extend(range(1, 1 + downloader.NUM_PERTURBED_MEMBERS))
+    
     # Parallel execution for faster ensemble runs
     # Conservative max_workers=2 for 2GB RAM, 1 CPU limit
     from concurrent.futures import ThreadPoolExecutor, as_completed
-    paths = [None] * 20  # Pre-allocate to preserve order
+    paths = [None] * len(model_ids)  # Pre-allocate to preserve order
     
     with ThreadPoolExecutor(max_workers=2) as executor:
         # Submit all tasks
         future_to_model = {
             executor.submit(singlezpb, timestamp, lat, lon, alt, equil, eqtime, asc, desc, model): model
-            for model in range(1, 21)
+            for model in model_ids
         }
         
         # Collect results as they complete
         for future in as_completed(future_to_model):
             model = future_to_model[future]
             try:
-                paths[model - 1] = future.result()
+                idx = model_ids.index(model)
+                paths[idx] = future.result()
             except Exception as e:
                 app.logger.exception(f"Model {model} failed")
-                paths[model - 1] = "error"
+                idx = model_ids.index(model)
+                paths[idx] = "error"
     
     return jsonify(paths)
 

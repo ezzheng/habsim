@@ -212,10 +212,20 @@ async function simulate() {
         var onlyonce = true;
         if(checkNumPos(allValues) && checkasc(asc,alt,equil)){
             const isHistorical = Number(document.getElementById('yr').value) < 2019;
-            // Model 0 = control (gec00), Models 1-2 = perturbed ensemble members (gep01, gep02)
-            // If ensemble is disabled (default), run only model 0; if enabled, run all models
+            // Determine which models to run based on server configuration
             const ensembleEnabled = window.ensembleEnabled || false;
-            const modelIds = isHistorical ? [1] : (ensembleEnabled ? [0, 1, 2] : [0]);
+            let modelIds;
+            if (isHistorical) {
+                // Historical data uses model 1 only
+                modelIds = [1];
+            } else if (ensembleEnabled) {
+                // Ensemble mode: use all available models from server config
+                // Fallback to [0, 1, 2] if config not available
+                modelIds = window.availableModels || [0, 1, 2];
+            } else {
+                // Single model mode: use control model if available, else model 0
+                modelIds = window.availableModels && window.availableModels.includes(0) ? [0] : [0];
+            }
 
             for (const modelId of modelIds) {
                 const urlWithModel = url + "&model=" + modelId;

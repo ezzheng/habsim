@@ -5,22 +5,26 @@ import time, logging, socket, sys, os, argparse, shutil, glob
 from datetime import datetime, timedelta
 socket.setdefaulttimeout(10)
 
-parser = argparse.ArgumentParser()
-parser.add_argument("timestamp", 
-        help='Model timestamp in the format "yyyymmddhh"')
-parser.add_argument("--logfile", default=None, 
-        help="Target path for logs; prints to stdout by default.")
-parser.add_argument("--savedir", default="./gefs", 
-        help="./gefs by default")
-args = parser.parse_args()
-
+# Argument parsing only when run directly (not when imported)
+args = None
 logger = logging.getLogger(__name__)
-logging.basicConfig(
-        filename=args.logfile,
-        level=logging.DEBUG,
-        format='%(asctime)s.%(msecs)03d [%(levelname)s] %(message)s', 
-        datefmt='%Y-%m-%d %H:%M:%S'
-)
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("timestamp", 
+            help='Model timestamp in the format "yyyymmddhh"')
+    parser.add_argument("--logfile", default=None, 
+            help="Target path for logs; prints to stdout by default.")
+    parser.add_argument("--savedir", default="/Applications/Emmanuel Zheng/habsim/data/gefs", 
+            help="Destination directory for intermediate and final files")
+    args = parser.parse_args()
+    
+    logging.basicConfig(
+            filename=args.logfile,
+            level=logging.DEBUG,
+            format='%(asctime)s.%(msecs)03d [%(levelname)s] %(message)s', 
+            datefmt='%Y-%m-%d %H:%M:%S'
+    )
 
 levels = [1, 2, 3, 5, 7, 20, 30, 70, 150, 350, 450, 550, 600, 650, 750, 800, 900, 950, 975]
 NUM_PERTURBED_MEMBERS = 2  # Number of perturbed ensemble members (gep01, gep02, etc.)
@@ -31,6 +35,8 @@ TIMEOUT = timedelta(hours=12)
 start = datetime.now()
 
 def main():
+    if args is None:
+        raise ValueError("downloader.py must be run directly, not imported")
     model_timestamp = datetime.strptime(args.timestamp, "%Y%m%d%H")
     try:
         complete_run(model_timestamp)
@@ -38,63 +44,75 @@ def main():
         logger.exception(f"Uncaught exception {e}")
         exit(1)
 
-def complete_run(model_timestamp):
-    logger.info(f'Starting run {args.timestamp}')
+def complete_run(model_timestamp, timestamp_str=None, savedir=None):
+    # Allow parameters to be passed when called programmatically
+    if timestamp_str is None:
+        if args is None:
+            raise ValueError("timestamp_str must be provided when args is not available")
+        timestamp_str = args.timestamp
+    if savedir is None:
+        savedir = args.savedir if args else "./gefs"
+    logger.info(f'Starting run {timestamp_str}')
     y, m = model_timestamp.year, model_timestamp.month
     d, h = model_timestamp.day, model_timestamp.hour
     
-    if os.path.exists(f'{args.savedir}/temp'):
-        shutil.rmtree(f'{args.savedir}/temp')
+    if os.path.exists(f'{savedir}/temp'):
+        shutil.rmtree(f'{savedir}/temp')
         
-    os.mkdir(f'{args.savedir}/temp')
+    os.mkdir(f'{savedir}/temp')
 
     for t in range(0, FORECAST_INTERVAL+MAX_HOURS, FORECAST_INTERVAL):
         # Download control run (member 0)
         if DOWNLOAD_CONTROL:
-            single_run(y, m, d, h, t, 0, is_control=True)
+            single_run(y, m, d, h, t, 0, is_control=True, savedir=savedir)
         # Download perturbed ensemble members
         for n in range(1, 1+NUM_PERTURBED_MEMBERS):
-            single_run(y, m, d, h, t, n, is_control=False)
-        logger.info(f'Successfully completed {args.timestamp}+{t}')
+            single_run(y, m, d, h, t, n, is_control=False, savedir=savedir)
+        logger.info(f'Successfully completed {timestamp_str}+{t}')
 
-    combine_files()
-    shutil.rmtree(f'{args.savedir}/temp')
-    logger.info(f'Downloader finished run {args.timestamp}')
+    combine_files(timestamp_str, savedir)
+    shutil.rmtree(f'{savedir}/temp')
+    logger.info(f'Downloader finished run {timestamp_str}')
 
-def single_run(y,m,d,h,t,n,is_control=False):
+def single_run(y,m,d,h,t,n,is_control=False,savedir=None):
+    if savedir is None:
+        savedir = args.savedir if args else "./gefs"
     savename = get_savename(y,m,d,h,t,n)
     
-    if os.path.exists(f"{args.savedir}/{savename}.npy"): 
+    if os.path.exists(f"{savedir}/{savename}.npy"): 
         logger.debug("{} exists; skipping.".format(savename))
         return
 
     url = get_url(y,m,d,h,t,n,is_control)
     logger.debug("Downloading {}".format(savename))
 
-    download(url, f"{args.savedir}/temp/{savename}.grb2")
+    download(url, f"{savedir}/temp/{savename}.grb2")
     logger.debug("Unpacking {}".format(savename))
-    data = grb2_to_array(f"{args.savedir}/temp/{savename}")
+    data = grb2_to_array(f"{savedir}/temp/{savename}")
     data = np.float16(data)
-    np.save(f"{args.savedir}/temp/{savename}.npy", data)
-    os.remove(f"{args.savedir}/temp/{savename}.grb2")
+    np.save(f"{savedir}/temp/{savename}.npy", data)
+    os.remove(f"{savedir}/temp/{savename}.grb2")
 
-def download(url, path):
+def download(url, path, timeout=None):
+    if timeout is None:
+        timeout = TIMEOUT
     RETRY_INTERVAL = 10
-    while datetime.now() - start < TIMEOUT:
+    start_time = datetime.now()
+    while datetime.now() - start_time < timeout:
         try:
             urllib.request.urlretrieve(url, path); return
         except Exception as e:
             logger.debug(f'{e} --- retrying in {RETRY_INTERVAL} seconds.')
         time.sleep(RETRY_INTERVAL)
-    logger.warning(f"Run {args.timestamp} timed out on {url}.")
-    exit(1)
+    logger.warning(f"Download timed out on {url}.")
+    raise TimeoutError(f"Download timed out on {url}")
 
 def get_savename(y,m,d,h,t,n):
     base = datetime(y, m, d, h)
     base_string = base.strftime("%Y%m%d%H")
-    pred = base + timedelta(hours=t)
-    predstring = pred.strftime("%Y%m%d%H")
-    savename = base_string + "_" + str(t).zfill(3) + "_" + predstring + "_" + str(n).zfill(2)
+    # Intermediate filename format: {base}_{forecastHour}_{modelId}
+    # Example: 2025110312_000_00.npy (no repeated date string)
+    savename = base_string + "_" + str(t).zfill(3) + "_" + str(n).zfill(2)
     return savename
 
 def get_url(y,m,d,h,t,n,is_control=False):
@@ -128,7 +146,14 @@ def grb2_to_array(filename):
     return dataset
 
 ## save data as npz file of ['data', 'timestamp (unix)', 'interval', 'levels']
-def combine_files():
+def combine_files(timestamp_str=None, savedir=None):
+    if timestamp_str is None:
+        timestamp_str = args.timestamp if args else None
+    if savedir is None:
+        savedir = args.savedir if args else "./gefs"
+    if timestamp_str is None:
+        raise ValueError("timestamp_str must be provided")
+    
     filesets = []
     
     # Collect all model files (control + perturbed members)
@@ -138,7 +163,7 @@ def combine_files():
     model_ids.extend(range(1, NUM_PERTURBED_MEMBERS+1))
     
     for i in model_ids:
-        files = glob.glob(f'{args.savedir}/temp/{args.timestamp}_*_{str(i).zfill(2)}.npy')
+        files = glob.glob(f'{savedir}/temp/{timestamp_str}_*_{str(i).zfill(2)}.npy')
         files.sort()
         filesets.append(files)
 
@@ -146,11 +171,11 @@ def combine_files():
         data = combine_npy_for_member(filesets[i])
         
         # Use actual model ID (0, 1, 2) not index+1
-        savename = args.timestamp + "_" + str(model_ids[i]).zfill(2) + ".npz"
-        dt = datetime.strptime(args.timestamp, "%Y%m%d%H")
+        savename = timestamp_str + "_" + str(model_ids[i]).zfill(2) + ".npz"
+        dt = datetime.strptime(timestamp_str, "%Y%m%d%H")
         timestamp = (dt - datetime(1970, 1, 1)).total_seconds()
         
-        np.savez(f'{args.savedir}/' + savename, data=data, timestamp=timestamp, interval=FORECAST_INTERVAL*3600, levels=levels)
+        np.savez(f'{savedir}/' + savename, data=data, timestamp=timestamp, interval=FORECAST_INTERVAL*3600, levels=levels)
         logger.info(f'Combined file for member {i+1} saved as {savename}')
 
     logger.info('Completed combining files')
