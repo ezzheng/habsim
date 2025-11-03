@@ -25,11 +25,13 @@ import elev
 from datetime import datetime, timezone
 from gefs import listdir_gefs, open_gefs
 
+# Import simulate at module level to avoid circular import issues
+import simulate
+
 # Pre-warm cache on startup in background
 def _prewarm_cache():
     """Pre-load the most common model (model 0) to avoid cold starts"""
     try:
-        import simulate
         import time
         time.sleep(2)  # Give the app a moment to fully initialize
         app.logger.info("Pre-warming cache: loading model 0...")
@@ -84,7 +86,6 @@ v-wind is wind towards the NORTH: wind vector in the positve Y direction
 @app.route('/sim/singlepredicth')
 @cache_for(600)  # Cache for 10 minutes
 def singlepredicth():
-    import simulate  # defer heavy import
     args = request.args
     yr, mo, day, hr, mn = int(args['yr']), int(args['mo']), int(args['day']), int(args['hr']), int(args['mn'])
     lat, lon = float(args['lat']), float(args['lon'])
@@ -102,7 +103,6 @@ def singlepredicth():
 @app.route('/sim/singlepredict')
 @cache_for(600)  # Cache for 10 minutes
 def singlepredict():
-    import simulate  # defer heavy import
     args = request.args
     timestamp = datetime.utcfromtimestamp(float(args['timestamp'])).replace(tzinfo=timezone.utc)
     lat, lon = float(args['lat']), float(args['lon'])
@@ -120,7 +120,6 @@ def singlepredict():
 
 
 def singlezpb(timestamp, lat, lon, alt, equil, eqtime, asc, desc, model):
-    import simulate  # defer heavy import
     try:
         # Note: refresh() is now called by _get_simulator() with 5-minute throttle
         dur = 0 if equil == alt else (equil - alt) / asc / 3600
@@ -212,7 +211,6 @@ where the numbers are the GEFS model from which the data is extracted.
 '''
 @app.route('/sim/windensemble')
 def windensemble():
-    import simulate  # defer heavy import
     args = request.args
     lat, lon = float(args['lat']), float(args['lon'])
     alt = float(args['alt'])
@@ -241,7 +239,6 @@ extracted from that model.
 '''
 @app.route('/sim/wind')
 def wind():
-    import simulate  # defer heavy import
     args = request.args
     lat, lon = float(args['lat']), float(args['lon'])
     model = int(args['model'])
