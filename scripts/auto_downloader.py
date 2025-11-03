@@ -133,10 +133,8 @@ def download_and_upload_model(timestamp: datetime) -> bool:
     savedir.mkdir(parents=True, exist_ok=True)
     
     try:
-        from datetime import datetime
         model_timestamp = datetime.strptime(timestamp_str, "%Y%m%d%H")
         # Set up minimal logging for downloader
-        import logging
         downloader.logger = logging.getLogger('downloader')
         downloader.logger.setLevel(logging.INFO)
         if not downloader.logger.handlers:
