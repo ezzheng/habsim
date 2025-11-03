@@ -44,6 +44,13 @@ function displayCoordinates(pnt) {
     for (path in currpaths) {currpaths[path].setMap(null);}
     currpaths = new Array();
     rawpathcache = new Array();
+    // If a simulation is in progress, cancel it on new click
+    if (window.__simRunning && window.__simAbort) {
+        try { window.__simAbort.abort(); } catch(e) {}
+    }
+    // Blank elevation until fresh value is fetched for this location
+    var altInput = document.getElementById('alt');
+    if (altInput) altInput.value = '';
     getElev();
 }
 function updateClickMarker(position) {
@@ -56,16 +63,38 @@ function updateClickMarker(position) {
     });
 }
 function getElev() {
+    // Abort any in-flight elevation fetch when a new one starts
+    if (window.__elevAbort) {
+        try { window.__elevAbort.abort(); } catch(e) {}
+    }
+    window.__elevAbort = new AbortController();
+
     lat = document.getElementById("lat").value;
     lng = document.getElementById("lon").value;
-    fetch(URL_ROOT + "/elev?lat=" + lat + "&lon=" + lng)
-        .then(res => res.json())
+    fetch(URL_ROOT + "/elev?lat=" + lat + "&lon=" + lng, { signal: window.__elevAbort.signal })
+        .then(res => {
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            return res.json();
+        })
         .then((result) => {
-            document.getElementById("alt").value = result
+            if (typeof result === 'number') {
+                document.getElementById("alt").value = result;
+            } else if (result && result.error) {
+                throw new Error(result.error);
+            } else {
+                document.getElementById("alt").value = result;
+            }
         })
         .catch(err => {
+            if (err && (err.name === 'AbortError' || err.message === 'The operation was aborted.')) {
+                // ignore aborted fetch
+                return;
+            }
             console.error('Elevation fetch failed', err);
             alert('Failed to fetch ground elevation. Please try again.');
+        })
+        .finally(() => {
+            window.__elevAbort = null;
         });
 }
 function getTimeremain() {
