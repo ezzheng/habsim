@@ -12,9 +12,9 @@ gunicorn --config gunicorn_config.py app:app
 ## Code Optimizations
 
 ### 1. Cache Pre-warming (`app.py`)
-- Model 0 loads on startup in background thread (`_prewarm_cache()`)
+- Model 0 + elevation data load on startup in background thread (`_prewarm_cache()`)
 - Eliminates cold start delay on first request
-- Memory: ~150MB
+- Memory: ~150MB (model) + memory-mapped elevation (no additional RAM)
 
 ### 2. Parallel Execution (`app.py`)
 - `ThreadPoolExecutor` with 2 workers for ensemble mode
@@ -41,12 +41,24 @@ gunicorn --config gunicorn_config.py app:app
 - `_cleanup_old_cache_files()` evicts by access time
 - `cache_path.touch()` updates access time on use
 
-### 7. Math Caching (`windfile.py`, `simulate.py`)
+### 7. Elevation Data Optimization (`elev.py`)
+- Memory-mapped singleton pattern: `worldelev.npy` loaded once with `mmap_mode='r'`
+- Thread-safe singleton with `threading.Lock` prevents duplicate loads
+- Bilinear interpolation for smoother elevation lookups (vs. nearest-neighbor)
+- Memory: No additional RAM (memory-mapped file access)
+- Client-side debouncing: 150ms delay in `www/util.js` prevents rapid-fire requests
+
+### 8. Math Caching (`windfile.py`, `simulate.py`)
 - `@lru_cache(maxsize=10000)` on `_alt_to_hpa_cached()`, `_cos_lat_cached()`
 - Caches repeated coordinate transformations
 - Memory: <1MB
 
-### 8. Gunicorn Config (`gunicorn_config.py`)
+### 9. Numerical Integration (`habsim/classes.py`)
+- Runge-Kutta 2nd order (RK2 / Midpoint method) for trajectory integration
+- Better accuracy than Euler method with minimal performance cost
+- Original Euler implementation preserved in comments for reference
+
+### 10. Gunicorn Config (`gunicorn_config.py`)
 - 2 workers, 2 threads each = 4 concurrent requests
 - `preload_app = True` shares memory between workers
 - `max_requests = 800` recycles workers to prevent leaks
@@ -57,13 +69,18 @@ gunicorn --config gunicorn_config.py app:app
 - `_MAX_CACHED_FILES = 3` in `gefs.py`
 - `MAX_CACHE_SIZE = 30` in `simulate.py`
 
-## UI Changes
+## UI Optimizations
 
 ### Ensemble Toggle (`www/index.html`, `www/paths.js`)
 - Button between "Simulate" and "Waypoints"
 - Default: OFF (runs control model only, typically model 0)
 - Logic: `paths.js` fetches model config from `/sim/models` endpoint, sets `modelIds` based on server configuration
 - Model configuration: Controlled by `DOWNLOAD_CONTROL` and `NUM_PERTURBED_MEMBERS` in `downloader.py`
+
+### Client-Side Optimizations (`www/util.js`, `www/style.js`)
+- Elevation fetching debounced (150ms) to prevent rapid-fire requests on map clicks
+- Server status polling (5s intervals) for live updates
+- Model configuration fetched once on page load, cached in `window.availableModels`
 
 ## Tuning
 
