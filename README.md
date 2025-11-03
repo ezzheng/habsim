@@ -38,7 +38,7 @@ This is an offshoot of the prediction server developed for the Stanford Space In
 - **`habsim/classes.py`** - Core physics classes
   - `Balloon`: State container (lat, lon, alt, time, ascent_rate, burst_alt)
   - `Simulator`: Numerical integrator using Runge-Kutta 2nd order (RK2 / Midpoint method) with wind advection
-  - `ElevationFile`: Wrapper for `worldelev.npy` array with lat/lon → elevation lookup
+  - `ElevationFile`: Wrapper for `worldelev.npy` array with lat/lon → elevation lookup (uses memory-mapping `mmap_mode='r'` to avoid loading 430MB into RAM)
   - `Trajectory`: Time-series container for path points
 
 ### Data Pipeline

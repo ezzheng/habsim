@@ -82,8 +82,10 @@ HABSIM uses a multi-layer caching strategy to optimize performance while managin
 - 430.11MB for `worldelev.npy`; loaded via memory-mapping (minimal RAM)
 - Files on disk don't directly consume RAM, but OS page cache may load accessed portions into memory
 
-**Elevation Data Cache** (`elev.py`):
-- Part of GEFS file cache; memory-mapped access, loaded once with `mmap_mode='r'` (read-only, OS-managed page cache) and then shared across all workers/threads
+**Elevation Data Cache** (`elev.py` and `habsim/classes.py`):
+- **`elev.py`**: Memory-mapped singleton (`_ELEV_DATA`) used by `/sim/elev` endpoint, loaded once with `mmap_mode='r'` and shared across all workers/threads
+- **`ElevationFile`** (`habsim/classes.py`): Memory-mapped read-only access for simulators (was previously loading full 430MB into RAM per simulator, now fixed to use `mmap_mode='r'`)
+- **Memory leak fix**: Previously, `ElevationFile` was creating a duplicate full load of `worldelev.npy` even though `elev.py` was already memory-mapped. Each simulator held 430MB in RAM. Now both use memory-mapping, eliminating duplicate RAM usage.
 
 
 ### 3. Prediction Result Cache (`simulate.py`) - **RAM Cache**
@@ -145,10 +147,18 @@ HABSIM uses a multi-layer caching strategy to optimize performance while managin
 - Better accuracy than Euler method with minimal performance cost
 - Original Euler implementation preserved in comments for reference
 
+### Memory Leak Fixes
+- **ElevationFile memory-mapping**: `ElevationFile` in `habsim/classes.py` now uses `mmap_mode='r'` instead of loading full 430MB array into RAM
+  - Previously: Each simulator held 430MB in RAM (2 workers = 860MB just for elevation)
+  - After fix: Memory-mapped access, OS manages page cache (minimal direct RAM usage)
+  - Note: `elev.py` was already memory-mapped, but `ElevationFile` was creating a duplicate full load
+- **Explicit simulator cleanup**: Old simulator is explicitly deleted and garbage collected before creating new one
+- **Aggressive worker recycling**: `max_requests = 300` (reduced from 800) to prevent gradual memory buildup
+
 ### Gunicorn Config (`gunicorn_config.py`)
 - 2 workers, 2 threads each = 4 concurrent requests
 - `preload_app = True` shares memory between workers
-- `max_requests = 800` recycles workers to prevent leaks
+- `max_requests = 300` recycles workers aggressively to prevent memory leaks (reduced from 800)
 
 ## UI Optimizations
 - Elevation fetching debounced (150ms) to prevent rapid-fire requests on map clicks
@@ -162,12 +172,12 @@ HABSIM uses a multi-layer caching strategy to optimize performance while managin
 - `threads = 2` in `gunicorn_config.py`
 
 **File Cache**:
-- `_MAX_CACHED_FILES = 2` in `gefs.py`
+- `_MAX_CACHED_FILES = 3` in `gefs.py` (allows 3 weather files for ensemble runs)
 - Cache directory: `/opt/render/project/src/data/gefs` on Render (persistent, avoids `/tmp` 2GB limit)
 
 **Simulator Cache**:
-- `_MAX_SIMULATOR_CACHE = 2` in `simulate.py`
-- Dynamic limit based on memory pressure (1-2)
+- Simple 1-simulator cache in `simulate.py` (not a dict-based LRU)
+- Explicit cleanup with garbage collection when replacing simulator
 
 **Prediction Cache**:
 - `MAX_CACHE_SIZE = 30` in `simulate.py`
