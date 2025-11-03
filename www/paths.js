@@ -161,7 +161,7 @@ async function simulate() {
         simBtn.disabled = true;
         simBtn.classList.add('loading');
         simBtn.disabled = false; // allow click to cancel
-        simBtn.textContent = 'Simulating… (tap to cancel)';
+        simBtn.textContent = 'Simulating…';
     }
     if (spinner) { spinner.classList.add('active'); }
     try {
