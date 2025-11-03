@@ -397,8 +397,10 @@
                 grid-column: 2;
                 grid-row: 1;
                 display: flex !important;
+                flex-direction: column;
                 justify-content: center;
                 align-items: center;
+                gap: 2px;
             }
             .topbar-actions .spinner {
                 display: none !important;
@@ -406,20 +408,27 @@
             #simulate-btn {
                 grid-column: 3;
                 grid-row: 1;
+                white-space: nowrap;
             }
             
-            /* Line 2: Three equal buttons */
+            /* Line 2: Three equal buttons - prevent text wrapping */
             #ensemble-toggle {
                 grid-column: 1;
                 grid-row: 2;
+                white-space: nowrap;
+                font-size: 13px;
             }
             #waypoint-toggle {
                 grid-column: 2;
                 grid-row: 2;
+                white-space: nowrap;
+                font-size: 13px;
             }
             #collapse-toggle {
                 grid-column: 3;
                 grid-row: 2;
+                white-space: nowrap;
+                font-size: 13px;
             }
             
             /* Hide center group wrapper */
@@ -432,13 +441,13 @@
                 font-size: 14px;
             }
             .status {
-                font-size: 9px;
-                padding: 2px 4px;
+                font-size: 8px;
+                padding: 1px 3px;
                 text-align: center;
+                line-height: 1.3;
             }
             .status span {
-                display: block;
-                line-height: 1.2;
+                display: inline;
             }
             .param-grid { 
                 display: flex;
