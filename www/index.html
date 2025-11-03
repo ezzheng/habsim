@@ -458,21 +458,20 @@
                 font-size: 8px;
                 padding: 0;
                 text-align: center;
-                line-height: 1.2;
+                line-height: 1.1;
                 background: none;
                 display: flex;
                 flex-direction: column;
-                gap: 1px;
+                gap: 0;
+                justify-content: center;
             }
-            .status::before {
-                content: none !important;
+            .status > div {
+                white-space: nowrap;
+                font-weight: 400;
             }
             .status span {
-                display: inline;
                 font-weight: 500;
-            }
-            .status span::before {
-                content: none !important;
+                color: var(--fg);
             }
             .param-grid { 
                 display: flex;
@@ -527,7 +526,10 @@
             </div>
             <div class="topbar-actions">
                 <div id="sim-spinner" class="spinner" aria-hidden="true"></div>
-                <div class="status" role="status">Model: <span id="run">Unavailable</span> • Server: <span id="status">Unavailable</span></div>
+                <div class="status" role="status">
+                    <div>Model: <span id="run">Unavailable</span></div>
+                    <div>Server: <span id="status">Unavailable</span></div>
+                </div>
             </div>
         </div>
     </div>
