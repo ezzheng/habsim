@@ -62,25 +62,60 @@ def get_current_model() -> datetime | None:
         return None
 
 def get_most_recent_available() -> datetime:
-    """Get most recent 6-hourly model run time"""
+    """Get most recent 6-hourly model run time that has extended range available.
+    Prefers model from 12 hours ago to ensure all forecast hours (up to 384h) are available.
+    Extended range forecasts take time to process, so newer models may not have all hours yet.
+    """
     now = datetime.utcnow()
     # GEFS runs at 00, 06, 12, 18 UTC
     hour = (now.hour // 6) * 6
-    return datetime(now.year, now.month, now.day, hour) - timedelta(hours=6)
+    # Prefer model from 12 hours ago to ensure extended range is fully available
+    # Fall back to 6 hours ago if 12h model doesn't exist
+    model_12h = datetime(now.year, now.month, now.day, hour) - timedelta(hours=12)
+    model_6h = datetime(now.year, now.month, now.day, hour) - timedelta(hours=6)
+    
+    # Check if 12h model has extended range available
+    if check_data_available(model_12h, check_extended=True):
+        return model_12h
+    # Fall back to 6h model if 12h doesn't have extended range yet
+    elif check_data_available(model_6h, check_extended=False):
+        return model_6h
+    else:
+        # Default to 12h model even if extended range isn't ready yet
+        return model_12h
 
-def check_data_available(timestamp: datetime) -> bool:
-    """Check if data is available for given timestamp"""
-    # Check for gep01 at forecast hour 0 (simplest check)
+def check_data_available(timestamp: datetime, check_extended: bool = False) -> bool:
+    """Check if data is available for given timestamp.
+    
+    Args:
+        timestamp: Model timestamp to check
+        check_extended: If True, also check for extended range forecast hour (f384)
+                       to ensure all forecast hours are available
+    """
     y, m, d, h = timestamp.year, timestamp.month, timestamp.day, timestamp.hour
     m, d, h = map(lambda x: str(x).zfill(2), [m, d, h])
-    url = f"https://nomads.ncep.noaa.gov/pub/data/nccf/com/gens/prod/gefs.{y}{m}{d}/{h}/atmos/pgrb2bp5/gep01.t{h}z.pgrb2b.0p50.f000"
+    
+    # Always check forecast hour 0 (basic availability)
+    url_f000 = f"https://nomads.ncep.noaa.gov/pub/data/nccf/com/gens/prod/gefs.{y}{m}{d}/{h}/atmos/pgrb2bp5/gep01.t{h}z.pgrb2b.0p50.f000"
     
     import urllib.request
     try:
-        resp = urllib.request.urlopen(url, timeout=10)
-        return resp.status == 200
+        resp = urllib.request.urlopen(url_f000, timeout=10)
+        if resp.status != 200:
+            return False
     except Exception:
         return False
+    
+    # If checking extended range, verify forecast hour 384 is available
+    if check_extended:
+        url_f384 = f"https://nomads.ncep.noaa.gov/pub/data/nccf/com/gens/prod/gefs.{y}{m}{d}/{h}/atmos/pgrb2bp5/gep01.t{h}z.pgrb2b.0p50.f384"
+        try:
+            resp = urllib.request.urlopen(url_f384, timeout=10)
+            return resp.status == 200
+        except Exception:
+            return False
+    
+    return True
 
 def download_and_upload_model(timestamp: datetime) -> bool:
     """Download model using downloader.py and upload to Supabase"""
@@ -227,8 +262,10 @@ def main():
             next_run = get_most_recent_available()
             continue
         
-        # Check if data is available
-        if check_data_available(next_run):
+        # Check if data is available (check extended range if model is recent)
+        # For models older than 12 hours, extended range should definitely be available
+        is_recent = (now - next_run).total_seconds() < 12 * 3600
+        if check_data_available(next_run, check_extended=is_recent):
             logger.info(f"Data available for {fmt_timestamp(next_run)}, starting download...")
             if download_and_upload_model(next_run):
                 next_run += timedelta(hours=6)
