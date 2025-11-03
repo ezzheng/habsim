@@ -61,7 +61,7 @@ function updateServerStatus() {
             if(result === "Ready") {
                 el.style.color = "#00CC00";
             }
-            else if(result === "Data refreshing. Sims may be slower than usual."){
+            else if(result === "Refreshing"){
                 el.style.color = "#FFB900";
             }
             else{
