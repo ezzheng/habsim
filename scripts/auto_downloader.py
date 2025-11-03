@@ -186,7 +186,10 @@ def download_and_upload_model(timestamp: datetime) -> bool:
         else:
             statusfile_path = Path(args.statusfile)
         
-        # Write local status file first (clears old content and writes new timestamp)
+        # Read old model BEFORE writing new one (for cleanup)
+        old_model = get_current_model()
+        
+        # Write local status file (clears old content and writes new timestamp)
         statusfile_path.parent.mkdir(parents=True, exist_ok=True)
         with open(statusfile_path, 'w') as f:
             f.write(timestamp_str)
@@ -202,7 +205,7 @@ def download_and_upload_model(timestamp: datetime) -> bool:
             logger.warning(f"Failed to upload whichgefs to Supabase: {e}")
         
         # Clean up old model files from Supabase
-        old_model = get_current_model()
+        # Option 1: Delete files from the previous model (if we know it)
         if old_model and old_model != timestamp:
             old_timestamp_str = fmt_timestamp(old_model)
             logger.info(f"Cleaning up old model files: {old_timestamp_str}")
@@ -213,6 +216,23 @@ def download_and_upload_model(timestamp: datetime) -> bool:
                     logger.info(f"Deleted old file: {old_filename}")
                 else:
                     logger.warning(f"Failed to delete old file: {old_filename}")
+        
+        # Option 2: Also clean up any orphaned .npz files that don't match current model
+        # List all files in Supabase and delete any .npz files that aren't the current model
+        try:
+            all_files = gefs.listdir_gefs()
+            current_model_files = {f"{timestamp_str}_{str(mid).zfill(2)}.npz" for mid in model_ids}
+            orphaned_files = [f for f in all_files if f.endswith('.npz') and f not in current_model_files]
+            
+            if orphaned_files:
+                logger.info(f"Found {len(orphaned_files)} orphaned .npz file(s) to clean up")
+                for orphaned_file in orphaned_files:
+                    if gefs.delete_gefs(orphaned_file):
+                        logger.info(f"Deleted orphaned file: {orphaned_file}")
+                    else:
+                        logger.warning(f"Failed to delete orphaned file: {orphaned_file}")
+        except Exception as e:
+            logger.warning(f"Failed to list/clean orphaned files: {e}")
         
         logger.info(f"Successfully completed download and upload for {timestamp_str}")
         return True
