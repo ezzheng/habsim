@@ -4,6 +4,7 @@ import gc
 import elev
 import hashlib
 import time
+import threading
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from windfile import WindFile
@@ -16,9 +17,11 @@ EARTH_RADIUS = float(6.371e6)
 DATA_STEP = 6 # hrs
 
 ### Cache of datacubes and files. ###
-### Keep at most one simulator resident to stay within tight memory budgets. ###
-filecache = None
-filecache_model = None
+### Multi-model simulator cache with LRU eviction (max 3 simulators) ###
+_simulator_cache = {}  # {model_id: Simulator}
+_simulator_cache_access_times = {}  # {model_id: timestamp}
+_MAX_SIMULATOR_CACHE = 3  # Maximum number of simulators to keep in memory
+_SIMULATOR_CACHE_LOCK = threading.Lock()  # Thread-safe access
 elevation_cache = None
 
 currgefs = "Unavailable"
@@ -73,9 +76,10 @@ def refresh():
     return False
 
 def reset():
-    global filecache, filecache_model, elevation_cache
-    filecache = None
-    filecache_model = None
+    global _simulator_cache, _simulator_cache_access_times, elevation_cache
+    with _SIMULATOR_CACHE_LOCK:
+        _simulator_cache.clear()
+        _simulator_cache_access_times.clear()
     elevation_cache = None
     gc.collect()
 
@@ -85,24 +89,80 @@ def _get_elevation_data():
         elevation_cache = load_gefs('worldelev.npy')
     return elevation_cache
 
+def _get_memory_usage_percent():
+    """Get current memory usage percentage (0-100). Returns 0 if psutil unavailable."""
+    try:
+        import psutil
+        return psutil.virtual_memory().percent
+    except ImportError:
+        # psutil not available, return 0 (assume safe)
+        return 0
+
+def _get_dynamic_cache_limit():
+    """Determine cache limit based on memory pressure. Returns 1-3."""
+    memory_percent = _get_memory_usage_percent()
+    
+    # If memory usage is high (>85%), reduce cache aggressively
+    if memory_percent > 85:
+        return 1
+    # If memory usage is moderate (70-85%), allow 2 simulators
+    elif memory_percent > 70:
+        return 2
+    # Otherwise, allow full cache (3 simulators)
+    else:
+        return _MAX_SIMULATOR_CACHE
+
+def _evict_oldest_simulator():
+    """Evict the least recently used simulator from cache."""
+    if not _simulator_cache_access_times:
+        return
+    
+    # Find oldest simulator
+    oldest_model = min(_simulator_cache_access_times, key=_simulator_cache_access_times.get)
+    
+    # Remove from cache
+    if oldest_model in _simulator_cache:
+        del _simulator_cache[oldest_model]
+    if oldest_model in _simulator_cache_access_times:
+        del _simulator_cache_access_times[oldest_model]
+    
+    # Force garbage collection to free memory
+    gc.collect()
+
 def _get_simulator(model):
-    global filecache, filecache_model, _last_refresh_check
+    """Get simulator for given model, with LRU caching (max 3 simulators)."""
+    global _last_refresh_check
     now = time.time()
+    
+    # Refresh GEFS data if needed
     if currgefs == "Unavailable" or now - _last_refresh_check > 300:
         refresh()
         _last_refresh_check = now
-    if filecache_model == model and filecache is not None:
-        return filecache
-
-    # Drop the previous simulator to free memory before loading the next one.
-    filecache = None
-    filecache_model = None
-    gc.collect()  # Force garbage collection
-
-    wind_file = WindFile(load_gefs(f'{currgefs}_{str(model).zfill(2)}.npz'))
-    filecache = Simulator(wind_file, _get_elevation_data())
-    filecache_model = model
-    return filecache
+    
+    # Thread-safe cache access
+    with _SIMULATOR_CACHE_LOCK:
+        # Check if simulator is already cached
+        if model in _simulator_cache:
+            # Update access time (LRU)
+            _simulator_cache_access_times[model] = now
+            return _simulator_cache[model]
+        
+        # Determine dynamic cache limit based on memory pressure
+        cache_limit = _get_dynamic_cache_limit()
+        
+        # Evict oldest if cache is full
+        if len(_simulator_cache) >= cache_limit:
+            _evict_oldest_simulator()
+        
+        # Load new simulator
+        wind_file = WindFile(load_gefs(f'{currgefs}_{str(model).zfill(2)}.npz'))
+        simulator = Simulator(wind_file, _get_elevation_data())
+        
+        # Add to cache
+        _simulator_cache[model] = simulator
+        _simulator_cache_access_times[model] = now
+        
+        return simulator
 
 # Optimize coordinate transformations with vectorization-ready math
 @lru_cache(maxsize=10000)

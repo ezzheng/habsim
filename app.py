@@ -31,20 +31,35 @@ import downloader  # Import to access model configuration
 
 # Pre-warm cache on startup in background
 def _prewarm_cache():
-    """Pre-load the most common model (model 0) to avoid cold starts"""
+    """Pre-load all configured models to avoid cold starts"""
     try:
         import time
         time.sleep(2)  # Give the app a moment to fully initialize
-        app.logger.info("Pre-warming cache: loading model 0...")
-        # This will download and cache model 0
-        simulate._get_simulator(0)
+        
+        # Get configured model IDs
+        model_ids = []
+        if downloader.DOWNLOAD_CONTROL:
+            model_ids.append(0)
+        model_ids.extend(range(1, 1 + downloader.NUM_PERTURBED_MEMBERS))
+        
+        app.logger.info(f"Pre-warming cache: loading models {model_ids}...")
+        
+        # Pre-warm all configured models (will be cached with LRU eviction)
+        for model_id in model_ids:
+            try:
+                simulate._get_simulator(model_id)
+                app.logger.info(f"Model {model_id} pre-warmed")
+            except Exception as e:
+                app.logger.warning(f"Failed to pre-warm model {model_id}: {e}")
+        
         # Pre-warm elevation memmap used by /elev endpoint
         try:
             _ = elev.getElevation(0, 0)
             app.logger.info("Elevation pre-warmed successfully")
         except Exception as ee:
             app.logger.warning(f"Elevation pre-warm failed (non-critical): {ee}")
-        app.logger.info("Cache pre-warming complete!")
+        
+        app.logger.info(f"Cache pre-warming complete! ({len(model_ids)} models)")
     except Exception as e:
         app.logger.warning(f"Cache pre-warming failed (non-critical): {e}")
 
