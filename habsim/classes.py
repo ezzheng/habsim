@@ -135,29 +135,106 @@ class Simulator:
         self.wind_file = wind_file
 
     def step(self, balloon, step_size: float, coefficient):
+        # Preserve initial ground constraint
         if not balloon.ground_elev:
             balloon.ground_elev = self.elev_file.elev(*balloon.location)
             balloon.alt = max(balloon.alt, balloon.ground_elev)
-        
+        # if wind_vector is not set, get it from the wind_file
         if balloon.wind_vector is None:
             temp = self.wind_file.get(*balloon.location, balloon.alt, balloon.time)
             balloon.wind_vector = temp
-        
-        distance_moved = (balloon.wind_vector + balloon.air_vector) * step_size
-        alt = balloon.alt + balloon.ascent_rate * step_size
-        time = balloon.time + timedelta(seconds=step_size)
-        dlat, dlon = self.lin_to_angular_velocities(*balloon.location, *distance_moved) 
-        
-        # multiply by coeff to do FLOAT type balloon
-        newLat = balloon.location.getLat() + dlat * coefficient
-        newLon = balloon.location.getLon() + dlon * coefficient
-        newLoc = newLat, newLon
-        
-        balloon.update(location=newLoc, 
-                ground_elev=self.elev_file.elev(*newLoc), 
-                wind_vector=self.wind_file.get(*newLoc, alt, time),
-                time=time, alt=alt)
+
+        # Runge–Kutta 4th order integrator for (lat, lon, alt)
+        # State at start of step
+        lat0 = balloon.location.getLat()
+        lon0 = balloon.location.getLon()
+        alt0 = balloon.alt
+        t0 = balloon.time
+        asc = balloon.ascent_rate  # m/s (can be negative for descent)
+        h = float(step_size)
+
+        def sample_rates(lat, lon, alt, t):
+            # wind_file.get returns [u, v, du/dh, dv/dh, ...]; use u, v and include air_vector
+            temp = self.wind_file.get(lat, lon, alt, t)
+            u = float(temp[0])
+            v = float(temp[1])
+            if balloon.air_vector is not None:
+                u += float(balloon.air_vector[0])
+                v += float(balloon.air_vector[1])
+            # Convert linear m/s to angular deg/s at this latitude
+            dlat_dt, dlon_dt = self.lin_to_angular_velocities(lat, lon, u, v)
+            # Apply coefficient to horizontal (FLOAT scaling)
+            dlat_dt *= coefficient
+            dlon_dt *= coefficient
+            # Altitude changes linearly with ascent_rate
+            dalt_dt = asc
+            return dlat_dt, dlon_dt, dalt_dt
+
+        # k1
+        k1_lat, k1_lon, k1_alt = sample_rates(lat0, lon0, alt0, t0)
+
+        # k2 (half step)
+        lat_k2 = lat0 + 0.5 * h * k1_lat
+        lon_k2 = lon0 + 0.5 * h * k1_lon
+        alt_k2 = alt0 + 0.5 * h * k1_alt
+        t_k2 = t0 + timedelta(seconds=0.5 * h)
+        k2_lat, k2_lon, k2_alt = sample_rates(lat_k2, lon_k2, alt_k2, t_k2)
+
+        # k3 (half step)
+        lat_k3 = lat0 + 0.5 * h * k2_lat
+        lon_k3 = lon0 + 0.5 * h * k2_lon
+        alt_k3 = alt0 + 0.5 * h * k2_alt
+        t_k3 = t0 + timedelta(seconds=0.5 * h)
+        k3_lat, k3_lon, k3_alt = sample_rates(lat_k3, lon_k3, alt_k3, t_k3)
+
+        # k4 (full step)
+        lat_k4 = lat0 + h * k3_lat
+        lon_k4 = lon0 + h * k3_lon
+        alt_k4 = alt0 + h * k3_alt
+        t_k4 = t0 + timedelta(seconds=h)
+        k4_lat, k4_lon, k4_alt = sample_rates(lat_k4, lon_k4, alt_k4, t_k4)
+
+        # Combine increments
+        newLat = lat0 + (h / 6.0) * (k1_lat + 2 * k2_lat + 2 * k3_lat + k4_lat)
+        newLon = lon0 + (h / 6.0) * (k1_lon + 2 * k2_lon + 2 * k3_lon + k4_lon)
+        newAlt = alt0 + (h / 6.0) * (k1_alt + 2 * k2_alt + 2 * k3_alt + k4_alt)
+        newTime = t0 + timedelta(seconds=h)
+        newLoc = (newLat, newLon)
+
+        # Update record at end of step
+        balloon.update(
+            location=newLoc,
+            ground_elev=self.elev_file.elev(*newLoc),
+            wind_vector=self.wind_file.get(*newLoc, newAlt, newTime),
+            time=newTime,
+            alt=newAlt,
+        )
         return balloon.history[-1]
+
+		# Original Euler integrator (preserved for reference):
+		# if not balloon.ground_elev:
+		# 	balloon.ground_elev = self.elev_file.elev(*balloon.location)
+		# 	balloon.alt = max(balloon.alt, balloon.ground_elev)
+		# 
+		# if balloon.wind_vector is None:
+		# 	temp = self.wind_file.get(*balloon.location, balloon.alt, balloon.time)
+		# 	balloon.wind_vector = temp
+		# 
+		# distance_moved = (balloon.wind_vector + balloon.air_vector) * step_size
+		# alt = balloon.alt + balloon.ascent_rate * step_size
+		# time = balloon.time + timedelta(seconds=step_size)
+		# dlat, dlon = self.lin_to_angular_velocities(*balloon.location, *distance_moved)
+		# 
+		# # multiply by coeff to do FLOAT type balloon
+		# newLat = balloon.location.getLat() + dlat * coefficient
+		# newLon = balloon.location.getLon() + dlon * coefficient
+		# newLoc = newLat, newLon
+		# 
+		# balloon.update(location=newLoc, 
+		# 			ground_elev=self.elev_file.elev(*newLoc), 
+		# 			wind_vector=self.wind_file.get(*newLoc, alt, time),
+		# 			time=time, alt=alt)
+		# return balloon.history[-1]
 		
     def lin_to_angular_velocities(self, lat, lon, u, v): 
         dlat = math.degrees(v / EARTH_RADIUS)
