@@ -399,26 +399,26 @@
             /* First line: HABSIM brand and Simulate button */
             #simulate-btn {
                 order: 2;
-                flex: 0 1 auto;
+                flex: 0 0 auto;
                 white-space: nowrap;
                 margin-left: auto;
-                min-width: 50%;  /* Ensures it takes enough space to force wrap */
             }
-            /* Second line: Three equal-width buttons - use width: 32% to guarantee wrap */
+            /* Second line: Three equal-width buttons accounting for gaps */
+            /* With gap:8px, we have 2 gaps = 16px total */
             #ensemble-toggle {
                 order: 3;
-                flex: 0 0 32%;
-                max-width: 32%;
+                flex: 0 0 calc((100% - 16px) / 3);
+                width: calc((100% - 16px) / 3);
             }
             #waypoint-toggle {
                 order: 4;
-                flex: 0 0 32%;
-                max-width: 32%;
+                flex: 0 0 calc((100% - 16px) / 3);
+                width: calc((100% - 16px) / 3);
             }
             #collapse-toggle {
                 order: 5;
-                flex: 0 0 32%;
-                max-width: 32%;
+                flex: 0 0 calc((100% - 16px) / 3);
+                width: calc((100% - 16px) / 3);
             }
             .topbar-actions {
                 order: 6;
