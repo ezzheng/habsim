@@ -390,6 +390,8 @@
                 order: 1;
                 justify-self: unset;
                 width: auto;
+                /* Ensure brand + simulate fills line 1 */
+                min-width: 40%;
             }
             .topbar-center-group {
                 /* Break out of grouped layout on mobile */
@@ -403,22 +405,21 @@
                 white-space: nowrap;
                 margin-left: auto;
             }
-            /* Second line: Three equal-width buttons accounting for gaps */
-            /* With gap:8px, we have 2 gaps = 16px total */
+            /* Second line: Three equal-width buttons */
             #ensemble-toggle {
                 order: 3;
-                flex: 0 0 calc((100% - 16px) / 3);
-                width: calc((100% - 16px) / 3);
+                flex: 1 1 0;
+                min-width: 0;
             }
             #waypoint-toggle {
                 order: 4;
-                flex: 0 0 calc((100% - 16px) / 3);
-                width: calc((100% - 16px) / 3);
+                flex: 1 1 0;
+                min-width: 0;
             }
             #collapse-toggle {
                 order: 5;
-                flex: 0 0 calc((100% - 16px) / 3);
-                width: calc((100% - 16px) / 3);
+                flex: 1 1 0;
+                min-width: 0;
             }
             .topbar-actions {
                 order: 6;
