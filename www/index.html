@@ -403,12 +403,12 @@
                 margin-left: auto;
                 white-space: nowrap;
             }
-            /* Second line: Ensemble, Waypoints, Data Panel - all share the line */
+            /* Force line break before second row using flex-basis: 100% trick */
             #ensemble-toggle {
                 order: 3;
-                flex: 1 1 calc(33.33% - 6px);
-                width: calc(33.33% - 6px);
-                flex-basis: calc(33.33% - 6px);
+                flex-basis: 100%; /* Forces wrap to new line */
+                width: calc(33.33% - 6px); /* Actual width on the new line */
+                max-width: calc(33.33% - 6px);
             }
             #waypoint-toggle {
                 order: 4;
