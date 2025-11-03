@@ -31,7 +31,7 @@ This is an offshoot of the prediction server developed for the Stanford Space In
 ## Files
 
 ### Core Application
-- **`app.py`** - Flask (Python web framework) WSGI (Web Server Gateway Interface) application serving REST API (Representational State Transfer API) and static files
+- **`app.py`** - Flask (Python web framework) WSGI (Web Server Gateway Interface) application serving REST API and static files
   - Routes: `/sim/singlezpb` (ZPB prediction), `/sim/spaceshot` (ensemble), `/sim/elev` (elevation)
   - Background thread pre-warms cache on startup
   - `ThreadPoolExecutor` (concurrent execution) parallelizes ensemble requests (max_workers=2)
@@ -74,15 +74,15 @@ This is an offshoot of the prediction server developed for the Stanford Space In
   - Converts GMTED2010 GeoTIFF (Geographic Tagged Image File Format) → NumPy array format
 
 ### Frontend (`www/`)
-- **`index.html`** - Single-page application with embedded CSS (Cascading Style Sheets)/JS (JavaScript)
-  - CSS Grid layout (CSS layout system) for mobile (2x3 grid), Flexbox (CSS flexbox layout) for desktop
-  - Google Maps API v3 (Application Programming Interface version 3) integration
+- **`index.html`** - Single-page application with embedded CSS/JS
+  - CSS Grid layout for mobile (2x3 grid), Flexbox for desktop
+  - Google Maps API v3 integration
   - Real-time parameter inputs with validation
   - Ensemble toggle (models 0-2) vs. single simulation (model 0)
 
 - **`paths.js`** - Map rendering and API client
   - Fetches trajectories via `fetch()` (JavaScript HTTP client) from `/sim/singlezpb` or `/sim/spaceshot`
-  - Draws `google.maps.Polyline` objects (Google Maps line drawing) with color-coded paths
+  - Draws `google.maps.Polyline` objects with color-coded paths
   - Waypoint circles with click handlers showing altitude/time info windows
 
 - **`style.js`** - Mode switching logic (Standard/ZPB/Float balloon types)
@@ -92,8 +92,8 @@ This is an offshoot of the prediction server developed for the Stanford Space In
 
 ### Deployment Configuration
 - **`gunicorn_config.py`** - Production WSGI server config for Gunicorn (Python WSGI HTTP server)
-  - Optimized for Render free tier (2GB RAM, 1 CPU - Central Processing Unit)
-  - `workers=2`, `threads=2` (4 concurrent requests via `gthread` worker class - threaded worker)
+  - Optimized for Render Standard tier (2GB RAM, 1 CPU)
+  - `workers=2`, `threads=2` (4 concurrent requests via `gthread` worker class)
   - `preload_app=True` for shared memory between workers (critical optimization)
   - `max_requests=800` for automatic worker recycling to prevent memory leaks
 
