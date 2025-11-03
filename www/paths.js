@@ -144,13 +144,24 @@ var currpaths = new Array();
 
 // Self explanatory
 async function simulate() {
+    // If a simulation is already running, interpret this call as a cancel request
+    if (window.__simRunning && window.__simAbort) {
+        try { window.__simAbort.abort(); } catch (e) {}
+        return;
+    }
+
+    // Setup abort controller for this run
+    window.__simAbort = new AbortController();
+    window.__simRunning = true;
+
     const simBtn = document.getElementById('simulate-btn');
     const spinner = document.getElementById('sim-spinner');
     const originalButtonText = simBtn ? simBtn.textContent : null;
     if (simBtn) {
         simBtn.disabled = true;
         simBtn.classList.add('loading');
-        simBtn.textContent = 'Simulating…';
+        simBtn.disabled = false; // allow click to cancel
+        simBtn.textContent = 'Simulating… (tap to cancel)';
     }
     if (spinner) { spinner.classList.add('active'); }
     try {
@@ -210,7 +221,7 @@ async function simulate() {
                 const urlWithModel = url + "&model=" + modelId;
                 console.log(urlWithModel);
                 try {
-                    const response = await fetch(urlWithModel);
+                    const response = await fetch(urlWithModel, { signal: window.__simAbort.signal });
                     const payload = await response.json();
 
                     if (payload === "error") {
@@ -229,6 +240,10 @@ async function simulate() {
                         showpath(payload, modelId);
                     }
                 } catch (error) {
+                    if (error && (error.name === 'AbortError' || error.message === 'The operation was aborted.')) {
+                        // Cancelled: stop processing further models, keep what is already drawn
+                        break;
+                    }
                     console.error('Simulation fetch failed', error);
                     if (onlyonce) {
                         alert('Failed to contact simulation server. Please try again later.');
@@ -240,6 +255,8 @@ async function simulate() {
         }
         if (waypointsToggle) {showWaypoints()}
     } finally {
+        window.__simRunning = false;
+        window.__simAbort = null;
         if (spinner) { spinner.classList.remove('active'); }
         if (simBtn) {
             simBtn.disabled = false;
