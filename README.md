@@ -5,15 +5,15 @@ High Altitude Balloon Simulator
 This is an offshoot of the prediction server developed for the Stanford Space Initiative's Balloons team. It restores core functionality and introduces a simple UI that suits the current needs of the balloons team.
 
 ### Architecture Changes
-**Old Version (Client Library):** The original `habsim` package was a Python client library that made HTTP requests to `habsim.org` API server. Users would install the package and call prediction functions, which would contact the remote server.
+**Old Version (Client Library):** Python package that made HTTP requests to `habsim.org` API. Users installed it and called functions like `util.predict()` which contacted the remote server.
 
-**Current Version (Self-Contained Server):** This version IS the server. It runs a Flask application that:
-- Hosts the web UI at the root URL
-- Provides REST API endpoints (`/sim/*`)
-- Performs simulations locally using GEFS data from Supabase
-- No longer depends on external prediction servers
+**Current Version (Self-Contained Server):** This IS the server - a Flask app that hosts the web UI, serves REST API endpoints, and runs simulations locally using GEFS data from Supabase.
 
-**Note on `habsim/` folder:** This directory serves a dual purpose - it's both the Python package (containing `classes.py` for simulation) AND a Python virtual environment (containing installed dependencies in `lib/`, `bin/`). Legacy client utilities (`util.py`, `ioutil.py`) have been moved to `deprecated/` as they're no longer needed. 
+**Benefits:** Independence from external services, non-technical users can just visit a URL, full control over performance/caching.
+
+**Tradeoffs:** You pay for compute/storage (vs. shared infrastructure), responsible for scaling/maintenance, no programmatic Python API (web UI only).
+
+**Note:** The `habsim/` folder is both the Python package (`classes.py`) AND a virtual environment (`lib/`, `bin/`). Legacy client code moved to `deprecated/`. 
 
 ## How It Works
 
