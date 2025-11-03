@@ -7,7 +7,7 @@ This is an offshoot of the prediction server developed for the Stanford Space In
 ### Architecture Changes
 **Old Version (Client Library):** Python package making HTTP requests to `habsim.org` API. Installed via pip, called functions like `util.predict()`.
 
-**Current Version (Self-Contained Server):** Self-hosted web application on Render (Flask framework) hosting the UI, REST API endpoints, and running simulations locally with GEFS data from Supabase.
+**Current Version (Self-Contained Server):** Self-hosted web application (built with Flask framework, deployed on Render hosting platform) hosting the UI, REST API endpoints, and running simulations locally with GEFS data from Supabase.
 
 **Benefits:** Independence from external services, non-technical users visit URL directly, full control over performance/caching.
 
@@ -17,15 +17,13 @@ This is an offshoot of the prediction server developed for the Stanford Space In
 - **Maintenance Burden:** Responsible for uptime, deployments, bug fixes, infrastructure monitoring
 - **No Programmatic API:** Old version allowed `from habsim import util; util.predict(...)` - current requires manual HTTP requests or web UI
 - **Single Point of Failure:** If Render instance fails, all users lose access (vs. centralized server with redundancy)
-- **Storage Limits:** `/tmp` storage caps hit faster (2GB limit); aggressive cache management required
-- **Cold Starts:** Free tier auto-sleep causes slow first requests after idle periods
 
 **Note:** The `habsim/` folder is both the Python package (`classes.py`) AND a virtual environment (`lib/`, `bin/`). Legacy client code moved to `deprecated/`. 
 
 ## How It Works
 
 1. **User Interface**: Web UI (`www/`) allows users to set launch parameters and visualize predictions
-2. **API Server**: Render application (`app.py` using Flask framework) receives requests and coordinates simulations
+2. **API Server**: Flask application (`app.py`, deployed on Render) receives requests and coordinates simulations
 3. **Wind Data**: GEFS (Global Ensemble Forecast System) weather files from Supabase are cached locally (`gefs.py`)
 4. **Simulation**: Physics engine (`simulate.py`) calculates balloon trajectory using wind data
 5. **Results**: JSON (JavaScript Object Notation) trajectory data is returned to browser and rendered on Google Maps
