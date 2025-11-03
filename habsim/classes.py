@@ -1,414 +1,199 @@
 import datetime
-from . import util
+#from . import util
 import math
 import random
 import bisect
+import numpy as np
+from windfile import WindFile
+from datetime import timedelta, datetime
+EARTH_RADIUS = float(6.371e6)
+import pdb
 
-class Prediction: # goes away
-    '''
-    A single instance of a profile and its associated trajectory.
-
-    Users may create Prediction objects by passing it a profile
-    and then run the prediction, which calls the HABSIM server.
-    '''
-    def __init__(self, profile=None, model=None, launchtime=None, launchsite=None, step=240):
-        '''
-        Prediction objects keep track of their associated profile,
-        the model number (1-20) they are based on,
-        a launchtime as a datetime object, a LaunchSite, and a simulation step size in seconds.
-        '''
-        self.trajectory = Trajectory()
-        self.model = model
-        self.profile = profile
-        self.launchtime = datetime.datetime.now() if not launchtime else launchtime
-        self.launchsite = launchsite
-        self.step = step
-
-    
-    def setLaunchSite(self, launchsite):
-        '''
-        Set new launch sites using this method, not by modifying the field.
-        This is because the profile needs to be updated with new elevation information.
-        '''    
-        self.launchsite = launchsite
-        if self.profile is not None:
-            self.profile.setLaunchAlt(launchsite.elev)
-
-    
-    def split(self):
-        '''
-        Splits and returns the Trajectory into segments based on the Profile.
-        '''
-        if self.trajectory == None:
-            raise Exception("No trajectory to split")
-        return [self.trajectory[self.indices[i]:self.indices[i+1]+1] \
-            for i in range(len(self.indices) - 1)]
-
-    def run(self, model=None, launchtime=None, launchsite=None, step=None):
-        '''
-        If no parameters are passed in, looks in instance fields. The site passed in 
-        to the Prediction object will override the launch altitude, if any, set in the 
-        Profile object.
-
-        The Trajectory will be stored in the Prediction object as its Trajectory field. Returns self (the Prediction object).
-        '''
-        self.trajectory = Trajectory()
-        if step != None:
-            self.step = step
-        if launchtime != None:
-            self.launchtime = launchtime
-        if launchsite != None:
-            self.launchsite = launchsite
-        if model != None:
-            self.model = model
-        if self.profile == None:
-            raise Exception("Profile not specified.")
-        if self.launchsite == None:
-            raise Exception("Launchsite not specified.")
-        if self.launchtime == None:
-            raise Exception("Launchtime not specified.")
-        if self.model == None or self.model < 1 or self.model > 20:
-            raise Exception("Model not specified or invalid.")
-        self.profile.setLaunchAlt(self.launchsite.elev)
-
-
-        time = self.launchtime.timestamp()
-        lat, lon = self.launchsite.coords
-        rates, durs, coeffs = self.profile.segmentList()
-        __, alts = self.profile.waypoints()
-        
-        self.indices = list()
-
-        if type(self.profile) == ControlledProfile:
-            if (self.profile.interval * 3600) % self.step != 0:
-                raise Exception("Simulation step must evenly divide ControlledProfile interval.")
-
-        for i in range(len(rates)):
-            self.indices.append(len(self.trajectory))
-            newsegment = util.predict(time, lat, lon, alts[i], coeffs[i], self.model, rates[i], durs[i], self.step)
-            if alts[i] > 31000:
-                print("Warning: model inaccurate above 31km.")
-            self.trajectory.append(newsegment)
-            if len(newsegment) != math.ceil(durs[i] * 3600 / self.step) + 1:
-                if i is len(rates)-1:
-                    print("Warning: early termination of last profile segment.")
-                else:
-                    print("Warning: flight terminated before last profile segment.")
-                    break
-            time, lat, lon = self.trajectory.endpoint()[:3]
-        self.indices.append(len(self.trajectory))
-
-        return self
-
-class LaunchSite: # goes away
-    '''
-    A LaunchSite keeps track of its coordinates and elevation.
-    The elevation is ground elevation by default,
-    but may be specified to be higher.
-    ''' 
-    def __init__(self, coords, elev=None):
-        self.coords = coords
-        self.elev = elev
-        if self.elev == None:
-            self.elev = util.getElev(self.coords)
-        elif not util.checkElev(self):
-            raise Exception("Launch site cannot be underground.")
-
-class Trajectory:
-    '''
-    Data must be a list of tuples. The tuple fields may be arbitrary, but the first four
-    must be UNIX TIME, LAT, LON, ALT.
-    '''
+class Trajectory(list):
+    # superclass of list
     def __init__(self, data=list()):
+        super().__init__(data)
         self.data = data
-
-    def append(self, new):
-        '''
-        Adds a list of points to the trajectory, not duplicating the common point. Do NOT use this to add Trajectory objects!
-        '''
-        self.data = self.data[:-1] + new
-
-    def endpoint(self):
-        '''
-        Last data tuple.
-        '''
-        return self.data[-1]
-
-    def startpoint(self):
-        '''
-        First data tuple.
-        '''
-        return self.data[0]
 
     def duration(self):
         '''
         Returns duration in hours, assuming the first field of each tuple is a UNIX timestamp.
         '''
-        return (self.endpoint()[0] - self.startpoint()[0]) / 3600
+        # these are datetime objects, call .seconds()
+        # rolls over with days
+        return (self.data[len(self.data) - 1].time - self.data[0].time).total_seconds() / 3600
 
     def length(self):
         '''
         Distance travelled by trajectory in km.
         '''
         res = 0
-        for i in range(len(self)-1):
-            u, v = util.angular_to_lin_distance(self[i][1], self[i+1][1], self[i][2], self[i+1][2])
-            res += math.sqrt(u**2 + v**2)
+        for i, j in zip(self[:-1], self[1:]):
+            res += i.location.distance(j.location)
         return res
 
-    def endtime(self):
-        '''
-        Datetime of trajectory end point in local time zone.
-        '''
-        timestamp = self.endpoint()[0]
-        return datetime.datetime.fromtimestamp(timestamp)
+    def interpolate(self, time):
+        # find where it is between locations
+        # return location and altitude
+        pass
 
-    def __len__(self):
-        return len(self.data)
+class Record:
+    def __init__(self, time=None, location=None, alt=None, ascent_rate=None, air_vector=None, wind_vector=None, ground_elev=None):
+        self.time = time
+        self.location = location
+        self.alt = alt
+        # naming
+        self.ascent_rate = ascent_rate
+        self.air_vector = air_vector
+        self.wind_vector = wind_vector
+        #added 3/23
+        self.ground_elev = ground_elev
 
-    def __getitem__(self, key):
-        return self.data[key]
+class Location(tuple): # subclass of tuple, override __iter__
+    # unpack lat and lon as two arguments when passed into a function
+    EARTH_RADIUS = 6371.0
+
+    # super class
+    def __new__(self, lat, lon):
+        return tuple.__new__(Location, (lat, lon))
+
+    def getLon(self):
+        return self[1]
+
+    def getLat(self):
+        return self[0]
+
+    def distance(self, other):
+        # change to indices
+        return self.haversine(self[0], self.lon, other.lat, other.lon)
+
+    def haversine(self, lat1, lon1, lat2, lon2):
+        '''
+        Returns great circle distance between two points.
+        '''
+        # what will happen if distance called between invalid point (lat out of bounds)
+        lat1, lon1, lat2, lon2 = map(math.radians, [lat1, lon1, lat2, lon2])
+
+        dlat = lat2-lat1
+        dlon = lon2-lon1
+
+        a = math.sin(dlat/2) ** 2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon/2)**2
+        c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
+
+        return EARTH_RADIUS * c
+
+class ElevationFile:
+    # res may not be 120
+    resolution = 120 ## points per degree
+
+    def __init__(self, path): # store
+        self.data = np.load(path)
+        self.resolution = 120
+
+    def elev(self, lat, lon): # return elevation
+        x = int(round((lon + 180) * self.resolution))
+        y = int(round((90 - lat) * self.resolution)) - 1
+        return max(0, self.data[y, x])
+
+class Balloon:
+    def __init__(self, time=None, location=None, alt=0, ascent_rate=0, air_vector=(0,0), wind_vector=None, ground_elev=None):
+        record = Record(time=time, location=Location(*location), alt=alt, ascent_rate=ascent_rate, air_vector=np.array(air_vector) if air_vector is not None else None, wind_vector=np.array(wind_vector) if wind_vector is not None else None, ground_elev=ground_elev)
+        self.history = Trajectory([record])
     
-    def __str__(self):
-        return str(self.data)
+    #def set_airvector(u, v):
+       # self.air_vector = np.array([u, v])
 
+    # bearing of the airvector
+   # def set_bearing(self, bearing, airspeed: float):
+        #self.ascent_rate = ascent_rate
+        # airspeed * sin(bearing), airspeed *cos(bearing) (make 0 degrees be the north pole)
 
-class ControlledProfile: # goes away
-
-    '''
-    Series of altitude waypoints at regular intervals which define a controlled profile.
-    Floating segments are not yet supported. 
-    '''
-
-    def __init__(self, dur, interval):
-        self.dur = dur
-        self.interval = interval
+    def update(self, time=None, location=None, alt=0, ascent_rate=0, air_vector=(0,0), wind_vector=None, ground_elev=None):
+        record = Record(time=time or self.time, 
+                        location=Location(*location) or self.location, 
+                        alt=alt or self.alt, 
+                        ascent_rate=ascent_rate or self.ascent_rate, 
+                        air_vector=np.array(air_vector) if air_vector is not None else self.air_vector,
+                        wind_vector=np.array(wind_vector) if wind_vector is not None else self.wind_vector, 
+                        ground_elev=ground_elev or self.ground_elev)
+        self.history.append(record)
     
-    def initialize(self, step, lower, upper, seed=[0]):
-            
-        '''
-        Initializes a list of waypoints beginning with seed, and then performing a Gaussian
-        random walk with std.dev step bounded in [lower, upper]
-        '''
-        self.waypoints_data = seed
-        i = len(self)
-        while (i < math.ceil(self.dur / self.interval) + 1):
-            self.waypoints_data.append(self[-1] + step*random.gauss(0,1))
-            if self[i] < lower:
-                self[i] = lower
-            elif self[i] > upper:
-                self[i] = upper
-            i += 1
+    def __getattr__(self, name):
+        if name == "history":
+            return super().__getattr__(name)
+        return self.history[-1].__getattribute__(name)
 
-    def limit(self, lower, upper, start=0):
-        '''
-        Trims the profile such that any waypoints, starting with index start,
-        below lower or above upper are reassigned to be equal to lower and upper, respecitively.
-        '''
-        for i in range(start, len(self)):
-            if self[i] < lower:
-                self[i] = lower
-            elif self[i] > upper:
-                self[i] = upper
-    
-    def waypoints(self):
-        '''
-        Returns a tuple (times, waypoints), where times is a list of hours from launch and waypoints is elevations.
-        '''
-        return [self.interval * i for i in range(len(self))], self.waypoints_data
-
-    def segmentList(self):
-        '''
-        Returns a list of rates, dur, coeffs representing the profile. This is used to actually call the server.
-        '''
-        rates = [(self[i+1] - self[i])/self.interval/3600 for i in range(len(self) - 1)]
-        dur = [self.interval]*(len(self)-1)
-        coeff = [1]*(len(self)-1)
-        return rates, dur, coeff
-
-    def setLaunchAlt(self, alt):
-        '''
-        Sets the launch altitude of the ControlledProfile. Does not do much, in contrast to a normal Profile.
-        '''
-        self[0] = alt
-    
-    def __len__(self):
-        return len(self.waypoints_data)
-
-    def __getitem__(self, key):
-        return self.waypoints_data[key]
-
-    def __setitem__(self, key, item):
-        self.waypoints_data[key] = item
-
-    def __str__(self):
-        return str(self.waypoints_data)
-
-
-class Profile: # goes away
-
-    '''
-    A Profile object keeps track of a full flight profile for prediction.
-    It is not meant to be optimized --- use ControlledProfile instead.
-
-    A Profile consists of segments of a flight, which can be ascent, descent,
-    equilibration, or floating (marine anchor).
-    '''
-
-    def __init__(self, segments=None, launchalt=None):
-        self.segments = list()
-        if segments != None:
-            for i in range(len(segments)):
-                self.append(segments[i])
-        self.launchalt = launchalt
-        if self.launchalt != None:
-            self.setLaunchAlt(launchalt)
-
-    def setLaunchAlt(self, alt):
-
-        '''
-        When you set the launch altitude, the information is used to populate
-        altitude waypoints for each segment, propogating forward in time.
-        '''
-
-        self.launchalt = alt
-        curralt = alt
-        for i in range(len(self)):
-            if self[i].type == "alt":
-                self[i].dur = (self[i].stopalt - curralt)/self[i].rate/3600
-                if self[i].dur < 0:
-                    raise Exception("Profile inconsistency: altitude changes in opposite direction of movement.")
-                return
-            else:
-                self[i].stopalt = curralt + self[i].dur * 3600 * self[i].rate
-                curralt = self[i].stopalt    
-
-
-    def append(self, segment):
-        '''
-        Runs a few checks are run to make sure the profile remains self-consistent.
-        '''
-        if len(self) > 0 and self[-1].stopalt != None:
-                lastalt = self[-1].stopalt
-                if segment.type == "alt":
-                    if segment.stopalt != lastalt and segment.rate == 0:
-                        raise Exception("Profile inconsistency: nonzero altitude change while equilibrated.")
-                    segment.dur = (segment.stopalt - lastalt) / segment.rate / 3600
-                    if segment.dur < 0:
-                        raise Exception("Profile inconsistency: altitude changes in opposite direction of movement.")
-                if segment.type == "dur":
-                    segment.stopalt = lastalt + (segment.dur * 3600 * segment.rate)
-                
-        if segment.stopalt != None and segment.stopalt < 0:
-            raise Exception("Profile inconsistency: altitude is negative.")
-            
-        self.segments.append(segment)
-
-
-    def waypoints(self):
-
-        '''
-        A pair of lists [hours, altitudes] specifying the profile.
-        '''
-
-        if self.launchalt == None:
-            raise Exception("Full altitude profile not specified.")
-        hours = [0]
-        for i in range(len(self)):
-            hours.append(hours[-1] + self[i].dur)
-        altitudes = [self.launchalt] + [self[i].stopalt for i in range(len(self))]
-        return hours, altitudes
-
-    def segmentList(self):
-        '''
-        List of rates, durs, coeffs.
-        '''
-        if self.launchalt == None:
-            raise Exception("Full altitude profile not specified.")
-        return [self[i].rate for i in range(len(self))], [self[i].dur for i in range(len(self))], [self[i].coeff for i in range(len(self))]
-        
-
-    def __len__(self):
-        return len(self.segments)
-
-    def __getitem__(self, key):
-        return self.segments[key]
-
-    def __str__(self):
-        res = f"Launch alt:{self.launchalt}\n"
-        for i in range(len(self)):
-            res += str(self[i]) + "\n"
-        return res[:-1]
-
-class Segment: # goes away
-
-    '''
-    A single part of a profile with a constant ascent/descent rate.
-    Segments may be of type "dur" (specified duration) or type "alt" (specified stopping altitude).
-
-    Segments default to motion coefficient 1, which can be modified in the case of
-    marine anchor segments.
-    '''
-
-    def __init__(self, rate, dur=None, stopalt=None, coeff=1):
-        if stopalt == None and dur == None:
-            raise Exception("A duration or a stopping altitude must be specified.")
-        if stopalt != None and dur != None:
-            raise Exception("Duration and stopping altitude both specified.")
-        if dur != None and dur < 0:
-            raise Exception("Segment cannot have negative duration.")
-        self.rate = rate
-        self.type = "dur" if dur else "alt"
-        self.dur = dur
-        self.stopalt = stopalt
-        self.coeff = coeff
-    def __str__(self):
-        if self.type == "alt":
-            return f'Rate:{self.rate}, Type:alt, Stopalt:{self.stopalt}, Coeff:{self.coeff} (Dur:{self.dur})'
+    def __setattr__(self, name, value):
+        if name != "history":
+            self.history[-1].__setattr__(name, value)
         else:
-            return f'Rate:{self.rate}, Type:dur, Dur:{self.dur}, Coeff:{self.coeff} (Stopalt:{self.stopalt})'
+            super().__setattr__(name, value)
 
-class StaticTarget(): # goes away
-    '''
-    A Target is used in trajectory optimization. A StaticTarget has a constant location at all times.
-    '''
-    def __init__(self, lat, lon):
-        self.lat = lat
-        self.lon = lon
-    
-    def location(self, time):
-        '''
-        Returns the constant location of the StaticTarget.
-        '''
-        return self.lat, self.lon
+class Simulator:
+    def __init__(self, wind_file, elev_file):
+        self.elev_file = ElevationFile(elev_file)
+        self.wind_file = wind_file
 
-class MovingTarget(): # goes away
-    '''
-    A MovingTarget moves according to a list of times and waypoints, and intermediate locations are linearly interpolated.
-    The location is not defined outside the bounds of the waypoints.
-    '''
-    def __init__(self, times, lats, lons):
-        '''
-        Pass in times in the format of timestamps in the Trajectory (usually UNIX).
-        '''
+    def step(self, balloon, step_size: float, coefficient):
+        if not balloon.ground_elev:
+            balloon.ground_elev = self.elev_file.elev(*balloon.location)
+            balloon.alt = max(balloon.alt, balloon.ground_elev)
         
-        self.times = times
-        self.lats = lats
-        self.lons = lons
-    
-    def location(self, time):
-        '''
-        Interpolates the waypoints to the specified time.
-        '''
-        if time == self.times[-1]:
-            return self.lats[-1], self.lons[-1]
-        if time >= self.times[-1]:
-            raise Exception("Target location not specified at given time.")
-        elif time < self.times[0]:
-            raise Exception("Target location not specified at given time.")
-        else:
-            idx = bisect.bisect_left(self.times, time)
-            mod = (time-self.times[idx-1])/(self.times[idx]-self.times[idx-1])
-            lat = (1-mod) * self.lats[idx-1] + mod * self.lats[idx]
-            lon = (1-mod) * self.lons[idx-1] + mod * self.lons[idx]
-            return lat, lon
+        if balloon.wind_vector is None:
+            temp = self.wind_file.get(*balloon.location, balloon.alt, balloon.time)
+            balloon.wind_vector = temp
+        
+        distance_moved = (balloon.wind_vector + balloon.air_vector) * step_size
+        alt = balloon.alt + balloon.ascent_rate * step_size
+        time = balloon.time + timedelta(seconds=step_size)
+        dlat, dlon = self.lin_to_angular_velocities(*balloon.location, *distance_moved) 
+        
+        # multiply by coeff to do FLOAT type balloon
+        newLat = balloon.location.getLat() + dlat * coefficient
+        newLon = balloon.location.getLon() + dlon * coefficient
+        newLoc = newLat, newLon
+        
+        balloon.update(location=newLoc, 
+                ground_elev=self.elev_file.elev(*newLoc), 
+                wind_vector=self.wind_file.get(*newLoc, alt, time),
+                time=time, alt=alt)
+        return balloon.history[-1]
+		
+    def lin_to_angular_velocities(self, lat, lon, u, v): 
+        dlat = math.degrees(v / EARTH_RADIUS)
+        dlon = math.degrees(u / (EARTH_RADIUS * math.cos(math.radians(lat))))
+        return dlat, dlon
+
+    def simulate(self, balloon, step_size, coefficient, elevation, target_alt=None, dur=None): 
+        if step_size < 0:
+            raise Exception("step size cannot be negative")
+        
+        if (target_alt and dur != None) or not (target_alt or dur != None):
+            raise Exception("Trajectory simulation must either have a max altitude or specified duration, not both")
+        step_history =Trajectory([balloon.history[-1]])
+        
+        if dur == None:
+            dur = ((target_alt - balloon.alt) / balloon.ascent_rate) / 3600
+        
+        if dur == 0:
+            step_history.append(self.step(balloon, 0, coefficient))
+        end_time = balloon.time + timedelta(hours=dur)
+        while (end_time - balloon.time).total_seconds() > 1:
+            if balloon.time + timedelta(seconds=step_size) >= end_time:
+                step_size = (end_time - balloon.time).seconds
+            newRecord = self.step(balloon, step_size, coefficient)
+
+            #total_airtime += step_size
+            step_history.append(newRecord)
+            
+            # break if balloon hits the ground (last record will be below ground)
+            if elevation and balloon.alt < self.elev_file.elev(*balloon.location):
+                break
+        return step_history
+
+#testing output code below this point
+#balloon = Balloon(0, 30, 40, datetime.utcfromtimestamp(1612143049))
+#simulate = Simulator(wf)
+#for i in range(1000):
+#    simulate.step(balloon, 1)
+#print(balloon.history)

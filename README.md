@@ -33,12 +33,11 @@ This is an offshoot of the prediction server developed for the Stanford Space In
   - Implements fast 4D interpolation (lat, lon, altitude, time)
   - Uses memory-mapped files for efficient large dataset handling
 
-- **`classes.py`** - Balloon and trajectory data structures (legacy)
-
-- **`habsim/classes1.py`** - Updated balloon physics classes
+- **`habsim/classes.py`** - Balloon physics classes and data structures
   - `Balloon` - Represents balloon state (position, altitude, ascent rate)
   - `Simulator` - Physics engine that steps balloon through time
   - `ElevationFile` - Ground elevation data wrapper
+  - `Trajectory` - Container for trajectory points
 
 ### Data Management
 - **`gefs.py`** - GEFS weather file downloader and cache manager

@@ -27,6 +27,6 @@ ioutil
 """
 
 from . import util
-from .classes1 import * # changed
+from .classes import *
 from . import ioutil
 from . import webplot
