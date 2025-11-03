@@ -73,13 +73,26 @@ def complete_run(model_timestamp, timestamp_str=None, savedir=None):
     os.mkdir(f'{savedir}/temp')
 
     for t in range(0, FORECAST_INTERVAL+MAX_HOURS, FORECAST_INTERVAL):
+        success = True
         # Download control run (member 0)
         if DOWNLOAD_CONTROL:
-            single_run(y, m, d, h, t, 0, is_control=True, savedir=savedir)
+            try:
+                single_run(y, m, d, h, t, 0, is_control=True, savedir=savedir)
+            except Exception as e:
+                logger.warning(f'Failed to download control run at +{t}h: {e}')
+                success = False
         # Download perturbed ensemble members
         for n in range(1, 1+NUM_PERTURBED_MEMBERS):
-            single_run(y, m, d, h, t, n, is_control=False, savedir=savedir)
-        logger.info(f'Successfully completed {timestamp_str}+{t}')
+            try:
+                single_run(y, m, d, h, t, n, is_control=False, savedir=savedir)
+            except Exception as e:
+                logger.warning(f'Failed to download member {n} at +{t}h: {e}')
+                success = False
+        
+        if success:
+            logger.info(f'Successfully completed {timestamp_str}+{t}')
+        else:
+            logger.warning(f'Partially completed {timestamp_str}+{t} (some members failed, continuing...)')
 
     combine_files(timestamp_str, savedir)
     shutil.rmtree(f'{savedir}/temp')
