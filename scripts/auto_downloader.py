@@ -230,7 +230,9 @@ def main():
             test_timestamp = get_most_recent_available()
             logger.info(f"Testing with most recent available: {fmt_timestamp(test_timestamp)}")
         
-        if check_data_available(test_timestamp):
+        # In test mode, check extended range if using a recent model
+        is_recent = (datetime.utcnow() - test_timestamp).total_seconds() < 12 * 3600
+        if check_data_available(test_timestamp, check_extended=is_recent):
             logger.info(f"Data available, proceeding with download/upload...")
             success = download_and_upload_model(test_timestamp)
             if success:
