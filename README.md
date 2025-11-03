@@ -17,13 +17,14 @@ This is an offshoot of the prediction server developed for the Stanford Space In
 ### Core Application
 - **`app.py`** - Flask (Python web framework) WSGI (Web Server Gateway Interface) application serving REST API and static files
   - Routes: `/sim/singlezpb` (ZPB prediction), `/sim/spaceshot` (ensemble), `/sim/elev` (elevation), `/sim/models` (model configuration)
-  - Background thread pre-warms cache on startup (model 0 + elevation data)
+  - Background thread pre-warms cache on startup (models 0-1 + elevation data) to prevent memory spikes
   - `ThreadPoolExecutor` (concurrent execution) parallelizes ensemble requests (max_workers=2)
   - HTTP caching headers (`Cache-Control`) + Flask-Compress Gzip compression
   - Exposes model configuration dynamically based on `downloader.py` settings
 
 ### Simulation Engine
 - **`simulate.py`** - Main simulation orchestrator
+  - Multi-model simulator cache with LRU eviction (max 2 simulators, memory-aware, dynamically adjusts 1-2 based on memory pressure)
   - LRU cache (Least Recently Used eviction policy) for predictions (30 entries, 1hr TTL - Time To Live)
   - Coordinates `WindFile`, `ElevationFile`, and `Simulator` classes
   - Handles ascent/coast/descent phases with configurable rates
@@ -32,7 +33,7 @@ This is an offshoot of the prediction server developed for the Stanford Space In
 - **`windfile.py`** - GEFS data parser with 4D interpolation
   - Loads NumPy-compressed `.npz` files (wind vectors at pressure levels)
   - 4D linear interpolation (4-dimensional): (latitude, longitude, altitude, time) → (u, v) wind components
-  - Uses `mmap_mode='r'` (memory-mapped read-only mode) for memory-efficient access to large datasets (~150MB per file)
+  - Uses `mmap_mode='r'` (memory-mapped read-only mode) for memory-efficient access to large datasets (~307.83 MB per file)
 
 - **`habsim/classes.py`** - Core physics classes
   - `Balloon`: State container (lat, lon, alt, time, ascent_rate, burst_alt)
@@ -43,8 +44,8 @@ This is an offshoot of the prediction server developed for the Stanford Space In
 ### Data Pipeline
 - **`gefs.py`** - GEFS file downloader with LRU cache and Supabase integration
   - Downloads from Supabase Storage via REST API
-  - LRU eviction policy (Least Recently Used): max 3 files (~450MB) to respect 2GB RAM (Random Access Memory) limit
-  - Files cached in `/tmp` (temporary directory) with access-time tracking
+  - LRU eviction policy (Least Recently Used): max 2 files (~615MB) to respect 2GB disk limit on Render
+  - Files cached in `/opt/render/project/src/data/gefs` (persistent directory) or `/tmp` (fallback) with access-time tracking
   - Automatic cleanup before new downloads when limit exceeded
   - Upload/delete functions for automated data management (`upload_gefs()`, `delete_gefs()`)
 
@@ -116,12 +117,11 @@ This is an offshoot of the prediction server developed for the Stanford Space In
   - Runs in test mode (single download/upload cycle) on schedule
 
 ### Data Storage
-- **`data/gefs/`** - GEFS file cache directory
+- **Cache Directory**: `/opt/render/project/src/data/gefs` on Render (persistent, avoids `/tmp` 2GB limit), or `/tmp/habsim-gefs/` as fallback
   - `whichgefs`: Current model timestamp (YYYYMMDDHH format)
   - `YYYYMMDDHH_NN.npz`: Wind data arrays (NN = 00 control + 01-20 ensemble members)
-
-- **`data/worldelev.npy`** - Global elevation dataset
-  - NumPy array format, loaded once on import
+  - Max 2 `.npz` files cached (~615MB) with LRU eviction
+  - `worldelev.npy`: Global elevation dataset (always kept, ~430MB)
 
 ### Virtual Environment
 - **`habsim/`** - Dual-purpose directory: Python package + virtual environment

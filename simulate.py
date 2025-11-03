@@ -17,10 +17,10 @@ EARTH_RADIUS = float(6.371e6)
 DATA_STEP = 6 # hrs
 
 ### Cache of datacubes and files. ###
-### Multi-model simulator cache with LRU eviction (max 3 simulators) ###
+### Multi-model simulator cache with LRU eviction (max 2 simulators to prevent OOM) ###
 _simulator_cache = {}  # {model_id: Simulator}
 _simulator_cache_access_times = {}  # {model_id: timestamp}
-_MAX_SIMULATOR_CACHE = 3  # Maximum number of simulators to keep in memory
+_MAX_SIMULATOR_CACHE = 2  # Reduced to 2 simulators max to prevent OOM on 2GB RAM limit
 _SIMULATOR_CACHE_LOCK = threading.Lock()  # Thread-safe access
 _LAST_MEMORY_CHECK = 0.0  # Last time we checked memory for proactive eviction
 _MEMORY_CHECK_INTERVAL = 30.0  # Check memory every 30 seconds
@@ -101,16 +101,16 @@ def _get_memory_usage_percent():
         return 0
 
 def _get_dynamic_cache_limit():
-    """Determine cache limit based on memory pressure. Returns 1-3."""
+    """Determine cache limit based on memory pressure. Returns 1-2."""
     memory_percent = _get_memory_usage_percent()
     
-    # If memory usage is high (>85%), reduce cache aggressively
-    if memory_percent > 85:
+    # If memory usage is high (>80%), reduce cache aggressively (more conservative threshold)
+    if memory_percent > 80:
         return 1
-    # If memory usage is moderate (70-85%), allow 2 simulators
-    elif memory_percent > 70:
-        return 2
-    # Otherwise, allow full cache (3 simulators)
+    # If memory usage is moderate (65-80%), allow 1 simulator (conservative)
+    elif memory_percent > 65:
+        return 1
+    # Otherwise, allow max cache (2 simulators)
     else:
         return _MAX_SIMULATOR_CACHE
 

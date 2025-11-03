@@ -44,8 +44,10 @@ def _prewarm_cache():
         
         app.logger.info(f"Pre-warming cache: loading models {model_ids}...")
         
-        # Pre-warm all configured models (will be cached with LRU eviction)
-        for model_id in model_ids:
+        # Pre-warm models (limit to 2 to prevent memory spikes on startup)
+        # Only pre-warm most common models (0 and 1), let model 2 load on-demand
+        models_to_prewarm = model_ids[:2]  # Only pre-warm first 2 models
+        for model_id in models_to_prewarm:
             try:
                 simulate._get_simulator(model_id)
                 app.logger.info(f"Model {model_id} pre-warmed")
@@ -82,7 +84,8 @@ def status():
         _ = f.readline()
         f.close()
         return "Ready"
-    except Exception:
+    except Exception as e:
+        app.logger.warning(f"Status check failed: {e}")
         return "Unavailable"
 
 @app.route('/sim/models')

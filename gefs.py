@@ -52,11 +52,14 @@ _SESSION.mount("http://", _ADAPTER)
 
 _DEFAULT_TIMEOUT = (3, 60)
 _CACHEABLE_SUFFIXES = (".npz", ".npy")
-_CACHE_DIR = Path(os.environ.get("HABSIM_CACHE_DIR", Path(tempfile.gettempdir()) / "habsim-gefs"))
+# Use persistent directory on Render (/opt/render/project/src) instead of /tmp (limited to 2GB)
+# Falls back to tempdir if not on Render
+_default_cache_dir = Path("/opt/render/project/src/data/gefs") if Path("/opt/render/project/src").exists() else Path(tempfile.gettempdir()) / "habsim-gefs"
+_CACHE_DIR = Path(os.environ.get("HABSIM_CACHE_DIR", _default_cache_dir))
 _CACHE_DIR.mkdir(parents=True, exist_ok=True)
 _CACHE_LOCK = threading.Lock()
 _CHUNK_SIZE = 1024 * 1024
-_MAX_CACHED_FILES = 3  # Keep at most 3 GEFS files (~450MB max, safe for 2GB RAM)
+_MAX_CACHED_FILES = 2  # Reduced to 2 files (~615MB) to stay under /tmp 2GB limit on Render
 
 def _object_url(path: str) -> str:
     return f"{_BASE_URL}/storage/v1/object/{path}"
