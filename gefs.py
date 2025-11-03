@@ -101,6 +101,9 @@ def _cleanup_old_cache_files():
         for suffix in _CACHEABLE_SUFFIXES:
             cached_files.extend(_CACHE_DIR.glob(f"*{suffix}"))
         
+        # Never evict worldelev.npy - it's required and large
+        cached_files = [f for f in cached_files if f.name != 'worldelev.npy']
+        
         # If under limit, no cleanup needed
         if len(cached_files) < _MAX_CACHED_FILES:
             return
@@ -145,11 +148,33 @@ def _ensure_cached(file_name: str) -> Path:
         resp.raise_for_status()
 
         tmp_path = cache_path.with_suffix(cache_path.suffix + ".tmp")
-        with open(tmp_path, 'wb') as fh:
-            for chunk in _iter_content(resp):
-                fh.write(chunk)
-        os.replace(tmp_path, cache_path)
+        try:
+            with open(tmp_path, 'wb') as fh:
+                for chunk in _iter_content(resp):
+                    fh.write(chunk)
+            os.replace(tmp_path, cache_path)
+            
+            # Verify file exists and is not empty
+            if not cache_path.exists() or cache_path.stat().st_size == 0:
+                raise IOError(f"Downloaded file {file_name} is missing or empty")
+        except Exception as e:
+            # Clean up partial download
+            if tmp_path.exists():
+                try:
+                    tmp_path.unlink()
+                except:
+                    pass
+            if cache_path.exists() and cache_path.stat().st_size == 0:
+                try:
+                    cache_path.unlink()
+                except:
+                    pass
+            raise
 
+    # Final check that file exists
+    if not cache_path.exists():
+        raise FileNotFoundError(f"Cached file {file_name} not found at {cache_path}")
+    
     return cache_path
 
 
