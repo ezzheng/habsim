@@ -100,6 +100,17 @@ def _get_simulator(model):
     if _cached_model == model and _cached_simulator is not None:
         return _cached_simulator
     
+    # Explicitly cleanup old simulator before creating new one to prevent memory leaks
+    old_simulator = _cached_simulator
+    _cached_simulator = None
+    _cached_model = None
+    
+    # Force garbage collection to free memory from old simulator
+    # This is critical because old simulator holds references to WindFile and ElevationFile
+    if old_simulator is not None:
+        del old_simulator
+        gc.collect()
+    
     # Load new simulator
     wind_file = WindFile(load_gefs(f'{currgefs}_{str(model).zfill(2)}.npz'))
     simulator = Simulator(wind_file, _get_elevation_data())

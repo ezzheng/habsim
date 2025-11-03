@@ -11,8 +11,8 @@ workers = 2  # 2 workers for 1 CPU (allows graceful restarts)
 worker_class = 'gthread'  # Use threads for I/O-bound tasks
 threads = 2  # 2 threads per worker = 4 concurrent requests total
 worker_connections = 500
-max_requests = 800  # Restart workers to prevent memory leaks
-max_requests_jitter = 100
+max_requests = 300  # Restart workers more aggressively to prevent memory leaks (was 800)
+max_requests_jitter = 50  # Reduced jitter for more predictable recycling
 timeout = 120  # Allow 2 minutes for long-running simulations
 keepalive = 5
 

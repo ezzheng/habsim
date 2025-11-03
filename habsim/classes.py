@@ -87,7 +87,9 @@ class ElevationFile:
     resolution = 120 ## points per degree
 
     def __init__(self, path): # store
-        self.data = np.load(path)
+        # Use memory-mapped read-only mode to avoid loading 430MB into RAM
+        # This allows OS to manage page cache instead of Python holding full array
+        self.data = np.load(path, mmap_mode='r')
         self.resolution = 120
 
     def elev(self, lat, lon): # return elevation
