@@ -4,22 +4,6 @@ High Altitude Balloon Simulator
 ## Overview
 This is an offshoot of the prediction server developed for the Stanford Space Initiative's Balloons team. It restores core functionality and introduces a simple UI that suits the current needs of the balloons team.
 
-### Architecture Changes
-**Old Version (Client Library):** Python package making HTTP requests to `habsim.org` API. Installed via pip, called functions like `util.predict()`.
-
-**Current Version (Self-Contained Server):** Self-hosted web application (built with Flask framework, deployed on Render hosting platform) hosting the UI, REST API endpoints, and running simulations locally with GEFS data from Supabase.
-
-**Benefits:** Independence from external services, non-technical users visit URL directly, full control over performance/caching.
-
-**Downsides:**
-- **Resource Costs:** Pay for compute/storage (Render instance vs. shared infrastructure)
-- **Scaling Responsibility:** Multiple concurrent users require careful memory/worker configuration; no automatic horizontal scaling
-- **Maintenance Burden:** Responsible for uptime, deployments, bug fixes, infrastructure monitoring
-- **No Programmatic API:** Old version allowed `from habsim import util; util.predict(...)` - current requires manual HTTP requests or web UI
-- **Single Point of Failure:** If Render instance fails, all users lose access (vs. centralized server with redundancy)
-
-**Note:** The `habsim/` folder is both the Python package (`classes.py`) AND a virtual environment (`lib/`, `bin/`). Legacy client code moved to `deprecated/`. 
-
 ## How It Works
 
 1. **User Interface**: Web UI (`www/`) allows users to set launch parameters and visualize predictions
@@ -122,8 +106,7 @@ This is an offshoot of the prediction server developed for the Stanford Space In
 
 ### Documentation
 - **`OPTIMIZATIONS.md`** - Performance tuning reference
-  - Caching strategies, memory budget breakdown, Gunicorn tuning
-  - Troubleshooting for `/tmp` storage limits, worker crashes
+  - Caching strategies, memory budget breakdown, tuning
   - Model configuration details (ensemble toggle, configurable model counts)
 
 ### Automation
@@ -136,7 +119,6 @@ This is an offshoot of the prediction server developed for the Stanford Space In
 - **`data/gefs/`** - GEFS file cache directory
   - `whichgefs`: Current model timestamp (YYYYMMDDHH format)
   - `YYYYMMDDHH_NN.npz`: Wind data arrays (NN = 00 control + 01-20 ensemble members)
-  - Files downloaded on-demand from Supabase, cached with LRU eviction
 
 - **`data/worldelev.npy`** - Global elevation dataset
   - NumPy array format, loaded once on import
@@ -146,3 +128,20 @@ This is an offshoot of the prediction server developed for the Stanford Space In
   - Package: `classes.py`, `__init__.py` (exported via `from habsim import ...`)
   - Virtualenv: `bin/activate`, `lib/python3.13/site-packages/` (installed dependencies)
   - Activate: `source habsim/bin/activate`
+
+## Architecture Changes
+
+**Old Version (Client Library):** Python package making HTTP requests to `habsim.org` API. Installed via pip, called functions like `util.predict()`.
+
+**Current Version (Self-Contained Server):** Self-hosted web application (built with Flask framework, deployed on Render hosting platform) hosting the UI, REST API endpoints, and running simulations locally with GEFS data from Supabase.
+
+**Benefits:** Independence from external services, non-technical users visit URL directly, full control over performance/caching.
+
+**Downsides:**
+- **Resource Costs:** Pay for compute/storage (Render instance vs. shared infrastructure)
+- **Scaling Responsibility:** Multiple concurrent users require careful memory/worker configuration; no automatic horizontal scaling
+- **Maintenance Burden:** Responsible for uptime, deployments, bug fixes, infrastructure monitoring
+- **No Programmatic API:** Old version allowed `from habsim import util; util.predict(...)` - current requires manual HTTP requests or web UI
+- **Single Point of Failure:** If Render instance fails, all users lose access (vs. centralized server with redundancy)
+
+**Note:** The `habsim/` folder is both the Python package (`classes.py`) AND a virtual environment (`lib/`, `bin/`). Legacy client code moved to `deprecated/`.
