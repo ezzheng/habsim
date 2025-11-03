@@ -403,24 +403,24 @@
                 margin-left: auto;
                 white-space: nowrap;
             }
-            /* Ensemble button appears on first line after Simulate */
+            /* Second line: Ensemble, Waypoints, Data Panel - all share the line */
             #ensemble-toggle {
                 order: 3;
-                flex: 0 0 auto;
-                white-space: nowrap;
+                flex: 1 1 calc(33.33% - 6px);
+                width: calc(33.33% - 6px);
+                flex-basis: calc(33.33% - 6px);
             }
-            /* Force line break before waypoint button */
             #waypoint-toggle {
                 order: 4;
-                flex: 1 1 calc(50% - 4px);
-                width: calc(50% - 4px);
-                flex-basis: calc(50% - 4px);
+                flex: 1 1 calc(33.33% - 6px);
+                width: calc(33.33% - 6px);
+                flex-basis: calc(33.33% - 6px);
             }
             #collapse-toggle {
                 order: 5;
-                flex: 1 1 calc(50% - 4px);
-                width: calc(50% - 4px);
-                flex-basis: calc(50% - 4px);
+                flex: 1 1 calc(33.33% - 6px);
+                width: calc(33.33% - 6px);
+                flex-basis: calc(33.33% - 6px);
             }
             .topbar-actions {
                 order: 6;
