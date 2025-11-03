@@ -202,7 +202,9 @@ async function simulate() {
         if(checkNumPos(allValues) && checkasc(asc,alt,equil)){
             const isHistorical = Number(document.getElementById('yr').value) < 2019;
             // Model 0 = control (gec00), Models 1-2 = perturbed ensemble members (gep01, gep02)
-            const modelIds = isHistorical ? [1] : [0, 1, 2];
+            // If ensemble is disabled (default), run only model 0; if enabled, run all models
+            const ensembleEnabled = window.ensembleEnabled || false;
+            const modelIds = isHistorical ? [1] : (ensembleEnabled ? [0, 1, 2] : [0]);
 
             for (const modelId of modelIds) {
                 const urlWithModel = url + "&model=" + modelId;

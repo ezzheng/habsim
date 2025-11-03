@@ -1,13 +1,47 @@
-from flask import Flask, jsonify, request, Response, render_template, send_from_directory
+from flask import Flask, jsonify, request, Response, render_template, send_from_directory, make_response
 from flask_cors import CORS
+from flask_compress import Compress
+import threading
+from functools import wraps
 
 app = Flask(__name__)
 CORS(app)
+Compress(app)  # Automatically compress responses (10x size reduction)
+
+# Cache decorator for GET requests
+def cache_for(seconds=300):
+    """Add HTTP cache headers to responses"""
+    def decorator(f):
+        @wraps(f)
+        def decorated_function(*args, **kwargs):
+            response = make_response(f(*args, **kwargs))
+            response.headers['Cache-Control'] = f'public, max-age={seconds}'
+            return response
+        return decorated_function
+    return decorator
 
 import logging
 import elev
 from datetime import datetime, timezone
 from gefs import listdir_gefs, open_gefs
+
+# Pre-warm cache on startup in background
+def _prewarm_cache():
+    """Pre-load the most common model (model 0) to avoid cold starts"""
+    try:
+        import simulate
+        import time
+        time.sleep(2)  # Give the app a moment to fully initialize
+        app.logger.info("Pre-warming cache: loading model 0...")
+        # This will download and cache model 0
+        simulate._get_simulator(0)
+        app.logger.info("Cache pre-warming complete!")
+    except Exception as e:
+        app.logger.warning(f"Cache pre-warming failed (non-critical): {e}")
+
+# Start pre-warming in background thread
+_cache_warmer_thread = threading.Thread(target=_prewarm_cache, daemon=True)
+_cache_warmer_thread.start()
 
 @app.route('/sim/which')
 def whichgefs():
@@ -48,6 +82,7 @@ u-wind is wind towards the EAST: wind vector in the positive X direction
 v-wind is wind towards the NORTH: wind vector in the positve Y direction
 '''
 @app.route('/sim/singlepredicth')
+@cache_for(600)  # Cache for 10 minutes
 def singlepredicth():
     import simulate  # defer heavy import
     args = request.args
@@ -65,6 +100,7 @@ def singlepredicth():
     return jsonify(path)
 
 @app.route('/sim/singlepredict')
+@cache_for(600)  # Cache for 10 minutes
 def singlepredict():
     import simulate  # defer heavy import
     args = request.args
@@ -86,7 +122,7 @@ def singlepredict():
 def singlezpb(timestamp, lat, lon, alt, equil, eqtime, asc, desc, model):
     import simulate  # defer heavy import
     try:
-        simulate.refresh()
+        # Note: refresh() is now called by _get_simulator() with 5-minute throttle
         dur = 0 if equil == alt else (equil - alt) / asc / 3600
         rise = simulate.simulate(timestamp, lat, lon, asc, 240, dur, alt, model, elevation=False)
         if len(rise) > 0:
@@ -107,6 +143,7 @@ def singlezpb(timestamp, lat, lon, alt, equil, eqtime, asc, desc, model):
 
 
 @app.route('/sim/singlezpb')
+@cache_for(600)  # Cache for 10 minutes
 def singlezpbh():
     args = request.args
     timestamp = datetime.utcfromtimestamp(float(args['timestamp'])).replace(tzinfo=timezone.utc)
@@ -129,9 +166,28 @@ def spaceshot():
     equil = float(args['equil'])
     eqtime = float(args['eqtime'])
     asc, desc = float(args['asc']), float(args['desc'])
-    paths = list()
-    for model in range(1,21):
-        paths.append(singlezpb(timestamp, lat, lon, alt, equil, eqtime, asc, desc, model))
+    
+    # Parallel execution for faster ensemble runs
+    # Conservative max_workers=2 for 2GB RAM, 1 CPU limit
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    paths = [None] * 20  # Pre-allocate to preserve order
+    
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        # Submit all tasks
+        future_to_model = {
+            executor.submit(singlezpb, timestamp, lat, lon, alt, equil, eqtime, asc, desc, model): model
+            for model in range(1, 21)
+        }
+        
+        # Collect results as they complete
+        for future in as_completed(future_to_model):
+            model = future_to_model[future]
+            try:
+                paths[model - 1] = future.result()
+            except Exception as e:
+                app.logger.exception(f"Model {model} failed")
+                paths[model - 1] = "error"
+    
     return jsonify(paths)
 
 '''

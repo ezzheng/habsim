@@ -1,5 +1,6 @@
 Flask==3.0.2
 flask-cors==4.0.0
+flask-compress==1.15
 numpy==1.26.4
 requests==2.32.3
 gunicorn==22.0.0

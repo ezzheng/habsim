@@ -24,10 +24,10 @@ elevation_cache = None
 currgefs = "Unavailable"
 _last_refresh_check = 0.0
 
-# Lightweight prediction cache (max 50 predictions, ~5-10MB)
+# Lightweight prediction cache - conservative for 2GB RAM
 _prediction_cache = {}
 _cache_access_times = {}
-MAX_CACHE_SIZE = 50
+MAX_CACHE_SIZE = 30  # ~6MB max (conservative for 2GB RAM)
 CACHE_TTL = 3600  # 1 hour
 
 def _cache_key(simtime, lat, lon, rate, step, max_duration, alt, model, coefficient):
@@ -161,7 +161,4 @@ def simulate(simtime, lat, lon, rate, step, max_duration, alt, model, coefficien
     except Exception as e:
         # Don't cache errors
         raise e
-    finally:
-        # Aggressive cleanup between simulations to stay under 2GB
-        gc.collect()
 

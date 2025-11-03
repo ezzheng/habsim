@@ -134,6 +134,20 @@
             background: var(--bg);
             border-color: #10b981;
         }
+        /* Ensemble button styles */
+        #ensemble-toggle.on {
+            background: var(--bg);
+            color: var(--fg);
+            border-color: #10b981;
+        }
+        #ensemble-toggle.on:hover {
+            background: rgba(16, 185, 129, 0.05);
+        }
+        #ensemble-toggle.on:focus,
+        #ensemble-toggle.on:active {
+            background: var(--bg);
+            border-color: #10b981;
+        }
         /* Segmented button styles - commented out for Standard-only version
         .segmented {
             display: inline-flex;
@@ -389,21 +403,27 @@
                 margin-left: auto;
                 white-space: nowrap;
             }
+            /* Ensemble button appears on first line after Simulate */
+            #ensemble-toggle {
+                order: 3;
+                flex: 0 0 auto;
+                white-space: nowrap;
+            }
             /* Force line break before waypoint button */
             #waypoint-toggle {
-                order: 3;
-                flex: 1 1 calc(50% - 4px);
-                width: calc(50% - 4px);
-                flex-basis: calc(50% - 4px);
-            }
-            #collapse-toggle {
                 order: 4;
                 flex: 1 1 calc(50% - 4px);
                 width: calc(50% - 4px);
                 flex-basis: calc(50% - 4px);
             }
-            .topbar-actions {
+            #collapse-toggle {
                 order: 5;
+                flex: 1 1 calc(50% - 4px);
+                width: calc(50% - 4px);
+                flex-basis: calc(50% - 4px);
+            }
+            .topbar-actions {
+                order: 6;
                 display: none;
             }
             .status {
@@ -456,6 +476,7 @@
             </div>
             <div class="topbar-center-group">
                 <button id="simulate-btn" class="btn-primary-modern" type="button" onclick="simulate()">Simulate</button>
+                <button id="ensemble-toggle" type="button" class="waypoint-toggle">Ensemble</button>
                 <button id="waypoint-toggle" type="button" class="waypoint-toggle on">Waypoints</button>
                 <button id="collapse-toggle" class="btn-ghost" title="Show/Hide parameters">Data Panel</button>
             </div>
@@ -618,6 +639,17 @@
                 }
                 setTimeout(adjustLayout, 300);
             });
+            
+            // Ensemble toggle - defaults to OFF
+            const ensembleBtn = document.getElementById('ensemble-toggle');
+            if (ensembleBtn) {
+                ensembleBtn.addEventListener('click', () => {
+                    window.ensembleEnabled = !window.ensembleEnabled;
+                    ensembleBtn.classList.toggle('on', window.ensembleEnabled);
+                });
+            }
+            // Initialize ensemble state to false (not enabled by default)
+            window.ensembleEnabled = false;
         });
 </script>
 </body>

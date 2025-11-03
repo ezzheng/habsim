@@ -34,6 +34,7 @@ _CACHE_DIR = Path(os.environ.get("HABSIM_CACHE_DIR", Path(tempfile.gettempdir())
 _CACHE_DIR.mkdir(parents=True, exist_ok=True)
 _CACHE_LOCK = threading.Lock()
 _CHUNK_SIZE = 1024 * 1024
+_MAX_CACHED_FILES = 3  # Keep at most 3 GEFS files (~450MB max, safe for 2GB RAM)
 
 def _object_url(path: str) -> str:
     return f"{_BASE_URL}/storage/v1/object/{path}"
@@ -92,16 +93,48 @@ def _should_cache(file_name: str) -> bool:
     return file_name.endswith(_CACHEABLE_SUFFIXES)
 
 
+def _cleanup_old_cache_files():
+    """Remove least recently used cache files if we exceed the limit"""
+    try:
+        # Get all cached files with their access times
+        cached_files = []
+        for suffix in _CACHEABLE_SUFFIXES:
+            cached_files.extend(_CACHE_DIR.glob(f"*{suffix}"))
+        
+        # If under limit, no cleanup needed
+        if len(cached_files) < _MAX_CACHED_FILES:
+            return
+        
+        # Sort by access time (oldest first)
+        cached_files.sort(key=lambda f: f.stat().st_atime)
+        
+        # Remove oldest files until we're under the limit
+        files_to_remove = len(cached_files) - _MAX_CACHED_FILES + 1  # +1 to make room for new file
+        for i in range(files_to_remove):
+            try:
+                cached_files[i].unlink()
+            except Exception:
+                pass  # File might have been removed by another thread
+    except Exception:
+        pass  # Don't fail if cleanup fails
+
+
 def _ensure_cached(file_name: str) -> Path:
     cache_path = _CACHE_DIR / file_name
     if cache_path.exists():
+        # Update access time to mark as recently used
+        cache_path.touch()
         return cache_path
 
     cache_path.parent.mkdir(parents=True, exist_ok=True)
 
     with _CACHE_LOCK:
         if cache_path.exists():
+            cache_path.touch()
             return cache_path
+
+        # Clean up old files before downloading new one
+        _cleanup_old_cache_files()
 
         resp = _SESSION.get(
             _object_url(f"{_BUCKET}/{file_name}"),
