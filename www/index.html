@@ -396,31 +396,29 @@
                 display: contents;
                 justify-self: unset;
             }
-            /* Simulate button appears on first line next to HABSIM */
+            /* First line: HABSIM brand and Simulate button */
             #simulate-btn {
                 order: 2;
-                flex: 0 0 auto;
-                margin-left: auto;
+                flex: 0 1 auto;
                 white-space: nowrap;
+                margin-left: auto;
+                min-width: 50%;  /* Ensures it takes enough space to force wrap */
             }
-            /* Force line break before second row using flex-basis: 100% trick */
+            /* Second line: Three equal-width buttons - use width: 32% to guarantee wrap */
             #ensemble-toggle {
                 order: 3;
-                flex-basis: 100%; /* Forces wrap to new line */
-                width: calc(33.33% - 6px); /* Actual width on the new line */
-                max-width: calc(33.33% - 6px);
+                flex: 0 0 32%;
+                max-width: 32%;
             }
             #waypoint-toggle {
                 order: 4;
-                flex: 1 1 calc(33.33% - 6px);
-                width: calc(33.33% - 6px);
-                flex-basis: calc(33.33% - 6px);
+                flex: 0 0 32%;
+                max-width: 32%;
             }
             #collapse-toggle {
                 order: 5;
-                flex: 1 1 calc(33.33% - 6px);
-                width: calc(33.33% - 6px);
-                flex-basis: calc(33.33% - 6px);
+                flex: 0 0 32%;
+                max-width: 32%;
             }
             .topbar-actions {
                 order: 6;
