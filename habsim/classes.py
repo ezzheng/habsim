@@ -144,7 +144,7 @@ class Simulator:
             temp = self.wind_file.get(*balloon.location, balloon.alt, balloon.time)
             balloon.wind_vector = temp
 
-        # Runge–Kutta 4th order integrator for (lat, lon, alt)
+        # Runge–Kutta 2nd order (Midpoint) integrator for (lat, lon, alt)
         # State at start of step
         lat0 = balloon.location.getLat()
         lon0 = balloon.location.getLon()
@@ -170,34 +170,22 @@ class Simulator:
             dalt_dt = asc
             return dlat_dt, dlon_dt, dalt_dt
 
-        # k1
+        # k1 at start
         k1_lat, k1_lon, k1_alt = sample_rates(lat0, lon0, alt0, t0)
 
-        # k2 (half step)
-        lat_k2 = lat0 + 0.5 * h * k1_lat
-        lon_k2 = lon0 + 0.5 * h * k1_lon
-        alt_k2 = alt0 + 0.5 * h * k1_alt
-        t_k2 = t0 + timedelta(seconds=0.5 * h)
-        k2_lat, k2_lon, k2_alt = sample_rates(lat_k2, lon_k2, alt_k2, t_k2)
+        # Midpoint state using k1
+        lat_mid = lat0 + 0.5 * h * k1_lat
+        lon_mid = lon0 + 0.5 * h * k1_lon
+        alt_mid = alt0 + 0.5 * h * k1_alt
+        t_mid = t0 + timedelta(seconds=0.5 * h)
 
-        # k3 (half step)
-        lat_k3 = lat0 + 0.5 * h * k2_lat
-        lon_k3 = lon0 + 0.5 * h * k2_lon
-        alt_k3 = alt0 + 0.5 * h * k2_alt
-        t_k3 = t0 + timedelta(seconds=0.5 * h)
-        k3_lat, k3_lon, k3_alt = sample_rates(lat_k3, lon_k3, alt_k3, t_k3)
+        # k2 at midpoint
+        k2_lat, k2_lon, k2_alt = sample_rates(lat_mid, lon_mid, alt_mid, t_mid)
 
-        # k4 (full step)
-        lat_k4 = lat0 + h * k3_lat
-        lon_k4 = lon0 + h * k3_lon
-        alt_k4 = alt0 + h * k3_alt
-        t_k4 = t0 + timedelta(seconds=h)
-        k4_lat, k4_lon, k4_alt = sample_rates(lat_k4, lon_k4, alt_k4, t_k4)
-
-        # Combine increments
-        newLat = lat0 + (h / 6.0) * (k1_lat + 2 * k2_lat + 2 * k3_lat + k4_lat)
-        newLon = lon0 + (h / 6.0) * (k1_lon + 2 * k2_lon + 2 * k3_lon + k4_lon)
-        newAlt = alt0 + (h / 6.0) * (k1_alt + 2 * k2_alt + 2 * k3_alt + k4_alt)
+        # Advance using k2
+        newLat = lat0 + h * k2_lat
+        newLon = lon0 + h * k2_lon
+        newAlt = alt0 + h * k2_alt
         newTime = t0 + timedelta(seconds=h)
         newLoc = (newLat, newLon)
 
