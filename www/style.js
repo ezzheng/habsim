@@ -51,17 +51,34 @@ fetch(URL_ROOT + "/which").then(res => res.text()).then((result) => {
             document.getElementById("run").textContent = result
         });
 
-fetch(URL_ROOT + "/status").then(res => res.text()).then((result) => {
-    document.getElementById("status").textContent = result;
-    if(result === "Ready") {
-        document.getElementById("status").style.color = "#00CC00";
-    }
-    else if(result === "Data refreshing. Sims may be slower than usual."){
-        document.getElementById("status").style.color = "#FFB900";
-    }
-    else{
-        document.getElementById("status").style.color = "#CC0000";
-    }});
+function updateServerStatus() {
+    fetch(URL_ROOT + "/status")
+        .then(res => res.text())
+        .then((result) => {
+            const el = document.getElementById("status");
+            if (!el) return;
+            el.textContent = result;
+            if(result === "Ready") {
+                el.style.color = "#00CC00";
+            }
+            else if(result === "Data refreshing. Sims may be slower than usual."){
+                el.style.color = "#FFB900";
+            }
+            else{
+                el.style.color = "#CC0000";
+            }
+        })
+        .catch(() => {
+            const el = document.getElementById("status");
+            if (!el) return;
+            el.textContent = "Unavailable";
+            el.style.color = "#CC0000";
+        });
+}
+
+// Initial status fetch and then poll every 5s
+updateServerStatus();
+setInterval(updateServerStatus, 5000);
 
 // We need to keep this because standard code does not execute until you choose the button
 document.getElementById("asc").value = 4;
