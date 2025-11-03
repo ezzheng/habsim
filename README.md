@@ -11,7 +11,14 @@ This is an offshoot of the prediction server developed for the Stanford Space In
 
 **Benefits:** Independence from external services, non-technical users can just visit a URL, full control over performance/caching.
 
-**Tradeoffs:** You pay for compute/storage (vs. shared infrastructure), responsible for scaling/maintenance, no programmatic Python API (web UI only).
+**Downsides:**
+- **Resource Costs:** You pay for compute/storage (Render instance costs vs. shared infrastructure)
+- **Scaling Responsibility:** Multiple concurrent users require careful memory/worker configuration; no automatic horizontal scaling
+- **Maintenance Burden:** You're responsible for uptime, deployments, bug fixes, and infrastructure monitoring
+- **No Programmatic API:** Old version allowed `from habsim import util; util.predict(...)` - current requires manual HTTP requests or web UI only
+- **Single Point of Failure:** If your Render instance fails, all users lose access (vs. centralized server with redundancy)
+- **Storage Limits:** Hit `/tmp` storage caps faster (2GB limit); need aggressive cache management
+- **Cold Starts:** Serverless auto-sleep on free tier causes slow first requests after idle periods
 
 **Note:** The `habsim/` folder is both the Python package (`classes.py`) AND a virtual environment (`lib/`, `bin/`). Legacy client code moved to `deprecated/`. 
 
@@ -26,91 +33,97 @@ This is an offshoot of the prediction server developed for the Stanford Space In
 ## Files
 
 ### Core Application
-- **`app.py`** - Flask web server exposing REST API endpoints for simulations
-  - `/sim/singlezpb` - Single balloon prediction (ascent, coast, descent)
-  - `/sim/spaceshot` - Ensemble prediction across multiple GEFS models
-  - `/sim/elev` - Ground elevation lookup
-  - Pre-warms cache on startup for faster first requests
+- **`app.py`** - Flask WSGI application serving REST API and static files
+  - Routes: `/sim/singlezpb` (ZPB prediction), `/sim/spaceshot` (ensemble), `/sim/elev` (elevation)
+  - Background thread pre-warms cache on startup
+  - `ThreadPoolExecutor` parallelizes ensemble requests (max_workers=2)
+  - HTTP caching headers (`Cache-Control`) + Flask-Compress Gzip compression
 
 ### Simulation Engine
-- **`simulate.py`** - Main simulation logic and orchestration
-  - Coordinates wind data, elevation data, and balloon physics
-  - Implements prediction caching (30 items, 1hr TTL) for performance
-  - Math caching for coordinate transformations
-  - Returns trajectory as list of timestamped lat/lon/altitude points
+- **`simulate.py`** - Main simulation orchestrator
+  - LRU cache for predictions (30 entries, 1hr TTL)
+  - Coordinates `WindFile`, `ElevationFile`, and `Simulator` classes
+  - Handles ascent/coast/descent phases with configurable rates
+  - Returns trajectory as `[[timestamp, lat, lon, alt], ...]` arrays
 
-- **`windfile.py`** - GEFS wind data file parser and 4D interpolation
-  - Loads `.npz` files containing wind vectors at pressure levels
-  - Implements fast 4D interpolation (lat, lon, altitude, time)
-  - Uses memory-mapped files for efficient large dataset handling
+- **`windfile.py`** - GEFS data parser with 4D interpolation
+  - Loads NumPy-compressed `.npz` files (wind vectors at pressure levels)
+  - 4D linear interpolation: (latitude, longitude, altitude, time) → (u, v) wind components
+  - Uses `mmap_mode='r'` for memory-efficient access to large datasets (~150MB per file)
 
-- **`habsim/`** - Python package module containing core simulation classes
-  - **`classes.py`** - Balloon physics classes and data structures
-    - `Balloon` - Represents balloon state (position, altitude, ascent rate)
-    - `Simulator` - Physics engine that steps balloon through time  
-    - `ElevationFile` - Ground elevation data wrapper
-    - `Trajectory` - Container for trajectory points
-  - **`__init__.py`** - Package initializer, exports classes for `from habsim import ...`
+- **`habsim/classes.py`** - Core physics classes
+  - `Balloon`: State container (lat, lon, alt, time, ascent_rate, burst_alt)
+  - `Simulator`: Numerical integrator using Euler method with wind advection
+  - `ElevationFile`: Wrapper for `worldelev.npy` array with lat/lon → elevation lookup
+  - `Trajectory`: Time-series container for path points
 
-### Data Management
-- **`gefs.py`** - GEFS weather file downloader and cache manager
-  - Downloads files from Supabase Storage
-  - LRU cache with 3 file limit (~450MB) to stay under 2GB RAM
-  - Automatic cleanup of old files
+### Data Pipeline
+- **`gefs.py`** - GEFS file downloader with LRU cache
+  - Downloads from Supabase Storage via REST API
+  - LRU eviction policy: max 3 files (~450MB) to respect 2GB RAM limit
+  - Files cached in `/tmp` with access-time tracking
+  - Automatic cleanup before new downloads when limit exceeded
 
-- **`elev.py`** - Ground elevation data interface
-  - Loads `worldelev.npy` (global elevation array)
-  - Fast elevation lookup by lat/lon
+- **`elev.py`** - Elevation data loader
+  - Loads preprocessed `worldelev.npy` (global 0.008° resolution array)
+  - Fast bilinear interpolation for lat/lon → meters above sea level
 
-- **`downloader.py`** - Script to fetch GEFS data from NOAA
-  - Downloads GRIB2 files and converts to `.npz` format
-  - Not used in production (data pre-downloaded to Supabase)
+- **`downloader.py`** - GEFS data pipeline script (offline use)
+  - Fetches GRIB2 files from NOAA NOMADS, converts to `.npz` format
+  - Not used in production (Supabase pre-populated)
 
-- **`save_elevation.py`** - One-time utility to convert elevation data to `.npy` format
+- **`save_elevation.py`** - One-time elevation preprocessing utility
+  - Converts GMTED2010 GeoTIFF → NumPy array format
 
-### Frontend (www/)
-- **`index.html`** - Single-page web application
-  - Responsive design (desktop + mobile layouts)
-  - Parameter inputs (launch time, location, ascent/descent rates)
-  - Google Maps integration for visualization
-  - Ensemble toggle for multi-model simulations
+### Frontend (`www/`)
+- **`index.html`** - Single-page application with embedded CSS/JS
+  - CSS Grid layout for mobile (2x3 grid), Flexbox for desktop
+  - Google Maps API v3 integration
+  - Real-time parameter inputs with validation
+  - Ensemble toggle (models 0-2) vs. single simulation (model 0)
 
-- **`paths.js`** - Trajectory fetching and map rendering
-  - Fetches simulation results from API
-  - Draws trajectory polylines on map
-  - Manages waypoint circles and info windows
+- **`paths.js`** - Map rendering and API client
+  - Fetches trajectories via `fetch()` from `/sim/singlezpb` or `/sim/spaceshot`
+  - Draws `google.maps.Polyline` objects with color-coded paths
+  - Waypoint circles with click handlers showing altitude/time info windows
 
-- **`style.js`** - UI mode switching logic (Standard/ZPB/Float modes)
+- **`style.js`** - Mode switching logic (Standard/ZPB/Float balloon types)
 
-- **`util.js`** - Map initialization, coordinate handling, elevation fetching
+- **`util.js`** - Map utilities and coordinate helpers
+  - Google Maps initialization, lat/lon formatting, elevation API calls
 
-### Configuration
-- **`gunicorn_config.py`** - Production server settings optimized for 2GB RAM / 1 CPU
-  - 2 workers, 2 threads each (4 concurrent requests)
-  - Preloads app to share memory between workers
-  - Auto-recycles workers every 800 requests
+### Deployment Configuration
+- **`gunicorn_config.py`** - Production WSGI server config
+  - Optimized for Render free tier (2GB RAM, 1 CPU)
+  - `workers=2`, `threads=2` (4 concurrent requests via `gthread` worker class)
+  - `preload_app=True` for shared memory between workers (critical optimization)
+  - `max_requests=800` for automatic worker recycling to prevent memory leaks
 
-- **`requirements.txt`** - Python dependencies
-  - Flask, flask-cors, flask-compress
-  - numpy, requests
+- **`requirements.txt`** - Python package dependencies
+  - `flask==3.0.2`, `flask-cors==4.0.0`, `flask-compress==1.15` (Gzip compression)
+  - `numpy==1.26.4`, `requests==2.32.3`, `gunicorn==22.0.0`
 
-- **`vercel.json`** - Legacy deployment config (not used on Render)
+- **`vercel.json`** - Vercel deployment configuration
+  - Routes `/sim/*` → Python build (`app.py`), `/*` → static files (`www/`)
+  - Enables serverless deployment on Vercel platform (alternative to Render)
 
 ### Documentation
-- **`OPTIMIZATIONS.md`** - Technical reference for performance optimizations
-  - Explains caching strategies, memory budget, tuning parameters
-  - Troubleshooting guide
+- **`OPTIMIZATIONS.md`** - Performance tuning reference
+  - Caching strategies, memory budget breakdown, Gunicorn tuning
+  - Troubleshooting for `/tmp` storage limits, worker crashes
 
-- **`README.md`** - This file
+### Data Storage
+- **`data/gefs/`** - GEFS file cache directory
+  - `whichgefs`: Current model timestamp (YYYYMMDDHH format)
+  - `YYYYMMDDHH_NN.npz`: Wind data arrays (NN = 00 control + 01-20 ensemble members)
+  - Files downloaded on-demand from Supabase, cached with LRU eviction
 
-### Data Directory
-- **`data/gefs/`** - Cached GEFS weather files (`.npz` format)
-  - `whichgefs` - Current model timestamp
-  - `YYYYMMDDHH_NN.npz` - Wind data files (NN = model number 00-20)
-
-- **`data/worldelev.npy`** - Global elevation data array
+- **`data/worldelev.npy`** - Global elevation dataset
+  - NumPy array format, loaded once on import
+  - ~250MB file, accessed via memory mapping in production
 
 ### Virtual Environment
-- **`habsim/`** - Python virtual environment (`.venv`)
-  - Contains all installed packages
-  - Activate with `source habsim/bin/activate`
+- **`habsim/`** - Dual-purpose directory: Python package + virtual environment
+  - Package: `classes.py`, `__init__.py` (exported via `from habsim import ...`)
+  - Virtualenv: `bin/activate`, `lib/python3.13/site-packages/` (installed dependencies)
+  - Activate: `source habsim/bin/activate`
