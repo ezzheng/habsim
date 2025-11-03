@@ -44,9 +44,8 @@ def _prewarm_cache():
         
         app.logger.info(f"Pre-warming cache: loading models {model_ids}...")
         
-        # Pre-warm models (limit to 2 to prevent memory spikes on startup)
-        # Only pre-warm most common models (0 and 1), let model 2 load on-demand
-        models_to_prewarm = model_ids[:2]  # Only pre-warm first 2 models
+        # Pre-warm model 0 (most common, fastest path for single model requests)
+        models_to_prewarm = model_ids[:1]  # Pre-warm only model 0
         for model_id in models_to_prewarm:
             try:
                 simulate._get_simulator(model_id)

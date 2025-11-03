@@ -28,23 +28,22 @@ gunicorn --config gunicorn_config.py app:app
 1. Waits 2 seconds for app initialization
 2. Fetches model configuration from `downloader.py` (respects `DOWNLOAD_CONTROL` and `NUM_PERTURBED_MEMBERS`)
    - Current config: Models 0, 1, 2 (3 models total)
-3. Pre-warms only first 2 models (0 and 1) to prevent memory spikes on startup
-   - For each model (0, 1):
-     - Downloads weather data file from Supabase if not cached: `{timestamp}_{model_id}.npz` (~307.83 MB each)
-     - Creates `WindFile` object
-     - Creates `Simulator` object (combines WindFile + elevation data)
-     - Stores simulator in cache: `_simulator_cache[model_id] = Simulator(...)`
-   - Model 2 loads on-demand when needed
+3. Pre-warms model 0 (most common, fastest path for single model requests)
+   - Downloads weather data file from Supabase if not cached: `{timestamp}_00.npz` (~307.83 MB)
+   - Creates `WindFile` object
+   - Creates `Simulator` object (combines WindFile + elevation data)
+   - Stores simulator in cache: `_cached_simulator = Simulator(...)`
+   - Additional models load on-demand when needed
 4. Loads elevation data singleton via `elev.getElevation(0, 0)`
    - Loads with memory-mapping (`mmap_mode='r'`)
    - Shared across all simulators and workers
 5. Logs completion status
 
 **Memory Impact:**
-- **Disk**: ~1.05 GB (2 weather files × 307.83 MB + 1 elevation file × 430.11 MB)
-- **RAM**: ~100-200MB per worker (2 simulators × 50-100MB each)
+- **Disk**: ~1.35 GB (3 weather files × 307.83 MB + 1 elevation file × 430.11 MB)
+- **RAM**: ~50-100MB per worker (1 simulator × 50-100MB)
 
-**Result**: Models 0-1 are ready in memory, allowing fast single and most ensemble runs. Model 2 loads on-demand (~5-10s) when needed.
+**Result**: Model 0 is ready in memory, allowing fast single model requests. Models 1-2 load on-demand (~5-10s) when needed for ensemble runs.
 
 ## Caching Layers
 
@@ -52,27 +51,26 @@ HABSIM uses a multi-layer caching strategy to optimize performance while managin
 
 ### 1. Simulator Cache (`simulate.py`) - **RAM Cache**
 **Location**: In-memory (RAM)  
-**Storage**: `_simulator_cache` dictionary `{model_id: Simulator}`  
-**Capacity**: Dynamic, 1-2 simulators based on memory pressure  
-**Eviction**: LRU (Least Recently Used) with memory-aware limits and proactive monitoring  
-**Thread Safety**: `_SIMULATOR_CACHE_LOCK` protects all operations
+**Storage**: `_cached_simulator` (single simulator) + `_cached_model` (model ID)  
+**Capacity**: 1 simulator (simple fast path for single model requests)  
+**Eviction**: Replaced when a different model is requested  
+**Thread Safety**: No locks needed (simple variable assignment)
 
-**Memory-Aware Limits**:
-- Memory < 65%: 2 simulators (full cache)
-- Memory 65-80%: 1 simulator (aggressive reduction)
-- Memory > 80%: 1 simulator (maximum reduction)
-
-**Proactive Monitoring**: Memory is checked on every cache access when cache is at capacity (2 simulators), or periodically (every 30s) when below capacity. If memory pressure increases, simulators are evicted immediately even if already loaded.
+**How it works**: 
+- Fast path: If `_cached_model == requested_model`, return `_cached_simulator` immediately (~1μs)
+- Slow path: If different model requested, load new simulator and replace cache
+- Ideal for single model requests (most common use case)
+- For ensemble runs, each model loads on-demand (simulator cache helps if same model requested multiple times)
 
 **Memory Usage**:
 - ~50-100MB per simulator (includes WindFile metadata + OS page cache)
-- 2 simulators: ~100-200MB per worker
-- 2 workers: ~200-400MB total
+- 1 simulator: ~50-100MB per worker
+- 2 workers: ~100-200MB total
 
 ### 2. GEFS File Cache (`gefs.py`) - **Disk Cache**
 **Location**: Disk (`/opt/render/project/src/data/gefs` on Render, or `/tmp/habsim-gefs/` as fallback)  
 **Storage**: `.npz` files (compressed NumPy arrays) and `worldelev.npy` (elevation data)  
-**Capacity**: 2 `.npz` files + `worldelev.npy` (always kept)
+**Capacity**: 3 `.npz` files + `worldelev.npy` (always kept)
 **Eviction**: LRU based on file access time (`st_atime`); never evicts `worldelev.npy` (required elevation data)
 **Thread Safety**: `_CACHE_LOCK` protects all operations
 
@@ -80,7 +78,7 @@ HABSIM uses a multi-layer caching strategy to optimize performance while managin
 
 **Memory Usage**:  
 - 307.83MB per `.npz` file
-- 2 `.npz` files: ~615 MB on disk
+- 3 `.npz` files: ~924 MB on disk
 - 430.11MB for `worldelev.npy`; loaded via memory-mapping (minimal RAM)
 - Files on disk don't directly consume RAM, but OS page cache may load accessed portions into memory
 
@@ -115,14 +113,14 @@ HABSIM uses a multi-layer caching strategy to optimize performance while managin
 
 ## Memory Management
 
-### Cache Priority (Memory-Aware)
-1. **Simulator Cache** (RAM) - Priority #1: Memory-aware, adjusts 1-2 simulators
-2. **File Cache** (Disk) - Priority #2: Static at 2 `.npz` files + `worldelev.npy` (doesn't directly affect RAM)
+### Cache Priority
+1. **Simulator Cache** (RAM) - Priority #1: Simple 1-simulator cache for fast single model requests
+2. **File Cache** (Disk) - Priority #2: Static at 3 `.npz` files + `worldelev.npy` (doesn't directly affect RAM)
 3. **Prediction Cache** (RAM) - Priority #3: Fixed at 30 entries (~6MB)
 4. **Math Cache** (RAM) - Minimal overhead (<1MB)
 
 ### Current Memory Usage Breakdown (2 Workers)
-- **Simulator Cache**: 200-400MB (2 simulators × 2 workers, or less if memory-constrained)
+- **Simulator Cache**: 100-200MB (1 simulator × 2 workers)
 - **File Cache**: 0MB direct (on disk, OS page cache managed separately)
   - `.npz` files: OS page cache (variable, not directly controlled)
   - `worldelev.npy`: Memory-mapped, OS-managed page cache (minimal overhead)

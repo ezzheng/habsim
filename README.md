@@ -17,14 +17,14 @@ This is an offshoot of the prediction server developed for the Stanford Space In
 ### Core Application
 - **`app.py`** - Flask (Python web framework) WSGI (Web Server Gateway Interface) application serving REST API and static files
   - Routes: `/sim/singlezpb` (ZPB prediction), `/sim/spaceshot` (ensemble), `/sim/elev` (elevation), `/sim/models` (model configuration)
-  - Background thread pre-warms cache on startup (models 0-1 + elevation data) to prevent memory spikes
+  - Background thread pre-warms cache on startup (model 0 + elevation data) for fast single model requests
   - `ThreadPoolExecutor` (concurrent execution) parallelizes ensemble requests (max_workers=2)
   - HTTP caching headers (`Cache-Control`) + Flask-Compress Gzip compression
   - Exposes model configuration dynamically based on `downloader.py` settings
 
 ### Simulation Engine
 - **`simulate.py`** - Main simulation orchestrator
-  - Multi-model simulator cache with LRU eviction (max 2 simulators, memory-aware, dynamically adjusts 1-2 based on memory pressure)
+  - Simple 1-simulator cache (fast path for single model requests, replaced when different model requested)
   - LRU cache (Least Recently Used eviction policy) for predictions (30 entries, 1hr TTL - Time To Live)
   - Coordinates `WindFile`, `ElevationFile`, and `Simulator` classes
   - Handles ascent/coast/descent phases with configurable rates
@@ -44,7 +44,7 @@ This is an offshoot of the prediction server developed for the Stanford Space In
 ### Data Pipeline
 - **`gefs.py`** - GEFS file downloader with LRU cache and Supabase integration
   - Downloads from Supabase Storage via REST API
-  - LRU eviction policy (Least Recently Used): max 2 files (~615MB) to respect 2GB disk limit on Render
+  - LRU eviction policy (Least Recently Used): max 3 files (~924MB) for ensemble runs
   - Files cached in `/opt/render/project/src/data/gefs` (persistent directory) or `/tmp` (fallback) with access-time tracking
   - Automatic cleanup before new downloads when limit exceeded
   - Upload/delete functions for automated data management (`upload_gefs()`, `delete_gefs()`)
@@ -120,7 +120,7 @@ This is an offshoot of the prediction server developed for the Stanford Space In
 - **Cache Directory**: `/opt/render/project/src/data/gefs` on Render (persistent, avoids `/tmp` 2GB limit), or `/tmp/habsim-gefs/` as fallback
   - `whichgefs`: Current model timestamp (YYYYMMDDHH format)
   - `YYYYMMDDHH_NN.npz`: Wind data arrays (NN = 00 control + 01-20 ensemble members)
-  - Max 2 `.npz` files cached (~615MB) with LRU eviction
+  - Max 3 `.npz` files cached (~924MB) with LRU eviction
   - `worldelev.npy`: Global elevation dataset (always kept, ~430MB)
 
 ### Virtual Environment

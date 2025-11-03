@@ -59,7 +59,7 @@ _CACHE_DIR = Path(os.environ.get("HABSIM_CACHE_DIR", _default_cache_dir))
 _CACHE_DIR.mkdir(parents=True, exist_ok=True)
 _CACHE_LOCK = threading.Lock()
 _CHUNK_SIZE = 1024 * 1024
-_MAX_CACHED_FILES = 2  # Reduced to 2 files (~615MB) to stay under /tmp 2GB limit on Render
+_MAX_CACHED_FILES = 3  # Allow 3 weather files (~924MB) for ensemble runs
 
 def _object_url(path: str) -> str:
     return f"{_BASE_URL}/storage/v1/object/{path}"
