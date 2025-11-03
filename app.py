@@ -177,6 +177,7 @@ def singlezpbh():
 
 
 @app.route('/sim/spaceshot')
+@cache_for(600)  # Cache for 10 minutes
 def spaceshot():
     """
     Run all available ensemble models (respects DOWNLOAD_CONTROL and NUM_PERTURBED_MEMBERS).

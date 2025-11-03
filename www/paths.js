@@ -182,20 +182,22 @@ async function simulate() {
         var alt = document.getElementById('alt').value;
         var url = "";
         allValues.push(time,alt);
+        var equil, eqtime, asc, desc; // Declare variables for use in spaceshot URL
         switch(btype) {
             case 'STANDARD':
-                var equil = document.getElementById('equil').value;
-                var asc = document.getElementById('asc').value;
-                var desc = document.getElementById('desc').value;
+                equil = document.getElementById('equil').value;
+                eqtime = 0; // STANDARD mode uses 0 for eqtime
+                asc = document.getElementById('asc').value;
+                desc = document.getElementById('desc').value;
                 url = URL_ROOT + "/singlezpb?timestamp="
-                    + time + "&lat=" + lat + "&lon=" + lon + "&alt=" + alt + "&equil=" + equil + "&eqtime=" + 0 + "&asc=" + asc + "&desc=" + desc;
+                    + time + "&lat=" + lat + "&lon=" + lon + "&alt=" + alt + "&equil=" + equil + "&eqtime=" + eqtime + "&asc=" + asc + "&desc=" + desc;
                 allValues.push(equil,asc,desc);
                 break;
             case 'ZPB':
-                var equil = document.getElementById('equil').value;
-                var eqtime = document.getElementById('eqtime').value;
-                var asc = document.getElementById('asc').value;
-                var desc = document.getElementById('desc').value;
+                equil = document.getElementById('equil').value;
+                eqtime = document.getElementById('eqtime').value;
+                asc = document.getElementById('asc').value;
+                desc = document.getElementById('desc').value;
                 url = URL_ROOT + "/singlezpb?timestamp="
                     + time + "&lat=" + lat + "&lon=" + lon + "&alt=" + alt + "&equil=" + equil + "&eqtime=" + eqtime + "&asc=" + asc + "&desc=" + desc
                 allValues.push(equil,eqtime,asc,desc);
@@ -227,37 +229,94 @@ async function simulate() {
                 modelIds = window.availableModels && window.availableModels.includes(0) ? [0] : [0];
             }
 
-            for (const modelId of modelIds) {
-                const urlWithModel = url + "&model=" + modelId;
-                console.log(urlWithModel);
+            // Use /spaceshot endpoint for parallel execution when ensemble is enabled and not FLOAT mode
+            const useSpaceshot = ensembleEnabled && !isHistorical && (btype === 'STANDARD' || btype === 'ZPB');
+            
+            if (useSpaceshot && modelIds.length > 1) {
+                // Use parallel spaceshot endpoint for ensemble runs
+                const spaceshotUrl = URL_ROOT + "/spaceshot?timestamp="
+                    + time + "&lat=" + lat + "&lon=" + lon + "&alt=" + alt 
+                    + "&equil=" + equil + "&eqtime=" + eqtime 
+                    + "&asc=" + asc + "&desc=" + desc;
+                console.log("Using spaceshot endpoint:", spaceshotUrl);
                 try {
-                    const response = await fetch(urlWithModel, { signal: window.__simAbort.signal });
-                    const payload = await response.json();
+                    const response = await fetch(spaceshotUrl, { signal: window.__simAbort.signal });
+                    const payloads = await response.json(); // Array of results, one per model
 
-                    if (payload === "error") {
-                        if (onlyonce) {
-                            alert("Simulation failed on the server. Please verify inputs or try again in a few minutes.");
-                            onlyonce = false;
-                        }
+                    // Process each result in the array
+                    // Note: payloads array order matches modelIds order from server config
+                    if (payloads.length !== modelIds.length) {
+                        console.warn(`Spaceshot returned ${payloads.length} results but expected ${modelIds.length} models`);
                     }
-                    else if (payload === "alt error") {
-                        if (onlyonce) {
-                            alert("ERROR: Please make sure your entire flight altitude is within 45km.");
-                            onlyonce = false;
+                    for (let i = 0; i < payloads.length && i < modelIds.length; i++) {
+                        const payload = payloads[i];
+                        const modelId = modelIds[i];
+                        
+                        if (payload === "error") {
+                            console.error(`Model ${modelId} returned error`);
+                            if (onlyonce) {
+                                alert("Simulation failed on the server. Please verify inputs or try again in a few minutes.");
+                                onlyonce = false;
+                            }
                         }
-                    }
-                    else {
-                        showpath(payload, modelId);
+                        else if (payload === "alt error") {
+                            console.error(`Model ${modelId} returned altitude error`);
+                            if (onlyonce) {
+                                alert("ERROR: Please make sure your entire flight altitude is within 45km.");
+                                onlyonce = false;
+                            }
+                        }
+                        else if (payload !== null && payload !== undefined) {
+                            showpath(payload, modelId);
+                        } else {
+                            console.warn(`Model ${modelId} returned null/undefined result`);
+                        }
                     }
                 } catch (error) {
                     if (error && (error.name === 'AbortError' || error.message === 'The operation was aborted.')) {
-                        // Cancelled: stop processing further models, keep what is already drawn
-                        break;
+                        // Cancelled: stop processing
+                    } else {
+                        console.error('Spaceshot fetch failed', error);
+                        if (onlyonce) {
+                            alert('Failed to contact simulation server. Please try again later.');
+                            onlyonce = false;
+                        }
                     }
-                    console.error('Simulation fetch failed', error);
-                    if (onlyonce) {
-                        alert('Failed to contact simulation server. Please try again later.');
-                        onlyonce = false;
+                }
+            } else {
+                // Sequential mode: loop through models one by one (for single model or FLOAT mode)
+                for (const modelId of modelIds) {
+                    const urlWithModel = url + "&model=" + modelId;
+                    console.log(urlWithModel);
+                    try {
+                        const response = await fetch(urlWithModel, { signal: window.__simAbort.signal });
+                        const payload = await response.json();
+
+                        if (payload === "error") {
+                            if (onlyonce) {
+                                alert("Simulation failed on the server. Please verify inputs or try again in a few minutes.");
+                                onlyonce = false;
+                            }
+                        }
+                        else if (payload === "alt error") {
+                            if (onlyonce) {
+                                alert("ERROR: Please make sure your entire flight altitude is within 45km.");
+                                onlyonce = false;
+                            }
+                        }
+                        else {
+                            showpath(payload, modelId);
+                        }
+                    } catch (error) {
+                        if (error && (error.name === 'AbortError' || error.message === 'The operation was aborted.')) {
+                            // Cancelled: stop processing further models, keep what is already drawn
+                            break;
+                        }
+                        console.error('Simulation fetch failed', error);
+                        if (onlyonce) {
+                            alert('Failed to contact simulation server. Please try again later.');
+                            onlyonce = false;
+                        }
                     }
                 }
             }
