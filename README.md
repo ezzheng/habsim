@@ -42,7 +42,6 @@ This is an offshoot of the prediction server developed for the Stanford Space In
   - **`__init__.py`** - Package initializer, exports main classes for import
   - **`util.py`** - Utility functions for trajectory calculations and optimization
   - **`ioutil.py`** - Input/output utilities for loading/saving trajectory data
-  - **`webplot.py`** - Plotting utilities for visualizing trajectories (legacy)
 
 ### Data Management
 - **`gefs.py`** - GEFS weather file downloader and cache manager
