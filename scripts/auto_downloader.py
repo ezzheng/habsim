@@ -23,8 +23,8 @@ import downloader  # Import to access DOWNLOAD_CONTROL and NUM_PERTURBED_MEMBERS
 parser = argparse.ArgumentParser(description="Automated GEFS downloader daemon")
 parser.add_argument("--logfile", default=None, help="Log file path (default: stdout)")
 parser.add_argument("--savedir", default="/Applications/Emmanuel Zheng/habsim/data/gefs", help="Local directory for downloads")
-parser.add_argument("--statusfile", default="./gefs/whichgefs", 
-                    help="File to write current model timestamp")
+parser.add_argument("--statusfile", default=None, 
+                    help="File to write current model timestamp (default: {savedir}/whichgefs)")
 parser.add_argument("--check-interval", type=int, default=300,
                     help="Seconds between checks for new data (default: 300)")
 parser.add_argument("--test", action="store_true",
@@ -53,10 +53,16 @@ def fmt_timestamp(dt: datetime) -> str:
 
 def get_current_model() -> datetime | None:
     """Read current model timestamp from status file"""
-    if not os.path.exists(args.statusfile):
+    # Determine statusfile path (default to savedir/whichgefs)
+    if args.statusfile is None:
+        statusfile_path = Path(args.savedir) / "whichgefs"
+    else:
+        statusfile_path = Path(args.statusfile)
+    
+    if not statusfile_path.exists():
         return None
     try:
-        with open(args.statusfile) as f:
+        with open(statusfile_path) as f:
             return datetime.strptime(f.read().strip(), "%Y%m%d%H")
     except Exception:
         return None
@@ -174,24 +180,26 @@ def download_and_upload_model(timestamp: datetime) -> bool:
             logger.error(f"Failed to upload {filename}")
     
     if success_count == expected_count:
-        # Update whichgefs file in Supabase
+        # Determine statusfile path (default to savedir/whichgefs)
+        if args.statusfile is None:
+            statusfile_path = savedir / "whichgefs"
+        else:
+            statusfile_path = Path(args.statusfile)
+        
+        # Write local status file first (clears old content and writes new timestamp)
+        statusfile_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(statusfile_path, 'w') as f:
+            f.write(timestamp_str)
+        logger.info(f"Updated local whichgefs to {timestamp_str}")
+        
+        # Upload whichgefs file to Supabase
         try:
-            status_content = timestamp_str
-            status_bytes = status_content.encode('utf-8')
-            resp = gefs._SESSION.put(
-                gefs._object_url(f"{gefs._BUCKET}/whichgefs"),
-                headers={
-                    **gefs._COMMON_HEADERS,
-                    "Content-Type": "text/plain",
-                    "Content-Length": str(len(status_bytes)),
-                },
-                data=status_bytes,
-                timeout=(10, 30),
-            )
-            resp.raise_for_status()
-            logger.info(f"Updated whichgefs to {timestamp_str}")
+            if gefs.upload_gefs(statusfile_path, "whichgefs"):
+                logger.info(f"Uploaded whichgefs to Supabase: {timestamp_str}")
+            else:
+                logger.warning(f"Failed to upload whichgefs to Supabase")
         except Exception as e:
-            logger.warning(f"Failed to update whichgefs in Supabase: {e}")
+            logger.warning(f"Failed to upload whichgefs to Supabase: {e}")
         
         # Clean up old model files from Supabase
         old_model = get_current_model()
@@ -205,12 +213,6 @@ def download_and_upload_model(timestamp: datetime) -> bool:
                     logger.info(f"Deleted old file: {old_filename}")
                 else:
                     logger.warning(f"Failed to delete old file: {old_filename}")
-        
-        # Update local status file (create directory if needed)
-        statusfile_path = Path(args.statusfile)
-        statusfile_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(args.statusfile, 'w') as f:
-            f.write(timestamp_str)
         
         logger.info(f"Successfully completed download and upload for {timestamp_str}")
         return True
