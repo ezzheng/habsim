@@ -51,7 +51,13 @@ function displayCoordinates(pnt) {
     // Blank elevation until fresh value is fetched for this location
     var altInput = document.getElementById('alt');
     if (altInput) altInput.value = '';
-    getElev();
+    // Debounce elevation fetch to avoid bursts on rapid clicks
+    if (window.__elevDebounceTimer) {
+        try { clearTimeout(window.__elevDebounceTimer); } catch(e) {}
+    }
+    window.__elevDebounceTimer = setTimeout(() => {
+        try { getElev(); } catch(e) {}
+    }, 150);
 }
 function updateClickMarker(position) {
     if (clickMarker) {
