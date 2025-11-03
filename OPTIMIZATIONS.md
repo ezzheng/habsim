@@ -52,13 +52,15 @@ HABSIM uses a multi-layer caching strategy to optimize performance while managin
 **Location**: In-memory (RAM)  
 **Storage**: `_simulator_cache` dictionary `{model_id: Simulator}`  
 **Capacity**: Dynamic, 1-3 simulators based on memory pressure  
-**Eviction**: LRU (Least Recently Used) with memory-aware limits  
+**Eviction**: LRU (Least Recently Used) with memory-aware limits and proactive monitoring  
 **Thread Safety**: `_SIMULATOR_CACHE_LOCK` protects all operations
 
 **Memory-Aware Limits**:
 - Memory < 70%: 3 simulators (full cache)
 - Memory 70-85%: 2 simulators (moderate reduction)
 - Memory > 85%: 1 simulator (aggressive reduction)
+
+**Proactive Monitoring**: Memory is checked on every cache access when cache is at capacity (3 simulators), or periodically (every 30s) when below capacity. If memory pressure increases, simulators are evicted immediately even if already loaded, preventing OOM shutdowns during execution spikes.
 
 **Memory Usage**:
 - ~50-100MB per simulator (includes WindFile metadata + OS page cache)

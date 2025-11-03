@@ -22,6 +22,8 @@ _simulator_cache = {}  # {model_id: Simulator}
 _simulator_cache_access_times = {}  # {model_id: timestamp}
 _MAX_SIMULATOR_CACHE = 3  # Maximum number of simulators to keep in memory
 _SIMULATOR_CACHE_LOCK = threading.Lock()  # Thread-safe access
+_LAST_MEMORY_CHECK = 0.0  # Last time we checked memory for proactive eviction
+_MEMORY_CHECK_INTERVAL = 30.0  # Check memory every 30 seconds
 elevation_cache = None
 
 currgefs = "Unavailable"
@@ -131,7 +133,7 @@ def _evict_oldest_simulator():
 
 def _get_simulator(model):
     """Get simulator for given model, with LRU caching (max 3 simulators)."""
-    global _last_refresh_check
+    global _last_refresh_check, _LAST_MEMORY_CHECK
     now = time.time()
     
     # Refresh GEFS data if needed
@@ -141,8 +143,21 @@ def _get_simulator(model):
     
     # Thread-safe cache access
     with _SIMULATOR_CACHE_LOCK:
+        # Proactive memory monitoring: check on every access if cache is at capacity
+        # or periodically if below capacity (to catch memory spikes during execution)
+        should_check = (len(_simulator_cache) >= _MAX_SIMULATOR_CACHE or 
+                       now - _LAST_MEMORY_CHECK > _MEMORY_CHECK_INTERVAL)
+        
+        if should_check:
+            cache_limit = _get_dynamic_cache_limit()
+            # Proactively evict if we're over the limit (even if simulators already cached)
+            while len(_simulator_cache) > cache_limit:
+                _evict_oldest_simulator()
+            _LAST_MEMORY_CHECK = now
+        
         # Check if simulator is already cached
         if model in _simulator_cache:
+            
             # Update access time (LRU)
             _simulator_cache_access_times[model] = now
             return _simulator_cache[model]
@@ -161,6 +176,7 @@ def _get_simulator(model):
         # Add to cache
         _simulator_cache[model] = simulator
         _simulator_cache_access_times[model] = now
+        _LAST_MEMORY_CHECK = now
         
         return simulator
 
