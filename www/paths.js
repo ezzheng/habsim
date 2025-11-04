@@ -248,33 +248,11 @@ function updateEnsembleProgress(progressData) {
     
     const completed = progressData.completed || 0;
     const total = progressData.total || 441; // 21 ensemble + 420 Monte Carlo
-    const percentage = progressData.percentage || 0;
-    
-    // Create progress bar if it doesn't exist
-    let progressBar = ensembleBtn.querySelector('.progress-bar');
-    if (!progressBar) {
-        progressBar = document.createElement('div');
-        progressBar.className = 'progress-bar';
-        ensembleBtn.appendChild(progressBar);
-    }
-    
-    // Update progress bar width based on actual completion
-    progressBar.style.width = `${percentage}%`;
     
     // Update button text - replace "Ensemble" with just the count (e.g., "X/441")
     // This prevents text from being cut off on mobile
-    let progressText = ensembleBtn.querySelector('.progress-text');
-    if (!progressText) {
-        // Wrap existing text in progress-text span
-        const textSpan = document.createElement('span');
-        textSpan.className = 'progress-text';
-        ensembleBtn.innerHTML = '';
-        ensembleBtn.appendChild(textSpan);
-        ensembleBtn.appendChild(progressBar);
-        progressText = textSpan;
-    }
-    // Show only the count (e.g., "X/441") instead of "Ensemble (X/441)"
-    progressText.textContent = `${completed}/${total}`;
+    // No visual progress bar needed since count is displayed directly
+    ensembleBtn.textContent = `${completed}/${total}`;
 }
 
 async function pollProgress(requestId) {
@@ -302,27 +280,11 @@ function clearEnsembleProgress() {
     
     const ensembleBtn = document.getElementById('ensemble-toggle');
     if (ensembleBtn) {
-        const progressBar = ensembleBtn.querySelector('.progress-bar');
-        if (progressBar) {
-            progressBar.remove();
-        }
-        const progressText = ensembleBtn.querySelector('.progress-text');
-        if (progressText) {
-            // Restore "Ensemble" text when simulation finishes or is cancelled
-            ensembleBtn.innerHTML = 'Ensemble';
-            // Re-apply the 'on' class if ensemble is still enabled
-            if (window.ensembleEnabled) {
-                ensembleBtn.classList.add('on');
-            }
-        } else {
-            // If no progress-text span exists, just ensure button says "Ensemble"
-            // This handles edge cases where progress was never initialized
-            if (ensembleBtn.textContent.trim() !== 'Ensemble') {
-                ensembleBtn.textContent = 'Ensemble';
-            }
-            if (window.ensembleEnabled) {
-                ensembleBtn.classList.add('on');
-            }
+        // Restore "Ensemble" text when simulation finishes or is cancelled
+        ensembleBtn.textContent = 'Ensemble';
+        // Re-apply the 'on' class if ensemble is still enabled
+        if (window.ensembleEnabled) {
+            ensembleBtn.classList.add('on');
         }
     }
 }
