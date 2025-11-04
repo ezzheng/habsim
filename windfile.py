@@ -36,7 +36,16 @@ def _alt_to_hpa_cached(altitude_rounded):
         return pa_to_hpa * math.exp(altitude_rounded / -6341.73) * 128241
 
 class WindFile:
-    def __init__(self, path: Union[BytesIO, str]):
+    def __init__(self, path: Union[BytesIO, str], preload: bool = False):
+        """
+        Initialize WindFile with wind data.
+        
+        Args:
+            path: Path to NPZ file or BytesIO object
+            preload: If True, load full array into RAM (faster, uses more RAM).
+                    If False, use memory-mapping (slower but memory-efficient).
+                    Default: False (memory-efficient mode)
+        """
         normalized_path = _normalize_path(path)
         npz = np.load(normalized_path)
 
@@ -46,8 +55,15 @@ class WindFile:
             self.interval = float(npz['interval'][()])
 
             if isinstance(normalized_path, Path) and normalized_path.suffix == '.npz':
-                self.data = self._load_memmap_data(npz, normalized_path)
+                if preload:
+                    # Pre-load full array into RAM for faster access (ensemble mode)
+                    # This makes simulations CPU-bound instead of I/O-bound
+                    self.data = np.array(npz['data'], copy=True)
+                else:
+                    # Use memory-mapping for memory efficiency (normal mode)
+                    self.data = self._load_memmap_data(npz, normalized_path)
             else:
+                # BytesIO path - always load into RAM
                 self.data = np.array(npz['data'], copy=True)
         finally:
             npz.close()
@@ -159,10 +175,10 @@ class WindFile:
         lat_filter = np.array([1-lat_frac, lat_frac], dtype=np.float32).reshape(2, 1, 1, 1, 1)
         lon_filter = np.array([1-lon_frac, lon_frac], dtype=np.float32).reshape(1, 2, 1, 1, 1)
 
-        # Extract data cube (memmap makes this efficient)
+        # Extract data cube (memory-mapped in normal mode, full array in ensemble mode)
         cube = self.data[lat_i:lat_i+2, lon_i:lon_i+2, level_i:level_i+2, time_i:time_i+2, :]
        
-        # Single vectorized interpolation operation
+        # Single vectorized interpolation operation (CPU-bound when pre-loaded, I/O-bound when memory-mapped)
         return np.sum(cube * lat_filter * lon_filter * pressure_filter * time_filter, axis=(0,1,2,3))
 
     def alt_to_hpa(self, altitude):

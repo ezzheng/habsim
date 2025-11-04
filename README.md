@@ -28,10 +28,11 @@ This is an offshoot of the prediction server developed for the Stanford Space In
 
 ### Simulation Engine
 - **`simulate.py`** - Main simulation orchestrator
-  - Dynamic multi-simulator LRU cache: 5 simulators normal mode (~750MB per worker), 25 simulators ensemble mode (~3.75GB per worker)
+  - Dynamic multi-simulator LRU cache: 5 simulators normal mode (~750MB per worker), 25 simulators ensemble mode (~11.5GB per worker)
   - Ensemble mode: Auto-expands cache when `/sim/spaceshot` is called, auto-trims after 90 seconds
+  - **Pre-loading**: In ensemble mode, full NPZ arrays are loaded into RAM (instead of memory-mapping) for faster CPU-bound simulation
   - Background cache trimming: Periodic thread (every 30 seconds) ensures idle workers trim their cache
-  - **Important**: Each Gunicorn worker has its own independent cache (4 workers × 3.75GB = 15GB max in ensemble mode)
+  - **Important**: Each Gunicorn worker has its own independent cache (4 workers × 11.5GB = 46GB max in ensemble mode)
   - LRU cache (Least Recently Used eviction policy) for predictions (200 entries, 1hr TTL - Time To Live)
   - Model change management: Automatically detects model updates (checks `whichgefs` every 5 minutes), clears caches when model changes, and deletes old model files from disk cache to prevent accumulation of stale files
   - Coordinates `WindFile`, `ElevationFile`, and `Simulator` classes
@@ -41,7 +42,8 @@ This is an offshoot of the prediction server developed for the Stanford Space In
 - **`windfile.py`** - GEFS data parser with 4D interpolation
   - Loads NumPy-compressed `.npz` files (wind vectors at pressure levels)
   - 4D linear interpolation (4-dimensional): (latitude, longitude, altitude, time) → (u, v) wind components
-  - Uses `mmap_mode='r'` (memory-mapped read-only mode) for memory-efficient access to large datasets (~308 MB per file)
+  - **Normal mode**: Uses `mmap_mode='r'` (memory-mapped read-only mode) for memory-efficient access (~150MB per simulator)
+  - **Ensemble mode**: Pre-loads full arrays into RAM (~460MB per simulator) for faster CPU-bound simulation (eliminates disk I/O)
 
 - **`habsim/classes.py`** - Core physics classes
   - `Balloon`: State container (lat, lon, alt, time, ascent_rate, burst_alt)

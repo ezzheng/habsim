@@ -151,6 +151,12 @@ def set_ensemble_mode(duration_seconds=90):
             # Start new ensemble mode
             _ensemble_mode_until = now + duration_seconds
 
+def _is_ensemble_mode():
+    """Check if currently in ensemble mode"""
+    global _ensemble_mode_until
+    now = time.time()
+    return _ensemble_mode_until > 0 and now < _ensemble_mode_until
+
 def _trim_cache_to_normal():
     """Trim cache back to normal size, keeping most recently used models"""
     global _current_max_cache, _simulator_cache, _simulator_access_times, _ensemble_mode_until
@@ -232,7 +238,9 @@ def _get_simulator(model):
             gc.collect()  # Help GC reclaim memory from evicted simulator
     
     # Load new simulator (outside lock to avoid blocking other threads)
-    wind_file = WindFile(load_gefs(f'{currgefs}_{str(model).zfill(2)}.npz'))
+    # Pre-load full arrays into RAM if in ensemble mode (faster, CPU-bound) vs memory-map (slower, I/O-bound)
+    preload_arrays = _is_ensemble_mode()
+    wind_file = WindFile(load_gefs(f'{currgefs}_{str(model).zfill(2)}.npz'), preload=preload_arrays)
     simulator = Simulator(wind_file, _get_elevation_data())
     
     # Cache it (re-acquire lock)

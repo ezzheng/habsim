@@ -71,20 +71,27 @@ HABSIM uses a multi-layer caching strategy optimized for Railway (max 32GB RAM, 
 - **Normal Mode**: Cache limit = 5 simulators (~750MB)
   - Used for single model requests (default)
   - Only model 0 pre-warmed
-- **Ensemble Mode**: Cache expands to 25 simulators (~3.75GB)
+- **Ensemble Mode**: Cache expands to 25 simulators (~11.5GB per worker)
   - Triggered when `/sim/spaceshot` is called
   - Duration: 90 seconds (1.5 minutes, auto-extends with each ensemble run)
   - Allows all 21 models to be cached during ensemble runs
+  - **Pre-loads full arrays into RAM** (instead of memory-mapping) for faster CPU-bound simulation
+  - Eliminates disk I/O during simulation → makes ensemble runs 2-3x faster
 - **Auto-trimming**: After 90 seconds of no ensemble runs, cache trims to 5 most recently used models
   - Background thread runs every 30 seconds to trim cache in all workers (even idle ones)
-  - Frees ~3GB RAM per worker automatically
+  - Simulators evicted → pre-loaded arrays automatically freed
+  - Frees ~10.75GB RAM per worker automatically (from 11.5GB → 750MB)
   - Keeps most recently used models for fast subsequent requests
 
 **Memory Usage**:
-- ~150MB per simulator (includes WindFile metadata + OS page cache)
-- Normal mode: 5 simulators = ~750MB per worker
-- Ensemble mode: 25 simulators = ~3.75GB per worker
-- Auto-trims back to ~750MB per worker after ensemble mode expires (via background thread)
+- **Normal mode**: ~150MB per simulator (includes WindFile metadata + memory-mapped data)
+  - 5 simulators = ~750MB per worker
+  - Uses memory-mapping (I/O-bound, memory-efficient)
+- **Ensemble mode**: ~460MB per simulator (includes WindFile + full pre-loaded array ~308MB)
+  - 25 simulators = ~11.5GB per worker (4 workers × 11.5GB = ~46GB worst case)
+  - Pre-loads full arrays into RAM (CPU-bound, faster, uses more RAM)
+  - Auto-trims back to ~750MB per worker after ensemble mode expires (via background thread)
+  - Arrays are automatically freed when simulators are evicted
 
 ### 2. GEFS File Cache (`gefs.py`) - **Disk Cache**
 
@@ -130,7 +137,9 @@ HABSIM uses a multi-layer caching strategy optimized for Railway (max 32GB RAM, 
 ## Memory Management
 
 ### Cache Priority
-1. **Simulator Cache** (RAM) - Dynamic: 5 normal, 25 ensemble (cost-optimized)
+1. **Simulator Cache** (RAM) - Dynamic: 5 normal (~750MB), 25 ensemble (~11.5GB per worker)
+   - Normal mode: Memory-mapped (I/O-bound, memory-efficient)
+   - Ensemble mode: Pre-loaded arrays (CPU-bound, faster, uses more RAM)
 2. **File Cache** (Disk) - 25 files (~7.7GB on disk, no direct RAM cost)
 3. **Prediction Cache** (RAM) - 200 entries (~40-60MB)
 4. **Math Cache** (RAM) - Minimal overhead (<1MB)
@@ -147,19 +156,22 @@ HABSIM uses a multi-layer caching strategy optimized for Railway (max 32GB RAM, 
 - **Total**: ~3.5-4GB (worst case), typically ~1.5-2GB (models distributed across workers)
 
 **Ensemble Mode (Active Ensemble Runs):**
-- **Simulator Cache**: ~3.75GB per worker × 4 workers = ~15GB total (worst case - all workers cache all 21 models)
+- **Simulator Cache**: ~11.5GB per worker × 4 workers = ~46GB total (worst case - all workers cache all 21 models with pre-loaded arrays)
+  - Each simulator: ~460MB (150MB metadata + 308MB pre-loaded array)
+  - Pre-loaded arrays eliminate disk I/O, making simulations CPU-bound instead of I/O-bound
 - **File Cache**: 0MB direct (on disk, OS page cache managed separately)
 - **Prediction Cache**: ~40-60MB per worker
 - **Math Cache**: <2MB per worker
 - **Flask/Python**: ~200-300MB (4 workers, preload_app=True shares code)
 - **OS Overhead**: ~200-300MB
-- **Total**: ~15-16GB (worst case), typically ~5-6GB (models distributed across workers)
+- **Total**: ~46-47GB (worst case), typically ~15-20GB (models distributed across workers)
 
 **After Ensemble Mode Expires (90 seconds):**
 - Background thread trims cache in all workers every 30 seconds
+- Simulators are evicted → pre-loaded arrays are automatically freed
 - Each worker auto-trims back to normal mode: ~750MB per worker
 - Total: ~3GB (4 workers × 750MB) after trimming
-- Frees ~12GB RAM automatically (from 15GB → 3GB)
+- Frees ~43GB RAM automatically (from 46GB → 3GB worst case)
 
 ## Performance Optimizations
 
@@ -175,8 +187,9 @@ HABSIM uses a multi-layer caching strategy optimized for Railway (max 32GB RAM, 
 ### Ensemble Execution (`app.py`)
 - **ThreadPoolExecutor**: 32 workers for parallel ensemble simulation execution (fully utilizes all 32 CPUs)
 - **Dynamic Cache Expansion**: Automatically expands simulator cache to 25 when ensemble is called
+- **Pre-loading**: Full NPZ arrays loaded into RAM in ensemble mode (eliminates disk I/O, makes simulations CPU-bound)
 - **Auto-extension**: Each ensemble run extends ensemble mode by 90 seconds
-- **Auto-trimming**: Cache trims back to 5 simulators 90 seconds after last ensemble run
+- **Auto-trimming**: Cache trims back to 5 simulators 90 seconds after last ensemble run (arrays automatically freed)
 
 ### Model Change Management (`simulate.py`)
 - **Automatic Detection**: `refresh()` checks `whichgefs` every 5 minutes for model updates
@@ -195,8 +208,9 @@ HABSIM uses a multi-layer caching strategy optimized for Railway (max 32GB RAM, 
   - After fix: Memory-mapped access, OS manages page cache (minimal direct RAM usage)
   - Note: `elev.py` was already memory-mapped, but `ElevationFile` was creating a duplicate full load
 - **Explicit simulator cleanup**: Old simulators are explicitly deleted and garbage collected when cache evicts them
+- **Pre-loaded array cleanup**: When simulators are evicted, pre-loaded arrays are automatically freed (they're part of the WindFile object)
 - **Background cache trimming thread**: `_periodic_cache_trim()` runs in each worker process every 30 seconds
-  - Ensures idle workers trim their cache when ensemble mode expires (prevents 16GB memory usage from lingering)
+  - Ensures idle workers trim their cache when ensemble mode expires (prevents 46GB memory usage from lingering)
   - Without this, workers that don't receive requests never trim their cache
   - Each worker maintains its own independent cache, so all workers need periodic trimming
 - **Worker recycling**: `max_requests = 1000` (reduced from original 800 for more aggressive recycling)
@@ -218,9 +232,12 @@ HABSIM uses a multi-layer caching strategy optimized for Railway (max 32GB RAM, 
 - Cache directory: `/app/data/gefs` on Railway (ephemeral storage)
 
 **Simulator Cache**:
-- `MAX_SIMULATOR_CACHE_NORMAL = 5` in `simulate.py` (normal mode: 5 simulators)
-- `MAX_SIMULATOR_CACHE_ENSEMBLE = 25` in `simulate.py` (ensemble mode: 25 simulators)
+- `MAX_SIMULATOR_CACHE_NORMAL = 5` in `simulate.py` (normal mode: 5 simulators, ~750MB per worker)
+- `MAX_SIMULATOR_CACHE_ENSEMBLE = 25` in `simulate.py` (ensemble mode: 25 simulators, ~11.5GB per worker)
 - Dynamic expansion/contraction based on ensemble mode
+- **Pre-loading**: In ensemble mode, `WindFile` pre-loads full arrays (308MB each) instead of memory-mapping
+  - Makes simulations CPU-bound instead of I/O-bound
+  - Arrays automatically freed when simulators are evicted
 
 **Prediction Cache**:
 - `MAX_CACHE_SIZE = 200` in `simulate.py` (increased from 30)
@@ -240,21 +257,26 @@ HABSIM uses a multi-layer caching strategy optimized for Railway (max 32GB RAM, 
 - **Why Fast**: Model 0 pre-warmed in RAM, files on disk
 
 ### First Ensemble Run (21 Models)
-- **Speed**: ~30-60 seconds (if files on disk) or ~2-5 minutes (if files need download)
-- **RAM**: Expands to ~15-16GB (worst case: 4 workers × 3.75GB), typically ~5-6GB (models distributed across workers)
-- **CPU**: High (32 ThreadPoolExecutor workers + 32 Gunicorn threads active)
+- **Speed**: ~15-25 seconds (if files on disk) or ~2-5 minutes (if files need download)
+  - Initial load: ~10-15 seconds (parallel loading of 21 arrays into RAM)
+  - Simulation: ~5-10 seconds (CPU-bound, no disk I/O during simulation)
+- **RAM**: Expands to ~46-47GB (worst case: 4 workers × 11.5GB), typically ~15-20GB (models distributed across workers)
+- **CPU**: Very High (32 ThreadPoolExecutor workers + 32 Gunicorn threads, CPU-bound simulation)
 - **Process**: 
   - Check if files exist on disk → download from Supabase if missing
-  - Read files from disk → create simulators in parallel → cache in RAM
+  - Pre-load full arrays into RAM in parallel (one-time cost)
+  - Create simulators with pre-loaded arrays → cache in RAM
+  - Simulation runs CPU-bound (no disk I/O during simulation)
   - Files cached on disk for subsequent runs (no additional egress)
 
 ### Subsequent Ensemble Runs (Within 90 Seconds)
-- **Speed**: ~5-10 seconds
-- **RAM**: ~15-16GB (worst case), typically ~5-6GB (maintained from first run)
-- **CPU**: High (32 ThreadPoolExecutor workers + 32 Gunicorn threads active)
-- **Why Fast**: All 21 simulators already in RAM cache across workers
+- **Speed**: ~5-10 seconds (very fast - arrays already in RAM)
+- **RAM**: ~46-47GB (worst case), typically ~15-20GB (maintained from first run)
+- **CPU**: Very High (32 ThreadPoolExecutor workers + 32 Gunicorn threads, CPU-bound)
+- **Why Fast**: All 21 simulators with pre-loaded arrays already in RAM cache across workers
 
 ### After 90 Seconds (Auto-trim)
 - **RAM**: Trims to ~3GB (4 workers × 750MB) via background thread, typically ~1.5-2GB (models distributed)
 - **CPU**: Minimal (idle)
-- **Cost**: Frees ~12GB RAM automatically (from 15GB → 3GB)
+- **Cost**: Frees ~43GB RAM automatically (from 46GB → 3GB worst case)
+- Pre-loaded arrays are automatically freed when simulators are evicted
