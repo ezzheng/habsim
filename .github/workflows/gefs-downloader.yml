@@ -9,7 +9,7 @@ on:
 jobs:
   download:
     runs-on: ubuntu-latest
-    timeout-minutes: 60  # Timeout after 1 hour
+    timeout-minutes: 240  # Timeout after 4 hours (21 models: ~3-3.5 hours estimated, 4h for buffer)
     
     steps:
       - name: Checkout code
