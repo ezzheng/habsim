@@ -266,25 +266,32 @@ HABSIM uses a multi-layer caching strategy optimized for Railway (max 32GB RAM, 
   - 21 ensemble paths: ~30-60 seconds
   - 420 Monte Carlo simulations: ~4-14 minutes (20× more simulations)
   - Both run in parallel using same 32-worker pool
-- **RAM**: Expands to ~15-16GB (worst case: 4 workers × 3.75GB), typically ~5-6GB (models distributed across workers)
-  - Same RAM as normal ensemble (reuses same 21 cached models)
-  - Monte Carlo only adds trajectory computation overhead (~420KB-2MB for results)
-- **CPU**: Moderate (32 ThreadPoolExecutor workers + 32 Gunicorn threads, I/O-bound simulation)
+- **RAM**: Expands to ~20-25GB peak (worst case: 4 workers × 5-6GB each)
+  - All 25 simulators with pre-loaded arrays (100-200MB each) = ~3.75GB per worker
+  - Additional overhead: Python objects, elevation data, thread overhead = ~1-2GB per worker
+  - Total: 4 workers × 5-6GB = 20-25GB peak
+  - Monte Carlo adds trajectory computation overhead (~420KB-2MB for results)
+- **CPU**: High (32 ThreadPoolExecutor workers + 32 Gunicorn threads, CPU-bound with pre-loaded arrays)
 - **Process**: 
   - Check if files exist on disk → download from Supabase if missing
-  - Create simulators with memory-mapped files → cache in RAM
+  - Create simulators with pre-loaded arrays (ensemble mode) → cache in RAM
   - Run 21 ensemble paths + 420 Monte Carlo simulations in parallel
-  - Simulation runs I/O-bound (disk reads during simulation via memory-mapping)
+  - Simulation runs CPU-bound (arrays in RAM, no disk I/O during simulation)
   - Files cached on disk for subsequent runs (no additional egress)
 - **Output**: Returns both `paths` (21 ensemble trajectories) and `heatmap_data` (420 landing positions)
 
 ### Subsequent Ensemble Runs (Within 60 Seconds)
 - **Speed**: ~5-15 minutes (simulators cached, but still need to run all simulations)
-- **RAM**: ~15-16GB (worst case), typically ~5-6GB (maintained from first run)
-- **CPU**: Moderate (32 ThreadPoolExecutor workers + 32 Gunicorn threads, I/O-bound)
-- **Why Faster**: All 21 simulators already in RAM cache across workers (memory-mapped files)
+- **RAM**: ~20-25GB peak (worst case), maintained from first run
+- **CPU**: High (32 ThreadPoolExecutor workers + 32 Gunicorn threads, CPU-bound)
+- **Why Faster**: All 25 simulators already in RAM cache across workers (pre-loaded arrays)
 
 ### After 60 Seconds (Auto-trim)
-- **RAM**: Trims to ~3GB (4 workers × 750MB) via background thread, typically ~1.5-2GB (models distributed)
+- **RAM**: 
+  - **Immediate**: Trims to ~16GB (Python's allocator holds onto freed memory)
+  - **After 3-5 minutes**: Gradually reduces to ~3GB (4 workers × 750MB) as OS reclaims memory
+  - **Background thread**: Checks every 10s when ensemble expired, aggressively trims pre-loaded arrays
+  - **Note**: Python's memory allocator may hold freed memory for several minutes
+  - Actual freed memory depends on OS memory pressure and allocator behavior
 - **CPU**: Minimal (idle)
-- **Cost**: Frees ~12GB RAM automatically (from 15GB → 3GB worst case)
+- **Cost**: Frees ~20GB RAM gradually (from 25GB → 16GB immediately → 3GB after several minutes)
