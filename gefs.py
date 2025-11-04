@@ -212,73 +212,134 @@ def _ensure_cached(file_name: str) -> Path:
         # Log download attempt (this will use Supabase egress)
         logging.info(f"File cache MISS: {file_name} - downloading from Supabase (will use egress)")
         
-        resp = _SESSION.get(
-            _object_url(f"{_BUCKET}/{file_name}"),
-            headers=_COMMON_HEADERS,
-            stream=True,
-            timeout=_DEFAULT_TIMEOUT,
-        )
+        # Use longer timeout for large files like worldelev.npy (451MB)
+        # Calculate timeout: 3s connect + (file_size / 1MB/s) + 60s buffer
+        # For worldelev.npy: 3 + (451/1) + 60 = ~514 seconds (~8.5 minutes)
+        # For smaller files: use default timeout
+        is_large_file = file_name == 'worldelev.npy' or file_name.endswith('.npy')
+        if is_large_file:
+            # Use longer timeout for large files (10 min read timeout)
+            download_timeout = (10, 600)  # 10s connect, 600s (10 min) read
+        else:
+            download_timeout = _DEFAULT_TIMEOUT
         
-        # Handle file not found errors with helpful message
-        if resp.status_code == 400 or resp.status_code == 404:
-            error_msg = f"File not found in Supabase: {file_name} (status {resp.status_code})"
-            logging.error(error_msg)
-            raise FileNotFoundError(f"{error_msg}. The model file may not have been uploaded yet, or the model timestamp may be incorrect. Check Supabase storage or verify the model timestamp in 'whichgefs'.")
+        # Retry logic for large file downloads (up to 3 attempts)
+        max_retries = 3 if is_large_file else 1
+        last_error = None
         
-        resp.raise_for_status()
-
-        tmp_path = cache_path.with_suffix(cache_path.suffix + ".tmp")
-        try:
-            # Get expected content length if available
-            expected_size = resp.headers.get('Content-Length')
-            if expected_size:
-                expected_size = int(expected_size)
-            
-            bytes_written = 0
-            try:
-                with open(tmp_path, 'wb') as fh:
-                    for chunk in _iter_content(resp):
-                        if chunk:
-                            fh.write(chunk)
-                            bytes_written += len(chunk)
-            except Exception as write_error:
-                # If file was created but write failed, clean it up
-                if tmp_path.exists():
-                    try:
-                        tmp_path.unlink()
-                    except:
-                        pass
-                raise IOError(f"Download failed: error writing {file_name}: {write_error}")
-            
-            # Verify download completed successfully
-            if not tmp_path.exists():
-                raise IOError(f"Download failed: temp file not created for {file_name}")
-            
-            actual_size = tmp_path.stat().st_size
-            if actual_size == 0:
-                raise IOError(f"Download failed: file {file_name} is empty")
-            
-            if expected_size and actual_size != expected_size:
-                raise IOError(f"Download incomplete: {file_name} expected {expected_size} bytes, got {actual_size}")
-            
-            # Log successful download with size (for egress tracking)
-            size_mb = actual_size / (1024 * 1024)
-            logging.info(f"Downloaded {file_name} from Supabase: {size_mb:.2f} MB (egress used)")
-            
-            # Validate NPZ file structure before committing
-            if file_name.endswith('.npz'):
-                try:
-                    import numpy as np
-                    test_npz = np.load(tmp_path)
-                    test_npz.close()  # Close immediately after validation
-                except Exception as e:
-                    raise IOError(f"Downloaded file {file_name} is corrupted (invalid NPZ): {e}")
-            
-            # Only rename if temp file exists and is valid
+        for attempt in range(max_retries):
+            # Clean up any incomplete temp files from previous attempts
+            tmp_path = cache_path.with_suffix(cache_path.suffix + ".tmp")
             if tmp_path.exists():
-                os.replace(tmp_path, cache_path)
-            else:
-                raise IOError(f"Temp file disappeared before rename: {file_name}")
+                try:
+                    tmp_path.unlink()
+                    logging.debug(f"Cleaned up incomplete download: {file_name}")
+                except:
+                    pass
+            
+            try:
+                resp = _SESSION.get(
+                    _object_url(f"{_BUCKET}/{file_name}"),
+                    headers=_COMMON_HEADERS,
+                    stream=True,
+                    timeout=download_timeout,
+                )
+                
+                # Handle file not found errors with helpful message
+                if resp.status_code == 400 or resp.status_code == 404:
+                    error_msg = f"File not found in Supabase: {file_name} (status {resp.status_code})"
+                    logging.error(error_msg)
+                    raise FileNotFoundError(f"{error_msg}. The model file may not have been uploaded yet, or the model timestamp may be incorrect. Check Supabase storage or verify the model timestamp in 'whichgefs'.")
+                
+                resp.raise_for_status()
+
+                try:
+                    # Get expected content length if available
+                    expected_size = resp.headers.get('Content-Length')
+                    if expected_size:
+                        expected_size = int(expected_size)
+                    
+                    bytes_written = 0
+                    try:
+                        with open(tmp_path, 'wb') as fh:
+                            for chunk in _iter_content(resp):
+                                if chunk:
+                                    fh.write(chunk)
+                                    bytes_written += len(chunk)
+                    except Exception as write_error:
+                        # If file was created but write failed, clean it up
+                        if tmp_path.exists():
+                            try:
+                                tmp_path.unlink()
+                            except:
+                                pass
+                        raise IOError(f"Download failed: error writing {file_name}: {write_error}")
+                    
+                    # Verify download completed successfully
+                    if not tmp_path.exists():
+                        raise IOError(f"Download failed: temp file not created for {file_name}")
+                    
+                    actual_size = tmp_path.stat().st_size
+                    if actual_size == 0:
+                        raise IOError(f"Download failed: file {file_name} is empty")
+                    
+                    if expected_size and actual_size != expected_size:
+                        raise IOError(f"Download incomplete: {file_name} expected {expected_size} bytes, got {actual_size}")
+                    
+                    # Log successful download with size (for egress tracking)
+                    size_mb = actual_size / (1024 * 1024)
+                    logging.info(f"Downloaded {file_name} from Supabase: {size_mb:.2f} MB (egress used)")
+                    
+                    # Validate NPZ file structure before committing
+                    if file_name.endswith('.npz'):
+                        try:
+                            import numpy as np
+                            test_npz = np.load(tmp_path)
+                            test_npz.close()  # Close immediately after validation
+                        except Exception as e:
+                            raise IOError(f"Downloaded file {file_name} is corrupted (invalid NPZ): {e}")
+                    
+                    # Only rename if temp file exists and is valid
+                    # Success - break out of retry loop
+                    break
+                except IOError as e:
+                    # Clean up incomplete download
+                    if tmp_path.exists():
+                        try:
+                            tmp_path.unlink()
+                        except:
+                            pass
+                    last_error = e
+                    if attempt < max_retries - 1:
+                        # Wait before retry (exponential backoff: 2s, 4s, 8s)
+                        wait_time = 2 ** (attempt + 1)
+                        logging.warning(f"Download attempt {attempt + 1}/{max_retries} failed for {file_name}: {e}. Retrying in {wait_time}s...")
+                        time.sleep(wait_time)
+                    else:
+                        # Last attempt failed
+                        raise
+                except Exception as e:
+                    # Clean up incomplete download
+                    if tmp_path.exists():
+                        try:
+                            tmp_path.unlink()
+                        except:
+                            pass
+                    last_error = e
+                    if attempt < max_retries - 1:
+                        wait_time = 2 ** (attempt + 1)
+                        logging.warning(f"Download attempt {attempt + 1}/{max_retries} failed for {file_name}: {e}. Retrying in {wait_time}s...")
+                        time.sleep(wait_time)
+                    else:
+                        raise
+        
+        # If we get here, download succeeded (tmp_path exists from successful attempt)
+        if not tmp_path.exists():
+            raise IOError(f"Download failed: temp file not created for {file_name} after {max_retries} attempts")
+        
+        # Rename temp file to final cache location
+        try:
+            os.replace(tmp_path, cache_path)
             
             # Verify final file exists and is not empty
             if not cache_path.exists() or cache_path.stat().st_size == 0:
