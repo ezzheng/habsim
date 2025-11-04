@@ -53,7 +53,7 @@ _RETRY = Retry(
     status_forcelist=(500, 502, 503, 504),
     allowed_methods=("GET", "POST"),
 )
-_ADAPTER = HTTPAdapter(max_retries=_RETRY, pool_connections=4, pool_maxsize=8)
+_ADAPTER = HTTPAdapter(max_retries=_RETRY, pool_connections=8, pool_maxsize=32)
 _SESSION.mount("https://", _ADAPTER)
 _SESSION.mount("http://", _ADAPTER)
 
@@ -74,6 +74,10 @@ _CACHE_LOCK = threading.Lock()
 _CHUNK_SIZE = 1024 * 1024
 _MAX_CACHED_FILES = 25  # Allow 25 weather files (~7.7GB) - handles full 21-model ensemble + buffer
 
+# Cache for whichgefs to reduce connection pool pressure (updates every 6 hours, but status checks every 5 seconds)
+_whichgefs_cache = {"value": None, "timestamp": 0, "ttl": 60}  # Cache for 60 seconds
+_whichgefs_lock = threading.Lock()
+
 def _object_url(path: str) -> str:
     return f"{_BASE_URL}/storage/v1/object/{path}"
 
@@ -92,6 +96,31 @@ def listdir_gefs():
     return [item.get('name') for item in items]
 
 def open_gefs(file_name):
+    # Cache whichgefs locally to reduce connection pool pressure (status checks every 5 seconds)
+    if file_name == 'whichgefs':
+        now = time.time()
+        with _whichgefs_lock:
+            # Check if cached value is still valid (60 second TTL)
+            if (_whichgefs_cache["value"] is not None and 
+                now - _whichgefs_cache["timestamp"] < _whichgefs_cache["ttl"]):
+                return io.StringIO(_whichgefs_cache["value"])
+            
+            # Cache miss or expired - download from Supabase
+            resp = _SESSION.get(
+                _object_url(f"{_BUCKET}/{file_name}"),
+                headers=_COMMON_HEADERS,
+                timeout=_DEFAULT_TIMEOUT,
+            )
+            resp.raise_for_status()
+            content = resp.content.decode("utf-8")
+            
+            # Update cache
+            _whichgefs_cache["value"] = content
+            _whichgefs_cache["timestamp"] = now
+            
+            return io.StringIO(content)
+    
+    # Non-whichgefs files: download directly (no caching needed)
     resp = _SESSION.get(
         _object_url(f"{_BUCKET}/{file_name}"),
         headers=_COMMON_HEADERS,
