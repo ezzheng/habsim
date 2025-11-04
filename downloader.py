@@ -6,7 +6,7 @@ socket.setdefaulttimeout(10)
 
 # Configuration constants (available when module is imported)
 levels = [1, 2, 3, 5, 7, 20, 30, 70, 150, 350, 450, 550, 600, 650, 750, 800, 900, 950, 975]
-NUM_PERTURBED_MEMBERS = 2  # Number of perturbed ensemble members (gep01, gep02, etc.)
+NUM_PERTURBED_MEMBERS = 20  # Number of perturbed ensemble members (gep01 through gep20, total 21 models: 0-20)
 DOWNLOAD_CONTROL = True     # Whether to download control run (gec00)
 MAX_HOURS = 384
 FORECAST_INTERVAL = 6
