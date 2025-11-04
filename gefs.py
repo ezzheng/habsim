@@ -34,6 +34,13 @@ _load_env_file()
 _BASE_URL = os.environ.get("SUPABASE_URL", "").rstrip('/')
 _KEY = os.environ.get("SUPABASE_SECRET", "")
 _BUCKET = "habsim"
+
+# Validate that Supabase credentials are set
+if not _BASE_URL:
+    raise ValueError("SUPABASE_URL environment variable is not set. Please configure it in Railway settings.")
+if not _KEY:
+    raise ValueError("SUPABASE_SECRET environment variable is not set. Please configure it in Railway settings.")
+
 _COMMON_HEADERS = {
     "Authorization": f"Bearer {_KEY}",
     "apikey": _KEY,
