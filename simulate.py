@@ -167,6 +167,7 @@ def _trim_cache_to_normal():
         if _ensemble_mode_until > 0 and now > _ensemble_mode_until:
             _current_max_cache = MAX_SIMULATOR_CACHE_NORMAL
             _ensemble_mode_until = 0
+            logging.info("Ensemble mode expired: cache limit reset to normal (5 simulators)")
         
         # If cache is too large, trim to normal size keeping most recently used
         if len(_simulator_cache) > _current_max_cache:
