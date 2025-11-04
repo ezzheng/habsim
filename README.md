@@ -110,24 +110,6 @@ This is an offshoot of the prediction server developed for the Stanford Space In
   - Caching strategies, memory budget breakdown, tuning
   - Model configuration details (ensemble toggle, configurable model counts)
 
-### Automation
-- **`.github/workflows/gefs-downloader.yml`** - GitHub Actions workflow
-  - Automatically downloads and uploads GEFS models every 6 hours
-  - Runs in test mode (single download/upload cycle) on schedule
-
-### Data Storage
-- **Cache Directory**: `/opt/render/project/src/data/gefs` on Render (persistent, avoids `/tmp` 2GB limit), or `/tmp/habsim-gefs/` as fallback
-  - `whichgefs`: Current model timestamp (YYYYMMDDHH format)
-  - `YYYYMMDDHH_NN.npz`: Wind data arrays (NN = 00 control + 01-20 ensemble members)
-  - Max 3 `.npz` files cached (~924MB) with LRU eviction
-  - `worldelev.npy`: Global elevation dataset (always kept, ~430MB)
-
-### Virtual Environment
-- **`habsim/`** - Dual-purpose directory: Python package + virtual environment
-  - Package: `classes.py`, `__init__.py` (exported via `from habsim import ...`)
-  - Virtualenv: `bin/activate`, `lib/python3.13/site-packages/` (installed dependencies)
-  - Activate: `source habsim/bin/activate`
-
 ## Architecture Changes From Prev. HABSIM
 
 **Old Version (Client Library):** Python package making HTTP requests to `habsim.org` API. Installed via pip, called functions like `util.predict()`.
