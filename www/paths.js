@@ -500,6 +500,7 @@ function clearContours() {
     // Remove all contour polylines and labels
     contourLayers.forEach(layer => {
         if (layer.polyline) layer.polyline.setMap(null);
+        if (layer.polyline2) layer.polyline2.setMap(null);
         if (layer.label) layer.label.setMap(null);
     });
     contourLayers = [];
@@ -574,8 +575,43 @@ function displayContours(heatmapData) {
                     zIndex: 1000 + index  // Higher z-index for higher probability
                 });
                 
-                // Add label at midpoint of contour
-                const midPoint = path[Math.floor(path.length / 2)];
+                // Add label at midpoint of contour, breaking the line around it
+                const midIndex = Math.floor(path.length / 2);
+                const midPoint = path[midIndex];
+                
+                // Split path into two segments to create gap for label
+                // Create gap by skipping points around the label position
+                const gapSize = Math.max(3, Math.floor(path.length * 0.1)); // 10% gap, min 3 points
+                const gapStart = Math.max(0, midIndex - gapSize);
+                const gapEnd = Math.min(path.length, midIndex + gapSize);
+                
+                // First segment: start to gap
+                const path1 = path.slice(0, gapStart + 1);
+                // Second segment: gap end to finish
+                const path2 = path.slice(gapEnd);
+                
+                // Create two polylines instead of one (with gap for label)
+                const polyline1 = path1.length > 1 ? new google.maps.Polyline({
+                    path: path1,
+                    geodesic: true,
+                    strokeColor: color,
+                    strokeOpacity: 0.8,
+                    strokeWeight: 2,
+                    map: map,
+                    zIndex: 1000 + index
+                }) : null;
+                
+                const polyline2 = path2.length > 1 ? new google.maps.Polyline({
+                    path: path2,
+                    geodesic: true,
+                    strokeColor: color,
+                    strokeOpacity: 0.8,
+                    strokeWeight: 2,
+                    map: map,
+                    zIndex: 1000 + index
+                }) : null;
+                
+                // Create label marker with background for better visibility
                 const label = new google.maps.Marker({
                     position: midPoint,
                     map: map,
@@ -597,7 +633,12 @@ function displayContours(heatmapData) {
                     zIndex: 1001 + index
                 });
                 
-                contourLayers.push({ polyline, label, threshold });
+                contourLayers.push({ 
+                    polyline: polyline1,  // Store first segment (will handle both in visibility)
+                    polyline2: polyline2, // Store second segment
+                    label: label, 
+                    threshold 
+                });
             });
         });
         
@@ -715,11 +756,11 @@ function crossProduct(o, a, b) {
 }
 
 function getContourColor(threshold) {
-    // Color gradient based on probability threshold
-    if (threshold >= 0.7) return '#FF0000';      // Red - high probability
-    if (threshold >= 0.5) return '#FF8800';      // Orange
-    if (threshold >= 0.3) return '#FFFF00';      // Yellow
-    return '#00FF00';                             // Green - lower probability
+    // Color gradient based on probability threshold (darker colors for better visibility)
+    if (threshold >= 0.7) return '#CC0000';      // Dark red - high probability
+    if (threshold >= 0.5) return '#CC6600';      // Dark orange
+    if (threshold >= 0.3) return '#CCAA00';      // Dark gold
+    return '#00AA00';                             // Dark green - lower probability
 }
 
 function updateContourVisibility() {
@@ -731,6 +772,9 @@ function updateContourVisibility() {
     contourLayers.forEach(layer => {
         if (layer.polyline) {
             layer.polyline.setMap(shouldShow ? map : null);
+        }
+        if (layer.polyline2) {
+            layer.polyline2.setMap(shouldShow ? map : null);
         }
         if (layer.label) {
             layer.label.setMap(shouldShow ? map : null);
@@ -762,6 +806,9 @@ function updateEnsembleProgress(progressData) {
     }
 }
 
+// Track if we've received first progress update (to detect when server is ready)
+let hasReceivedProgress = false;
+
 async function pollProgress(requestId) {
     if (!requestId) return null;
     
@@ -779,11 +826,12 @@ async function pollProgress(requestId) {
 
 function clearEnsembleProgress() {
     if (ensembleProgressInterval) {
-        clearInterval(ensembleProgressInterval);
+        clearTimeout(ensembleProgressInterval);
         ensembleProgressInterval = null;
     }
     ensembleStartTime = null;
     currentRequestId = null;
+    hasReceivedProgress = false;
     
     const ensembleBtn = document.getElementById('ensemble-toggle');
     if (ensembleBtn) {
@@ -930,29 +978,58 @@ async function simulate() {
                         hash = hash & 0xFFFFFFFF; // Convert to 32-bit integer
                     }
                     currentRequestId = Math.abs(hash).toString(16).padStart(16, '0').substring(0, 16);
+                    hasReceivedProgress = false;
                     
-                    // Start polling immediately (before fetch completes)
-                    ensembleProgressInterval = setInterval(async () => {
-                        if (currentRequestId && window.__simRunning) {
-                            const progressData = await pollProgress(currentRequestId);
-                            if (progressData) {
-                                updateEnsembleProgress(progressData);
-                                // If completed, stop polling
-                                if (progressData.completed >= progressData.total) {
-                                    if (ensembleProgressInterval) {
-                                        clearInterval(ensembleProgressInterval);
-                                        ensembleProgressInterval = null;
-                                    }
-                                }
-                            }
-                        } else {
+                    // Use a recursive setTimeout pattern for adaptive polling
+                    // Start with shorter interval (200ms) to catch progress quickly
+                    // Then switch to longer interval (500ms) once we know it's running
+                    let pollInterval = 200; // Start with 200ms for faster initial detection
+                    
+                    // Use a recursive setTimeout pattern instead of setInterval for adaptive polling
+                    const pollProgressRecursive = async () => {
+                        if (!currentRequestId || !window.__simRunning) {
                             // Simulation stopped, stop polling
                             if (ensembleProgressInterval) {
-                                clearInterval(ensembleProgressInterval);
+                                clearTimeout(ensembleProgressInterval);
                                 ensembleProgressInterval = null;
                             }
+                            return;
                         }
-                    }, 500); // Poll every 500ms for smoother progress updates
+                        
+                        const progressData = await pollProgress(currentRequestId);
+                        
+                        if (progressData) {
+                            // We got valid progress data - server is responding
+                            if (!hasReceivedProgress) {
+                                hasReceivedProgress = true;
+                                // Switch to longer interval once we know server is responding
+                                pollInterval = 500;
+                            }
+                            
+                            updateEnsembleProgress(progressData);
+                            
+                            // If completed, stop polling
+                            if (progressData.completed >= progressData.total) {
+                                if (ensembleProgressInterval) {
+                                    clearTimeout(ensembleProgressInterval);
+                                    ensembleProgressInterval = null;
+                                }
+                                return;
+                            }
+                        } else if (hasReceivedProgress) {
+                            // We had progress before but now it's gone - might be completed or error
+                            // Keep polling but with longer interval
+                            pollInterval = 1000;
+                        }
+                        // If no progress data and we haven't received any yet, keep trying with short interval
+                        
+                        // Schedule next poll with current interval (pollInterval is in closure scope)
+                        ensembleProgressInterval = setTimeout(pollProgressRecursive, pollInterval);
+                    };
+                    
+                    // Start polling immediately (before fetch completes)
+                    // First poll happens right away (100ms), then continues with adaptive interval
+                    ensembleProgressInterval = setTimeout(pollProgressRecursive, 100);
                 }
                 
                 try {

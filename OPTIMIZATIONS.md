@@ -230,8 +230,10 @@ HABSIM uses a multi-layer caching strategy optimized for Railway (max 32GB RAM, 
   - 420 Monte Carlo simulations (20 perturbations × 21 models) for heatmap visualization
   - Both run in parallel using the same 32-worker pool
   - Returns `{paths: [...], heatmap_data: [...]}` for frontend visualization
-- **Auto-extension**: Each ensemble run extends ensemble mode by 60 seconds
+- **Auto-extension**: Each ensemble run extends ensemble mode by 60 seconds (maximum 5 minutes total)
 - **Auto-trimming**: Cache trims back to 5 simulators 60 seconds after last ensemble run
+- **Maximum Duration Cap**: Ensemble mode is capped at 5 minutes to prevent indefinite extension from consecutive calls
+- **Ensemble Mode Only**: Ensemble mode is ONLY extended by `/sim/spaceshot` endpoint (explicit ensemble + Monte Carlo calls). Single model requests (`/sim/singlezpb`) do NOT extend ensemble mode
 
 ### Model Change Management (`simulate.py`)
 - **Automatic Detection**: `refresh()` checks `whichgefs` every 5 minutes for model updates
@@ -253,12 +255,15 @@ HABSIM uses a multi-layer caching strategy optimized for Railway (max 32GB RAM, 
   - **Pre-loaded array cleanup**: Pre-loaded numpy arrays (100-200MB each) are explicitly cleared before simulator deletion
   - Only pre-loaded arrays are cleared (not memory-mapped arrays which use little RAM)
   - Multiple GC passes (3x) ensure large numpy arrays are fully reclaimed
+  - **OS Memory Release**: `malloc_trim()` is called after cache trimming to force Python to release freed memory back to the OS (Linux only)
 - **Background cache trimming thread**: `_periodic_cache_trim()` runs in each worker process
   - Normal interval: checks every 30 seconds
   - Aggressive mode: checks every 10 seconds when ensemble mode expires but cache is still large
   - Ensures idle workers trim their cache when ensemble mode expires (prevents 20-25GB memory usage from lingering)
   - Without this, workers that don't receive requests never trim their cache
   - Each worker maintains its own independent cache, so all workers need periodic trimming
+  - **Maximum Duration Enforcement**: Forces cache trim after 5 minutes of ensemble mode, even if ensemble calls are still being made
+  - **Safety Check**: Trims cache if it exceeds MAX_SIMULATOR_CACHE_ENSEMBLE (25 simulators) as a memory leak protection
 - **Worker recycling**: `max_requests = 800` (restarts workers periodically to prevent memory leaks)
 
 ## UI Optimizations
@@ -288,9 +293,10 @@ HABSIM uses a multi-layer caching strategy optimized for Railway (max 32GB RAM, 
 - `CACHE_TTL = 3600` (1 hour) in `simulate.py`
 
 **Ensemble Mode**:
-- Auto-enabled when `/sim/spaceshot` is called
-- Duration: 60 seconds (1 minute, auto-extends with each ensemble run)
-- Auto-trims cache to 5 simulators after expiration
+- Auto-enabled when `/sim/spaceshot` is called (ONLY endpoint that extends ensemble mode)
+- Duration: 60 seconds (1 minute, auto-extends with each ensemble run, but capped at 5 minutes maximum)
+- Auto-trims cache to 5 simulators after expiration (within 60-90 seconds after last ensemble call)
+- **Important**: Single model requests (`/sim/singlezpb`) do NOT extend ensemble mode to prevent memory bloat
 
 ## Performance Profile
 
@@ -330,10 +336,13 @@ HABSIM uses a multi-layer caching strategy optimized for Railway (max 32GB RAM, 
 
 ### After 60 Seconds (Auto-trim)
 - **RAM**: 
+  - **Within 60-90 seconds**: Background thread detects ensemble mode expiration and trims cache
   - **Immediate**: Trims to ~16GB (Python's allocator holds onto freed memory)
   - **After 3-5 minutes**: Gradually reduces to ~3GB (4 workers × 750MB) as OS reclaims memory
-  - **Background thread**: Checks every 10s when ensemble expired, aggressively trims pre-loaded arrays
-  - **Note**: Python's memory allocator may hold freed memory for several minutes
+  - **Background thread**: Checks every 30s normally, or every 10s when ensemble expired but cache still large
+  - **Memory Release**: `malloc_trim()` forces Python to release freed memory back to OS (improves memory recovery)
+  - **Note**: Python's memory allocator may hold freed memory for several minutes, but `malloc_trim()` helps
   - Actual freed memory depends on OS memory pressure and allocator behavior
 - **CPU**: Minimal (idle)
 - **Cost**: Frees ~20GB RAM gradually (from 25GB → 16GB immediately → 3GB after several minutes)
+- **Maximum Duration**: Even with consecutive ensemble calls, cache will force trim after 5 minutes to prevent memory bloat

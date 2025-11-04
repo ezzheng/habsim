@@ -249,6 +249,11 @@ def spaceshot():
     request_id = format(abs(hash_val), 'x').zfill(16)[:16]
     
     # Enable ensemble mode (expanded cache) for 60 seconds
+    # NOTE: This is the ONLY endpoint that extends ensemble mode.
+    # This endpoint is only called when user explicitly clicks "Simulate" with ensemble toggle enabled.
+    # Single model requests (/sim/singlezpb) do NOT extend ensemble mode.
+    # Legacy /sim/montecarlo endpoint also does NOT extend ensemble mode.
+    # This prevents memory bloat from non-ensemble requests.
     simulate.set_ensemble_mode(duration_seconds=60)
     app.logger.info("Ensemble mode enabled: expanded cache for 60 seconds (ensemble + Monte Carlo)")
     
@@ -542,6 +547,9 @@ def montecarlo():
     Monte Carlo simulation: Run 20 perturbations of input parameters across all 21 ensemble models.
     Returns final landing positions for heatmap visualization.
     
+    NOTE: This endpoint is legacy/unused - Monte Carlo is now included in /sim/spaceshot.
+    This endpoint does NOT extend ensemble mode to prevent memory bloat from unexpected calls.
+    
     Total simulations: 20 perturbations × 21 models = 420 simulations
     
     Performance: ~5-15 minutes (vs ~30-60 seconds for normal ensemble)
@@ -557,7 +565,7 @@ def montecarlo():
     - asc: ±0.1 m/s - ascent rate uncertainty
     - desc: ±0.1 m/s - descent rate uncertainty
     """
-    app.logger.info("Monte Carlo simulation started: /sim/montecarlo endpoint called")
+    app.logger.info("Monte Carlo simulation started: /sim/montecarlo endpoint called (legacy endpoint)")
     import time
     start_time = time.time()
     args = request.args
@@ -573,9 +581,10 @@ def montecarlo():
     # Optional: number of perturbations (default 20)
     num_perturbations = int(args.get('num_perturbations', 20))
     
-    # Enable ensemble mode (expanded cache) for 60 seconds
-    simulate.set_ensemble_mode(duration_seconds=60)
-    app.logger.info(f"Ensemble mode enabled: expanded cache for 60 seconds (Monte Carlo run)")
+    # NOTE: Do NOT extend ensemble mode here - this is a legacy endpoint
+    # Ensemble mode should only be extended by /sim/spaceshot which is called
+    # explicitly when user clicks simulate with ensemble enabled
+    # This prevents memory bloat from unexpected calls to this endpoint
     
     # Build model list based on configuration
     model_ids = []

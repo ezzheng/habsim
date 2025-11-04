@@ -25,6 +25,7 @@ MAX_SIMULATOR_CACHE_NORMAL = 5  # Normal cache size for single model runs (~750M
 MAX_SIMULATOR_CACHE_ENSEMBLE = 25  # Expanded cache for ensemble runs (~3.75GB)
 _current_max_cache = MAX_SIMULATOR_CACHE_NORMAL  # Current cache limit (dynamic)
 _ensemble_mode_until = 0  # Timestamp when ensemble mode expires
+_ensemble_mode_started = 0  # Timestamp when ensemble mode first started (for max duration tracking)
 _cache_lock = threading.Lock()  # Thread-safe access
 elevation_cache = None
 
@@ -87,10 +88,12 @@ def refresh():
     return False
 
 def reset():
-    global _simulator_cache, _simulator_access_times, elevation_cache
+    global _simulator_cache, _simulator_access_times, elevation_cache, _ensemble_mode_until, _ensemble_mode_started
     with _cache_lock:
         _simulator_cache.clear()
         _simulator_access_times.clear()
+        _ensemble_mode_until = 0
+        _ensemble_mode_started = 0
     elevation_cache = None
     gc.collect()
 
@@ -138,18 +141,32 @@ def _get_elevation_data():
     return elevation_cache
 
 def set_ensemble_mode(duration_seconds=60):
-    """Enable ensemble mode (larger cache) for specified duration (default 60 seconds / 1 minute)"""
-    global _current_max_cache, _ensemble_mode_until
+    """Enable ensemble mode (larger cache) for specified duration (default 60 seconds / 1 minute)
+    
+    Note: Maximum ensemble mode duration is capped at 5 minutes to prevent memory bloat
+    from consecutive ensemble calls. After 5 minutes, cache will trim even if ensemble mode
+    is still being extended.
+    """
+    global _current_max_cache, _ensemble_mode_until, _ensemble_mode_started
     now = time.time()
+    MAX_ENSEMBLE_DURATION = 300  # 5 minutes maximum
     with _cache_lock:
         _current_max_cache = MAX_SIMULATOR_CACHE_ENSEMBLE
-        # Extend ensemble mode if it's already active, otherwise set new expiration
-        if _ensemble_mode_until > now:
-            # Already in ensemble mode, extend it
-            _ensemble_mode_until = max(_ensemble_mode_until, now + duration_seconds)
-        else:
-            # Start new ensemble mode
+        # Track when ensemble mode first started
+        if _ensemble_mode_until <= now:
+            # Starting new ensemble mode
+            _ensemble_mode_started = now
             _ensemble_mode_until = now + duration_seconds
+        else:
+            # Already in ensemble mode, check if we've exceeded max duration
+            if now - _ensemble_mode_started >= MAX_ENSEMBLE_DURATION:
+                # Exceeded max duration - don't extend, let it expire
+                logging.info(f"Ensemble mode exceeded max duration ({MAX_ENSEMBLE_DURATION}s), not extending further")
+            else:
+                # Extend ensemble mode but respect max duration
+                new_expiry = now + duration_seconds
+                max_allowed_expiry = _ensemble_mode_started + MAX_ENSEMBLE_DURATION
+                _ensemble_mode_until = min(new_expiry, max_allowed_expiry)
 
 def _is_ensemble_mode():
     """Check if currently in ensemble mode"""
@@ -159,18 +176,29 @@ def _is_ensemble_mode():
 
 def _trim_cache_to_normal():
     """Trim cache back to normal size, keeping most recently used models"""
-    global _current_max_cache, _simulator_cache, _simulator_access_times, _ensemble_mode_until
+    global _current_max_cache, _simulator_cache, _simulator_access_times, _ensemble_mode_until, _ensemble_mode_started
     now = time.time()
     
     with _cache_lock:
-        # Check if ensemble mode has expired
-        if _ensemble_mode_until > 0 and now > _ensemble_mode_until:
+        # Check if ensemble mode has expired or exceeded max duration
+        MAX_ENSEMBLE_DURATION = 300  # 5 minutes maximum
+        ensemble_expired = _ensemble_mode_until > 0 and now > _ensemble_mode_until
+        ensemble_exceeded_max = _ensemble_mode_started > 0 and (now - _ensemble_mode_started) >= MAX_ENSEMBLE_DURATION
+        
+        if ensemble_expired or ensemble_exceeded_max:
             _current_max_cache = MAX_SIMULATOR_CACHE_NORMAL
-            _ensemble_mode_until = 0
-            logging.info("Ensemble mode expired: cache limit reset to normal (5 simulators)")
+            if ensemble_exceeded_max:
+                _ensemble_mode_until = 0  # Force expiration even if still being extended
+                _ensemble_mode_started = 0
+                logging.info("Ensemble mode exceeded max duration (5 min): forcing cache trim to normal (5 simulators)")
+            else:
+                _ensemble_mode_until = 0
+                _ensemble_mode_started = 0
+                logging.info("Ensemble mode expired: cache limit reset to normal (5 simulators)")
         
         # If cache is too large, trim to normal size keeping most recently used
-        if len(_simulator_cache) > _current_max_cache:
+        # Also trim if cache is significantly larger than current limit (memory leak protection)
+        if len(_simulator_cache) > _current_max_cache or len(_simulator_cache) > MAX_SIMULATOR_CACHE_ENSEMBLE:
             # Sort by access time (most recent first)
             sorted_models = sorted(_simulator_access_times.items(), key=lambda x: x[1], reverse=True)
             # Keep only the most recently used models
@@ -199,6 +227,13 @@ def _trim_cache_to_normal():
                 # Python's GC may need multiple passes to fully reclaim large numpy arrays
                 for _ in range(3):
                     gc.collect()
+                # Force Python to release memory back to OS if possible
+                try:
+                    import ctypes
+                    libc = ctypes.CDLL("libc.so.6")
+                    libc.malloc_trim(0)  # Release free memory back to OS (Linux only)
+                except:
+                    pass  # Not available on all platforms, ignore failure
                 logging.info(f"Trimmed cache: evicted {evicted_count} simulators (cleared pre-loaded arrays), keeping {len(_simulator_cache)} (limit: {_current_max_cache})")
 
 def _periodic_cache_trim():
