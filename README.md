@@ -16,12 +16,16 @@ This is an offshoot of the prediction server developed for the Stanford Space In
 
 ### Core Application
 - **`app.py`** - Flask (Python web framework) WSGI (Web Server Gateway Interface) application serving REST API and static files
-  - Routes: `/sim/singlezpb` (ZPB prediction), `/sim/spaceshot` (ensemble + Monte Carlo), `/sim/elev` (elevation), `/sim/models` (model configuration)
+  - Routes: `/sim/singlezpb` (ZPB prediction), `/sim/spaceshot` (ensemble + Monte Carlo), `/sim/elev` (elevation), `/sim/models` (model configuration), `/sim/progress` (progress tracking)
   - Background thread pre-warms cache on startup:
     - `_prewarm_cache()`: Pre-loads model 0 simulator in RAM (fast single requests)
     - Files download on-demand when needed (cost-optimized to reduce Supabase egress)
   - `ThreadPoolExecutor` (concurrent execution) parallelizes ensemble requests (max_workers=32)
   - **Ensemble + Monte Carlo**: `/sim/spaceshot` runs both 21 ensemble paths AND 420 Monte Carlo simulations (20 perturbations × 21 models) for heatmap visualization
+    - **Monte Carlo Process**: Generates 20 parameter perturbations (random variations in launch conditions), runs each through all 21 weather models, collects 420 landing positions
+    - **Perturbation Ranges**: ±0.1° lat/lon (≈ ±11km), ±50m altitude, ±200m equilibrium altitude, ±10% equilibrium time, ±0.1 m/s ascent/descent rates
+    - **Parallel Execution**: All 441 simulations (21 ensemble + 420 Monte Carlo) run in parallel using 32-worker thread pool
+    - **Response Format**: Returns both `paths` (full trajectories for line plotting) and `heatmap_data` (landing positions for density visualization)
   - Dynamic cache expansion: Simulator cache expands to 25 when ensemble is called, auto-trims after 60 seconds
   - Background cache trimming thread: Automatically trims cache in all workers every 30 seconds when ensemble mode expires
   - HTTP caching headers (`Cache-Control`) + Flask-Compress Gzip compression
@@ -97,10 +101,14 @@ This is an offshoot of the prediction server developed for the Stanford Space In
   - Fetches model configuration from `/sim/models` endpoint on page load
   - Dynamically uses server-configured model IDs for ensemble runs
   - Draws `google.maps.Polyline` objects with color-coded paths (21 ensemble paths)
-  - **Monte Carlo Heatmap**: Displays probability contours using `google.maps.visualization.HeatmapLayer`
-    - Shows landing probability density from 420 Monte Carlo simulations (20 perturbations × 21 models)
-    - Color gradient: cyan (low) → green → yellow → orange → red (high density)
-    - Overlays on ensemble paths for comprehensive visualization
+  - **Monte Carlo Heatmap**: Displays probability density heatmap using `google.maps.visualization.HeatmapLayer`
+    - **Data Source**: 420 landing positions from Monte Carlo simulations (20 perturbations × 21 models)
+    - **Visualization**: Aggregates nearby landing positions into density contours
+    - **Color Gradient**: Cyan (transparent/low density) → Green → Yellow → Orange → Red (solid/high density)
+    - **High-Density Zones**: Red areas indicate where many simulations landed (high probability landing zones)
+    - **Properties**: `dissipating: false` (maintains intensity across zoom levels), `radius: 20px` (influence area), `opacity: 0.6` (allows seeing map underneath)
+    - **Overlay**: Heatmap overlays on ensemble paths for comprehensive visualization showing both individual trajectories and probability density
+  - **Progress Tracking**: Real-time progress bar in ensemble button showing X/441 completed simulations
   - Waypoint circles with click handlers showing altitude/time info windows
   - Debounced elevation fetching (150ms) to prevent rapid-fire requests
 

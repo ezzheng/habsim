@@ -275,11 +275,32 @@ def spaceshot():
     
     app.logger.info(f"Ensemble run: Processing {len(model_ids)} models + Monte Carlo ({num_perturbations} perturbations × {len(model_ids)} models), request_id={request_id}")
     
-    # Generate Monte Carlo perturbations
+    # ============================================================================
+    # MONTE CARLO SIMULATION: Generate Parameter Perturbations
+    # ============================================================================
+    # Monte Carlo simulation creates multiple variations of input parameters to
+    # explore uncertainty in landing position predictions. Each perturbation
+    # represents a plausible variation in launch conditions (position, altitude,
+    # timing, ascent/descent rates) that could occur in real-world launches.
+    #
+    # Process:
+    # 1. Generate N perturbations (default 20) with random variations
+    # 2. Run each perturbation through all ensemble models (21 models)
+    # 3. Collect final landing positions (420 total: 20 × 21)
+    # 4. Return landing positions for heatmap visualization
+    #
+    # Perturbation ranges (designed for high-altitude balloon launches):
+    # - Latitude/Longitude: ±0.1° (≈ ±11km) - accounts for launch site uncertainty
+    # - Altitude: ±50m - launch altitude variation
+    # - Equilibrium altitude: ±200m - burst altitude uncertainty
+    # - Equilibrium time: ±10% - timing variation in reaching equilibrium
+    # - Ascent/Descent rate: ±0.1 m/s - rate measurement uncertainty
+    # ============================================================================
     perturbations = []
     for i in range(num_perturbations):
+        # Generate random perturbations within reasonable bounds
         pert_lat = base_lat + random.uniform(-0.1, 0.1)  # ±0.1° ≈ ±11km
-        pert_lon = (base_lon + random.uniform(-0.1, 0.1)) % 360  # Wrap longitude
+        pert_lon = (base_lon + random.uniform(-0.1, 0.1)) % 360  # Wrap longitude to [0, 360)
         pert_alt = max(0, base_alt + random.uniform(-50, 50))  # ±50m, min 0
         pert_equil = max(pert_alt, base_equil + random.uniform(-200, 200))  # ±200m, must be >= alt
         pert_eqtime = max(0, base_eqtime * random.uniform(0.9, 1.1))  # ±10%, min 0
@@ -298,11 +319,14 @@ def spaceshot():
         })
     
     from concurrent.futures import ThreadPoolExecutor, as_completed
-    paths = [None] * len(model_ids)  # Pre-allocate to preserve order
-    landing_positions = []  # Monte Carlo landing positions
+    paths = [None] * len(model_ids)  # Pre-allocate to preserve order for 21 ensemble paths
+    landing_positions = []  # Monte Carlo landing positions (420 total: 20 perturbations × 21 models)
     
     def run_ensemble_simulation(model):
-        """Run standard ensemble simulation"""
+        """Run standard ensemble simulation for one model.
+        
+        Returns full trajectory path for line plotting on map.
+        """
         try:
             return singlezpb(timestamp, base_lat, base_lon, base_alt, base_equil, base_eqtime, base_asc, base_desc, model)
         except FileNotFoundError as e:
@@ -313,16 +337,33 @@ def spaceshot():
             return "error"
     
     def run_montecarlo_simulation(pert, model):
-        """Run a single Monte Carlo simulation and return landing position"""
+        """Run a single Monte Carlo simulation and extract final landing position.
+        
+        This function runs a full trajectory simulation with perturbed parameters,
+        then extracts only the final landing position (lat, lon) from the descent
+        phase. This landing position will be aggregated with all other Monte Carlo
+        results to create a probability density heatmap.
+        
+        Args:
+            pert: Dictionary with perturbed parameters (lat, lon, alt, equil, eqtime, asc, desc)
+            model: Model ID (0-20) to use for weather data
+            
+        Returns:
+            Dictionary with landing position {'lat': float, 'lon': float, ...} or None if failed
+        """
         try:
+            # Run full trajectory simulation with perturbed parameters
             result = singlezpb(timestamp, pert['lat'], pert['lon'], pert['alt'], 
-                              pert['equil'], pert['eqtime'], pert['asc'], pert['desc'], model)
+                             pert['equil'], pert['eqtime'], pert['asc'], pert['desc'], model)
             
             if result == "error" or result == "alt error":
                 return None
             
+            # Extract final landing position from descent phase
+            # Result format: (rise, coast, fall) where fall is list of [timestamp, lat, lon, alt, ...]
             rise, coast, fall = result
             if len(fall) > 0:
+                # Get last point in descent phase (final landing position)
                 __, final_lat, final_lon, __, __, __, __, __ = fall[-1]
                 return {
                     'lat': float(final_lat),
@@ -336,15 +377,25 @@ def spaceshot():
             return None
     
     try:
-        # Run both ensemble and Monte Carlo in parallel
+        # ========================================================================
+        # PARALLEL EXECUTION: Ensemble + Monte Carlo Simulations
+        # ========================================================================
+        # Run both ensemble paths (for line plotting) and Monte Carlo simulations
+        # (for heatmap) in parallel using the same thread pool. This maximizes
+        # CPU utilization and minimizes total execution time.
+        #
+        # Total tasks: 21 ensemble + 420 Monte Carlo = 441 simulations
+        # Thread pool: 32 workers
+        # ========================================================================
         with ThreadPoolExecutor(max_workers=32) as executor:
-            # Submit ensemble tasks (21 models)
+            # Submit ensemble tasks (21 models) - returns full trajectory paths
             ensemble_futures = {
                 executor.submit(run_ensemble_simulation, model): model
                 for model in model_ids
             }
             
-            # Submit Monte Carlo tasks (420 simulations)
+            # Submit Monte Carlo tasks (420 simulations: 20 perturbations × 21 models)
+            # Each task returns only the final landing position (lat, lon)
             montecarlo_futures = []
             for pert in perturbations:
                 for model in model_ids:
@@ -412,7 +463,15 @@ def spaceshot():
             if request_id in _progress_tracking:
                 del _progress_tracking[request_id]
     
-    # Return both paths and heatmap data, plus request_id for progress tracking
+    # ========================================================================
+    # RESPONSE FORMAT
+    # ========================================================================
+    # Returns both ensemble paths (for line plotting) and Monte Carlo landing
+    # positions (for heatmap visualization):
+    # - paths: 21 full trajectory paths for Polyline rendering
+    # - heatmap_data: 420 landing positions (lat, lon) for density visualization
+    # - request_id: Unique ID for progress tracking (client polls /sim/progress)
+    # ========================================================================
     return jsonify({
         'paths': paths,  # Original 21 ensemble paths for line plotting
         'heatmap_data': landing_positions,  # Monte Carlo landing positions for heatmap

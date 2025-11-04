@@ -2,6 +2,39 @@
 
 Technical reference for optimizations implemented for Railway (32GB RAM, 32 vCPU).
 
+## Monte Carlo Simulation & Heatmap Visualization
+
+### Overview
+The ensemble endpoint (`/sim/spaceshot`) includes Monte Carlo simulation to quantify landing position uncertainty. This creates a probability density heatmap showing where the balloon is most likely to land based on parameter variations and weather model uncertainty.
+
+### Monte Carlo Process
+1. **Parameter Perturbation Generation**: Creates 20 random variations of input parameters
+   - Latitude/Longitude: ±0.1° (≈ ±11km) - accounts for launch site uncertainty
+   - Launch Altitude: ±50m - launch altitude measurement variation
+   - Equilibrium Altitude: ±200m - burst altitude uncertainty
+   - Equilibrium Time: ±10% - timing variation in reaching equilibrium
+   - Ascent/Descent Rate: ±0.1 m/s - rate measurement uncertainty
+
+2. **Simulation Execution**: Runs each perturbation through all 21 weather models
+   - Total simulations: 420 (20 perturbations × 21 models)
+   - Runs in parallel with ensemble paths (441 total simulations)
+   - Each simulation extracts only final landing position (lat, lon)
+
+3. **Result Collection**: Aggregates 420 landing positions for heatmap visualization
+   - High-density areas (red) indicate many simulations landed there
+   - Low-density areas (cyan) indicate few simulations landed there
+
+### Heatmap Visualization
+- **Library**: Google Maps `visualization.HeatmapLayer`
+- **Data**: 420 landing positions (lat, lon) with equal weight
+- **Aggregation**: Automatically aggregates nearby points into density contours
+- **Color Gradient**: Cyan (transparent/low) → Green → Yellow → Orange → Red (solid/high)
+- **Properties**: 
+  - `dissipating: false` - maintains intensity across zoom levels
+  - `radius: 20px` - influence area for each point
+  - `opacity: 0.6` - allows seeing map/ensemble paths underneath
+- **Visualization**: Overlays on ensemble paths to show both individual trajectories and probability density
+
 ## Deploy to Railway
 
 **Start Command:**
@@ -275,10 +308,13 @@ HABSIM uses a multi-layer caching strategy optimized for Railway (max 32GB RAM, 
 - **Process**: 
   - Check if files exist on disk → download from Supabase if missing
   - Create simulators with pre-loaded arrays (ensemble mode) → cache in RAM
-  - Run 21 ensemble paths + 420 Monte Carlo simulations in parallel
+  - **Monte Carlo Generation**: Generate 20 parameter perturbations (random variations in launch conditions)
+  - Run 21 ensemble paths + 420 Monte Carlo simulations in parallel (441 total)
   - Simulation runs CPU-bound (arrays in RAM, no disk I/O during simulation)
   - Files cached on disk for subsequent runs (no additional egress)
 - **Output**: Returns both `paths` (21 ensemble trajectories) and `heatmap_data` (420 landing positions)
+  - **Monte Carlo Perturbations**: ±0.1° lat/lon (≈ ±11km), ±50m altitude, ±200m equilibrium altitude, ±10% equilibrium time, ±0.1 m/s ascent/descent rates
+  - **Heatmap Visualization**: 420 landing positions aggregated into probability density contours (cyan → red gradient)
 
 ### Subsequent Ensemble Runs (Within 60 Seconds)
 - **Speed**: ~5-15 minutes (simulators cached, but still need to run all simulations)

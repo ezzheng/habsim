@@ -142,7 +142,26 @@ function getcolor(index){
 // Cache of polyline objects
 var currpaths = new Array();
 
-// Display Monte Carlo heatmap with probability contours
+// ============================================================================
+// HEATMAP VISUALIZATION: Monte Carlo Landing Probability Density
+// ============================================================================
+// Displays a probability density heatmap of landing positions from Monte Carlo
+// simulations. The heatmap shows where the balloon is most likely to land based
+// on 420 simulations (20 parameter perturbations × 21 weather models).
+//
+// How it works:
+// 1. Receives array of landing positions from server (420 points: {lat, lon})
+// 2. Converts positions to Google Maps LatLng objects with equal weight
+// 3. Creates HeatmapLayer that aggregates nearby points into density contours
+// 4. Color gradient: cyan (low density) → green → yellow → orange → red (high)
+// 5. Red areas indicate high probability landing zones (many simulations landed there)
+//
+// Visualization properties:
+// - dissipating: false - maintains intensity across zoom levels (no splotchy appearance)
+// - radius: 20 pixels - size of influence area for each point
+// - opacity: 0.6 - allows seeing map/ensemble paths underneath
+// - gradient: Color scale from transparent cyan to solid red based on density
+// ============================================================================
 function displayHeatmap(heatmapData) {
     try {
         // Check if Google Maps API is loaded
@@ -152,7 +171,7 @@ function displayHeatmap(heatmapData) {
             return;
         }
         
-        // Check if visualization library is loaded
+        // Check if visualization library is loaded (required for HeatmapLayer)
         if (!google.maps.visualization || !google.maps.visualization.HeatmapLayer) {
             console.error('Google Maps visualization library not loaded. Attempting to load...');
             // Try loading visualization library dynamically
@@ -173,7 +192,7 @@ function displayHeatmap(heatmapData) {
             return;
         }
         
-        // Clear existing heatmap if any
+        // Clear existing heatmap if any (prevents overlapping heatmaps)
         if (heatmapLayer) {
             heatmapLayer.setMap(null);
             heatmapLayer = null;
@@ -187,21 +206,22 @@ function displayHeatmap(heatmapData) {
         console.log(`Creating heatmap with ${heatmapData.length} landing positions`);
         
         // Convert landing positions to Google Maps LatLng objects with weight
-        // Use weight to create density visualization (each point = 1, aggregated by heatmap)
+        // Each landing position gets equal weight (weight: 1) - the heatmap
+        // library automatically aggregates nearby points to create density contours
         const heatmapPoints = heatmapData.map(point => {
             // Validate point has lat/lon
             if (typeof point.lat !== 'number' || typeof point.lon !== 'number') {
                 console.warn('Invalid heatmap point:', point);
                 return null;
             }
-            // Normalize longitude to [-180, 180] for display
+            // Normalize longitude to [-180, 180] for display (Google Maps expects this range)
             let lon = point.lon;
             if (lon > 180) {
                 lon = ((lon + 180) % 360) - 180;
             }
             return {
                 location: new google.maps.LatLng(point.lat, lon),
-                weight: 1  // Each landing contributes equally to density
+                weight: 1  // Each landing contributes equally to density calculation
             };
         }).filter(p => p !== null); // Remove invalid points
         
@@ -212,22 +232,24 @@ function displayHeatmap(heatmapData) {
         
         console.log(`Creating heatmap layer with ${heatmapPoints.length} valid points`);
         
-        // Create heatmap layer
+        // Create Google Maps HeatmapLayer
+        // This layer automatically aggregates nearby points into density contours
+        // and applies the color gradient based on point density
         heatmapLayer = new google.maps.visualization.HeatmapLayer({
-            data: heatmapPoints,
+            data: heatmapPoints,  // Array of {location: LatLng, weight: number}
             map: map,
-            radius: 20,  // Radius of influence for each point (in pixels when dissipating=true, or meters when dissipating=false)
-            opacity: 0.6,  // Opacity of the heatmap
+            radius: 20,  // Radius of influence for each point (in pixels)
+            opacity: 0.6,  // Opacity of the heatmap (allows seeing map underneath)
             gradient: [
                 'rgba(0, 255, 255, 0)',      // Cyan (transparent) - low density
                 'rgba(0, 255, 255, 0.5)',    // Cyan - medium-low
                 'rgba(0, 255, 0, 0.7)',      // Green - medium
                 'rgba(255, 255, 0, 0.8)',    // Yellow - medium-high
                 'rgba(255, 165, 0, 0.9)',    // Orange - high
-                'rgba(255, 0, 0, 1)'         // Red - highest density
+                'rgba(255, 0, 0, 1)'         // Red - highest density (most landing positions)
             ],
             dissipating: false,  // Keep intensity constant across zoom levels (prevents splotchy appearance)
-            maxIntensity: 10    // Maximum intensity for normalization
+            maxIntensity: 10    // Maximum intensity for normalization (caps density calculation)
         });
         
         console.log(`Heatmap displayed successfully with ${heatmapPoints.length} points`);
