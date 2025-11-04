@@ -16,12 +16,13 @@ This is an offshoot of the prediction server developed for the Stanford Space In
 
 ### Core Application
 - **`app.py`** - Flask (Python web framework) WSGI (Web Server Gateway Interface) application serving REST API and static files
-  - Routes: `/sim/singlezpb` (ZPB prediction), `/sim/spaceshot` (ensemble), `/sim/elev` (elevation), `/sim/models` (model configuration)
+  - Routes: `/sim/singlezpb` (ZPB prediction), `/sim/spaceshot` (ensemble + Monte Carlo), `/sim/elev` (elevation), `/sim/models` (model configuration)
   - Background thread pre-warms cache on startup:
     - `_prewarm_cache()`: Pre-loads model 0 simulator in RAM (fast single requests)
     - Files download on-demand when needed (cost-optimized to reduce Supabase egress)
   - `ThreadPoolExecutor` (concurrent execution) parallelizes ensemble requests (max_workers=32)
-  - Dynamic cache expansion: Simulator cache expands to 25 when ensemble is called, auto-trims after 60 seconds
+  - **Ensemble + Monte Carlo**: `/sim/spaceshot` runs both 21 ensemble paths AND 420 Monte Carlo simulations (20 perturbations × 21 models) for heatmap visualization
+  - Dynamic cache expansion: Simulator cache expands to 25 when ensemble is called, auto-trims after 120 seconds (extended for Monte Carlo)
   - Background cache trimming thread: Automatically trims cache in all workers every 30 seconds when ensemble mode expires
   - HTTP caching headers (`Cache-Control`) + Flask-Compress Gzip compression
   - Exposes model configuration dynamically based on `downloader.py` settings
@@ -29,7 +30,7 @@ This is an offshoot of the prediction server developed for the Stanford Space In
 ### Simulation Engine
 - **`simulate.py`** - Main simulation orchestrator
   - Dynamic multi-simulator LRU cache: 5 simulators normal mode (~750MB per worker), 25 simulators ensemble mode (~3.75GB per worker)
-  - Ensemble mode: Auto-expands cache when `/sim/spaceshot` is called, auto-trims after 60 seconds
+  - Ensemble mode: Auto-expands cache when `/sim/spaceshot` is called, auto-trims after 120 seconds (extended for Monte Carlo)
   - Uses memory-mapping for memory efficiency (I/O-bound, but manageable RAM usage)
   - Background cache trimming: Periodic thread (every 30 seconds) ensures idle workers trim their cache
   - **Important**: Each Gunicorn worker has its own independent cache (4 workers × 3.75GB = 15GB max in ensemble mode)
@@ -91,11 +92,15 @@ This is an offshoot of the prediction server developed for the Stanford Space In
 
 - **`paths.js`** - Map rendering and API client
   - Fetches trajectories via `fetch()` (JavaScript HTTP client) from `/sim/singlezpb` or `/sim/spaceshot`
-  - Uses `/sim/spaceshot` endpoint for ensemble runs (parallel execution)
+  - Uses `/sim/spaceshot` endpoint for ensemble runs (parallel execution + Monte Carlo)
   - Falls back to sequential `/sim/singlezpb` calls for single model or FLOAT mode
   - Fetches model configuration from `/sim/models` endpoint on page load
   - Dynamically uses server-configured model IDs for ensemble runs
-  - Draws `google.maps.Polyline` objects with color-coded paths
+  - Draws `google.maps.Polyline` objects with color-coded paths (21 ensemble paths)
+  - **Monte Carlo Heatmap**: Displays probability contours using `google.maps.visualization.HeatmapLayer`
+    - Shows landing probability density from 420 Monte Carlo simulations (20 perturbations × 21 models)
+    - Color gradient: cyan (low) → green → yellow → orange → red (high density)
+    - Overlays on ensemble paths for comprehensive visualization
   - Waypoint circles with click handlers showing altitude/time info windows
   - Debounced elevation fetching (150ms) to prevent rapid-fire requests
 
@@ -113,7 +118,7 @@ This is an offshoot of the prediction server developed for the Stanford Space In
   - `preload_app=True` for shared code between workers (reduces memory duplication)
   - **Strategy**: Fewer workers + more threads = same CPU capacity with less RAM (threads share memory)
   - `max_requests=1000` for automatic worker recycling to prevent memory leaks
-  - `timeout=300` (5 minutes) for long-running ensemble simulations
+  - `timeout=900` (15 minutes) for long-running simulations (ensemble ~30-60s, Monte Carlo ~5-15min)
 
 - **`Procfile`** - Railway deployment configuration
   - Specifies start command: `gunicorn app:app -c gunicorn_config.py`

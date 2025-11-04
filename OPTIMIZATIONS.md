@@ -180,14 +180,19 @@ HABSIM uses a multi-layer caching strategy optimized for Railway (max 32GB RAM, 
 - **Preload**: `preload_app = True` shares memory between workers
 - **Strategy**: Fewer workers + more threads = same CPU capacity with less RAM (threads share memory)
 - **Recycling**: `max_requests = 1000` (higher limit as more memory headroom)
-- **Timeout**: 300 seconds (5 minutes) for long-running ensemble simulations
+- **Timeout**: 900 seconds (15 minutes) for long-running simulations (ensemble ~30-60s, Monte Carlo ~5-15min)
 
 ### Ensemble Execution (`app.py`)
 - **ThreadPoolExecutor**: 32 workers for parallel ensemble simulation execution (fully utilizes all 32 CPUs)
 - **Dynamic Cache Expansion**: Automatically expands simulator cache to 25 when ensemble is called
 - **Memory-mapping**: Uses memory-mapped files for memory efficiency (I/O-bound, but manageable RAM usage)
-- **Auto-extension**: Each ensemble run extends ensemble mode by 60 seconds
-- **Auto-trimming**: Cache trims back to 5 simulators 60 seconds after last ensemble run
+- **Monte Carlo Integration**: `/sim/spaceshot` now runs both:
+  - 21 ensemble paths (for line plotting)
+  - 420 Monte Carlo simulations (20 perturbations × 21 models) for heatmap visualization
+  - Both run in parallel using the same 32-worker pool
+  - Returns `{paths: [...], heatmap_data: [...]}` for frontend visualization
+- **Auto-extension**: Each ensemble run extends ensemble mode by 120 seconds (extended for Monte Carlo)
+- **Auto-trimming**: Cache trims back to 5 simulators 120 seconds after last ensemble run
 
 ### Model Change Management (`simulate.py`)
 - **Automatic Detection**: `refresh()` checks `whichgefs` every 5 minutes for model updates
@@ -240,7 +245,8 @@ HABSIM uses a multi-layer caching strategy optimized for Railway (max 32GB RAM, 
 
 **Ensemble Mode**:
 - Auto-enabled when `/sim/spaceshot` is called
-- Duration: 60 seconds (1 minute, auto-extends with each ensemble run)
+- Duration: 120 seconds (2 minutes, auto-extends with each ensemble run)
+- Extended duration to accommodate Monte Carlo simulations (420 total simulations)
 - Auto-trims cache to 5 simulators after expiration
 
 ## Performance Profile
@@ -251,23 +257,30 @@ HABSIM uses a multi-layer caching strategy optimized for Railway (max 32GB RAM, 
 - **CPU**: Minimal (single request processing)
 - **Why Fast**: Model 0 pre-warmed in RAM, files on disk
 
-### First Ensemble Run (21 Models)
-- **Speed**: ~30-60 seconds (if files on disk) or ~2-5 minutes (if files need download)
+### First Ensemble Run (21 Models + Monte Carlo)
+- **Speed**: ~5-15 minutes (if files on disk) or ~5-20 minutes (if files need download)
+  - 21 ensemble paths: ~30-60 seconds
+  - 420 Monte Carlo simulations: ~4-14 minutes (20× more simulations)
+  - Both run in parallel using same 32-worker pool
 - **RAM**: Expands to ~15-16GB (worst case: 4 workers × 3.75GB), typically ~5-6GB (models distributed across workers)
+  - Same RAM as normal ensemble (reuses same 21 cached models)
+  - Monte Carlo only adds trajectory computation overhead (~420KB-2MB for results)
 - **CPU**: Moderate (32 ThreadPoolExecutor workers + 32 Gunicorn threads, I/O-bound simulation)
 - **Process**: 
   - Check if files exist on disk → download from Supabase if missing
   - Create simulators with memory-mapped files → cache in RAM
+  - Run 21 ensemble paths + 420 Monte Carlo simulations in parallel
   - Simulation runs I/O-bound (disk reads during simulation via memory-mapping)
   - Files cached on disk for subsequent runs (no additional egress)
+- **Output**: Returns both `paths` (21 ensemble trajectories) and `heatmap_data` (420 landing positions)
 
-### Subsequent Ensemble Runs (Within 60 Seconds)
-- **Speed**: ~5-10 seconds
+### Subsequent Ensemble Runs (Within 120 Seconds)
+- **Speed**: ~5-15 minutes (simulators cached, but still need to run all simulations)
 - **RAM**: ~15-16GB (worst case), typically ~5-6GB (maintained from first run)
 - **CPU**: Moderate (32 ThreadPoolExecutor workers + 32 Gunicorn threads, I/O-bound)
-- **Why Fast**: All 21 simulators already in RAM cache across workers (memory-mapped files)
+- **Why Faster**: All 21 simulators already in RAM cache across workers (memory-mapped files)
 
-### After 60 Seconds (Auto-trim)
+### After 120 Seconds (Auto-trim)
 - **RAM**: Trims to ~3GB (4 workers × 750MB) via background thread, typically ~1.5-2GB (models distributed)
 - **CPU**: Minimal (idle)
 - **Cost**: Frees ~12GB RAM automatically (from 15GB → 3GB worst case)

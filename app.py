@@ -3,6 +3,7 @@ from flask_cors import CORS
 from flask_compress import Compress
 import threading
 from functools import wraps
+import random
 
 app = Flask(__name__)
 CORS(app)
@@ -214,26 +215,27 @@ def singlezpbh():
 @cache_for(600)  # Cache for 10 minutes
 def spaceshot():
     """
-    Run all available ensemble models (respects DOWNLOAD_CONTROL and NUM_PERTURBED_MEMBERS).
-    Note: This endpoint is designed for the full ensemble spread, so it uses all configured models.
-    Enables ensemble mode (expanded cache) for 10 minutes to speed up ensemble runs.
+    Run all available ensemble models with Monte Carlo analysis.
+    Returns both the 21 main ensemble paths AND Monte Carlo landing positions for heatmap.
+    Respects DOWNLOAD_CONTROL and NUM_PERTURBED_MEMBERS.
     """
-    app.logger.info("Ensemble run started: /sim/spaceshot endpoint called")
+    app.logger.info("Ensemble run with Monte Carlo started: /sim/spaceshot endpoint called")
     import time
     start_time = time.time()
     args = request.args
     timestamp = datetime.utcfromtimestamp(float(args['timestamp'])).replace(tzinfo=timezone.utc)
-    lat, lon = float(args['lat']), float(args['lon'])
-    alt = float(args['alt'])
-    equil = float(args['equil'])
-    eqtime = float(args['eqtime'])
-    asc, desc = float(args['asc']), float(args['desc'])
+    base_lat, base_lon = float(args['lat']), float(args['lon'])
+    base_alt = float(args['alt'])
+    base_equil = float(args['equil'])
+    base_eqtime = float(args['eqtime'])
+    base_asc, base_desc = float(args['asc']), float(args['desc'])
     
-    # Enable ensemble mode (expanded cache) for 60 seconds
-    # This allows all 21 models to be cached during ensemble runs
-    # If another ensemble run happens within 60 seconds, it extends the duration
-    simulate.set_ensemble_mode(duration_seconds=60)
-    app.logger.info("Ensemble mode enabled: expanded cache for 60 seconds (extends with each ensemble run)")
+    # Optional: number of perturbations (default 20)
+    num_perturbations = int(args.get('num_perturbations', 20))
+    
+    # Enable ensemble mode (expanded cache) for longer duration to accommodate Monte Carlo
+    simulate.set_ensemble_mode(duration_seconds=120)
+    app.logger.info("Ensemble mode enabled: expanded cache for 120 seconds (ensemble + Monte Carlo)")
     
     # Build model list based on configuration
     model_ids = []
@@ -241,66 +243,279 @@ def spaceshot():
         model_ids.append(0)
     model_ids.extend(range(1, 1 + downloader.NUM_PERTURBED_MEMBERS))
     
-    app.logger.info(f"Ensemble run: Processing {len(model_ids)} models: {model_ids}")
+    app.logger.info(f"Ensemble run: Processing {len(model_ids)} models + Monte Carlo ({num_perturbations} perturbations × {len(model_ids)} models)")
     
-    # Parallel execution for faster ensemble runs
-    # max_workers=32 to fully utilize all 32 CPUs (one per CPU)
-    # This allows all 21 models to run in parallel + extra capacity for file I/O operations
-    # Since we're paying for 32 CPUs, let's use them all for maximum speed!
+    # Generate Monte Carlo perturbations
+    perturbations = []
+    for i in range(num_perturbations):
+        pert_lat = base_lat + random.uniform(-0.1, 0.1)  # ±0.1° ≈ ±11km
+        pert_lon = (base_lon + random.uniform(-0.1, 0.1)) % 360  # Wrap longitude
+        pert_alt = max(0, base_alt + random.uniform(-50, 50))  # ±50m, min 0
+        pert_equil = max(pert_alt, base_equil + random.uniform(-200, 200))  # ±200m, must be >= alt
+        pert_eqtime = max(0, base_eqtime * random.uniform(0.9, 1.1))  # ±10%, min 0
+        pert_asc = max(0.1, base_asc + random.uniform(-0.1, 0.1))  # ±0.1 m/s, min 0.1
+        pert_desc = max(0.1, base_desc + random.uniform(-0.1, 0.1))  # ±0.1 m/s, min 0.1
+        
+        perturbations.append({
+            'perturbation_id': i,
+            'lat': pert_lat,
+            'lon': pert_lon,
+            'alt': pert_alt,
+            'equil': pert_equil,
+            'eqtime': pert_eqtime,
+            'asc': pert_asc,
+            'desc': pert_desc
+        })
+    
     from concurrent.futures import ThreadPoolExecutor, as_completed
     paths = [None] * len(model_ids)  # Pre-allocate to preserve order
+    landing_positions = []  # Monte Carlo landing positions
+    
+    def run_ensemble_simulation(model):
+        """Run standard ensemble simulation"""
+        try:
+            return singlezpb(timestamp, base_lat, base_lon, base_alt, base_equil, base_eqtime, base_asc, base_desc, model)
+        except FileNotFoundError as e:
+            app.logger.warning(f"Model {model} file not found: {e}")
+            return "error"
+        except Exception as e:
+            app.logger.exception(f"Model {model} failed with error: {e}")
+            return "error"
+    
+    def run_montecarlo_simulation(pert, model):
+        """Run a single Monte Carlo simulation and return landing position"""
+        try:
+            result = singlezpb(timestamp, pert['lat'], pert['lon'], pert['alt'], 
+                              pert['equil'], pert['eqtime'], pert['asc'], pert['desc'], model)
+            
+            if result == "error" or result == "alt error":
+                return None
+            
+            rise, coast, fall = result
+            if len(fall) > 0:
+                __, final_lat, final_lon, __, __, __, __, __ = fall[-1]
+                return {
+                    'lat': float(final_lat),
+                    'lon': float(final_lon),
+                    'perturbation_id': pert['perturbation_id'],
+                    'model_id': model
+                }
+            return None
+        except Exception as e:
+            app.logger.warning(f"Monte Carlo simulation failed: pert={pert['perturbation_id']}, model={model}, error={e}")
+            return None
     
     try:
+        # Run both ensemble and Monte Carlo in parallel
         with ThreadPoolExecutor(max_workers=32) as executor:
-            # Submit all tasks
-            future_to_model = {
-                executor.submit(singlezpb, timestamp, lat, lon, alt, equil, eqtime, asc, desc, model): model
+            # Submit ensemble tasks (21 models)
+            ensemble_futures = {
+                executor.submit(run_ensemble_simulation, model): model
                 for model in model_ids
             }
             
-            # Collect results as they complete
-            completed_count = 0
-            for future in as_completed(future_to_model):
-                model = future_to_model[future]
+            # Submit Monte Carlo tasks (420 simulations)
+            montecarlo_futures = []
+            for pert in perturbations:
+                for model in model_ids:
+                    montecarlo_futures.append(executor.submit(run_montecarlo_simulation, pert, model))
+            
+            # Collect ensemble results
+            ensemble_completed = 0
+            for future in as_completed(ensemble_futures):
+                model = ensemble_futures[future]
                 try:
                     idx = model_ids.index(model)
                     paths[idx] = future.result()
-                    completed_count += 1
-                    app.logger.info(f"Model {model} completed ({completed_count}/{len(model_ids)})")
-                except FileNotFoundError as e:
-                    # Model file not found in Supabase
-                    app.logger.warning(f"Model {model} file not found: {e}")
-                    idx = model_ids.index(model)
-                    paths[idx] = "error"
-                    completed_count += 1
+                    ensemble_completed += 1
+                    app.logger.info(f"Ensemble model {model} completed ({ensemble_completed}/{len(model_ids)})")
                 except Exception as e:
-                    app.logger.exception(f"Model {model} failed with error: {e}")
+                    app.logger.exception(f"Ensemble model {model} result processing failed: {e}")
                     idx = model_ids.index(model)
                     paths[idx] = "error"
-                    completed_count += 1
             
-            # Log summary
-            success_count = sum(1 for p in paths if p != "error" and p is not None)
-            error_count = sum(1 for p in paths if p == "error")
-            app.logger.info(f"Ensemble run summary: {success_count} successful, {error_count} failed out of {len(model_ids)} models")
+            # Collect Monte Carlo results
+            montecarlo_completed = 0
+            for future in as_completed(montecarlo_futures):
+                result = future.result()
+                if result is not None:
+                    landing_positions.append(result)
+                montecarlo_completed += 1
+                if montecarlo_completed % 100 == 0:
+                    app.logger.info(f"Monte Carlo progress: {montecarlo_completed}/{len(montecarlo_futures)} simulations completed")
             
-            # Ensure all models have results (even if errors)
+            # Ensure all ensemble models have results
             for i, path in enumerate(paths):
                 if path is None:
                     app.logger.warning(f"Model {model_ids[i]} did not complete (timeout or missing)")
                     paths[i] = "error"
-    except Exception as e:
-        app.logger.exception(f"Ensemble run failed with unexpected error: {e}")
-        # Return error for all models if ensemble completely fails
-        paths = ["error"] * len(model_ids)
-    finally:
-        # Trim cache back to normal size after ensemble run completes
-        # This happens automatically via _trim_cache_to_normal() but we can trigger it
-        simulate._trim_cache_to_normal()
+        
+        # Log summary
+        ensemble_success = sum(1 for p in paths if p != "error" and p is not None)
         elapsed = time.time() - start_time
-        app.logger.info(f"Ensemble run complete in {elapsed:.1f} seconds, cache will trim to normal size 60 seconds after last ensemble run")
+        app.logger.info(f"Ensemble + Monte Carlo complete: {ensemble_success}/{len(model_ids)} ensemble paths, {len(landing_positions)} Monte Carlo positions in {elapsed:.1f} seconds")
+        
+    except Exception as e:
+        app.logger.exception(f"Ensemble + Monte Carlo run failed with unexpected error: {e}")
+        paths = ["error"] * len(model_ids)
+        landing_positions = []
+    finally:
+        simulate._trim_cache_to_normal()
     
-    return jsonify(paths)
+    # Return both paths and heatmap data
+    return jsonify({
+        'paths': paths,  # Original 21 ensemble paths for line plotting
+        'heatmap_data': landing_positions  # Monte Carlo landing positions for heatmap
+    })
+
+@app.route('/sim/montecarlo')
+@cache_for(600)  # Cache for 10 minutes
+def montecarlo():
+    """
+    Monte Carlo simulation: Run 20 perturbations of input parameters across all 21 ensemble models.
+    Returns final landing positions for heatmap visualization.
+    
+    Total simulations: 20 perturbations × 21 models = 420 simulations
+    
+    Performance: ~5-15 minutes (vs ~30-60 seconds for normal ensemble)
+    - 20× more simulations than normal ensemble (420 vs 21)
+    - Uses same 32-worker parallelization
+    - Gunicorn timeout is 900s (15 minutes) to safely accommodate Monte Carlo runs
+    
+    Perturbation ranges (realistic for high-altitude balloon uncertainty):
+    - lat/lon: ±0.1° (~11km) - launch position uncertainty
+    - alt: ±50m - launch altitude uncertainty
+    - equil: ±200m - equilibrium altitude variation
+    - eqtime: ±10% - equilibrium time variation
+    - asc: ±0.1 m/s - ascent rate uncertainty
+    - desc: ±0.1 m/s - descent rate uncertainty
+    """
+    app.logger.info("Monte Carlo simulation started: /sim/montecarlo endpoint called")
+    import time
+    start_time = time.time()
+    args = request.args
+    
+    # Base parameters
+    timestamp = datetime.utcfromtimestamp(float(args['timestamp'])).replace(tzinfo=timezone.utc)
+    base_lat, base_lon = float(args['lat']), float(args['lon'])
+    base_alt = float(args['alt'])
+    base_equil = float(args['equil'])
+    base_eqtime = float(args['eqtime'])
+    base_asc, base_desc = float(args['asc']), float(args['desc'])
+    
+    # Optional: number of perturbations (default 20)
+    num_perturbations = int(args.get('num_perturbations', 20))
+    
+    # Enable ensemble mode (expanded cache) for longer duration
+    # Monte Carlo takes longer, so extend ensemble mode
+    simulate.set_ensemble_mode(duration_seconds=120)
+    app.logger.info(f"Ensemble mode enabled: expanded cache for 120 seconds (Monte Carlo run)")
+    
+    # Build model list based on configuration
+    model_ids = []
+    if downloader.DOWNLOAD_CONTROL:
+        model_ids.append(0)
+    model_ids.extend(range(1, 1 + downloader.NUM_PERTURBED_MEMBERS))
+    
+    app.logger.info(f"Monte Carlo: {num_perturbations} perturbations × {len(model_ids)} models = {num_perturbations * len(model_ids)} total simulations")
+    
+    # Generate perturbations
+    perturbations = []
+    for i in range(num_perturbations):
+        # Perturbation ranges (realistic for high-altitude balloon simulation)
+        pert_lat = base_lat + random.uniform(-0.1, 0.1)  # ±0.1° ≈ ±11km
+        pert_lon = (base_lon + random.uniform(-0.1, 0.1)) % 360  # Wrap longitude
+        pert_alt = max(0, base_alt + random.uniform(-50, 50))  # ±50m, min 0
+        pert_equil = max(pert_alt, base_equil + random.uniform(-200, 200))  # ±200m, must be >= alt
+        pert_eqtime = max(0, base_eqtime * random.uniform(0.9, 1.1))  # ±10%, min 0
+        pert_asc = max(0.1, base_asc + random.uniform(-0.1, 0.1))  # ±0.1 m/s, min 0.1
+        pert_desc = max(0.1, base_desc + random.uniform(-0.1, 0.1))  # ±0.1 m/s, min 0.1
+        
+        perturbations.append({
+            'perturbation_id': i,
+            'lat': pert_lat,
+            'lon': pert_lon,
+            'alt': pert_alt,
+            'equil': pert_equil,
+            'eqtime': pert_eqtime,
+            'asc': pert_asc,
+            'desc': pert_desc
+        })
+    
+    # Parallel execution: Run all perturbations × all models
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    landing_positions = []  # List of {lat, lon, perturbation_id, model_id}
+    
+    def run_montecarlo_simulation(pert, model):
+        """Run a single Monte Carlo simulation and return landing position"""
+        try:
+            result = singlezpb(timestamp, pert['lat'], pert['lon'], pert['alt'], 
+                              pert['equil'], pert['eqtime'], pert['asc'], pert['desc'], model)
+            
+            # Extract final landing position from fall trajectory
+            if result == "error" or result == "alt error":
+                return None
+            
+            rise, coast, fall = result
+            if len(fall) > 0:
+                # Extract final lat/lon from fall trajectory (last point)
+                __, final_lat, final_lon, __, __, __, __, __ = fall[-1]
+                return {
+                    'lat': float(final_lat),
+                    'lon': float(final_lon),
+                    'perturbation_id': pert['perturbation_id'],
+                    'model_id': model,
+                    'success': True
+                }
+            else:
+                return None
+        except Exception as e:
+            app.logger.warning(f"Monte Carlo simulation failed: pert={pert['perturbation_id']}, model={model}, error={e}")
+            return None
+    
+    try:
+        # Submit all tasks (420 total: 20 perturbations × 21 models)
+        with ThreadPoolExecutor(max_workers=32) as executor:
+            futures = []
+            for pert in perturbations:
+                for model in model_ids:
+                    future = executor.submit(run_montecarlo_simulation, pert, model)
+                    futures.append(future)
+            
+            # Collect results as they complete
+            completed_count = 0
+            for future in as_completed(futures):
+                result = future.result()
+                if result is not None:
+                    landing_positions.append(result)
+                completed_count += 1
+                if completed_count % 50 == 0:
+                    app.logger.info(f"Monte Carlo progress: {completed_count}/{len(futures)} simulations completed")
+        
+        # Summary
+        elapsed = time.time() - start_time
+        success_count = len(landing_positions)
+        total_expected = num_perturbations * len(model_ids)
+        app.logger.info(f"Monte Carlo complete: {success_count}/{total_expected} successful in {elapsed:.1f} seconds")
+        
+        return jsonify({
+            'landing_positions': landing_positions,
+            'summary': {
+                'total_simulations': total_expected,
+                'successful': success_count,
+                'failed': total_expected - success_count,
+                'duration_seconds': round(elapsed, 2),
+                'num_perturbations': num_perturbations,
+                'num_models': len(model_ids)
+            }
+        })
+        
+    except Exception as e:
+        app.logger.exception(f"Monte Carlo simulation failed: {e}")
+        return make_response(jsonify({"error": str(e)}), 500)
+    finally:
+        # Trim cache back to normal size after Monte Carlo run completes
+        simulate._trim_cache_to_normal()
 
 '''
 Given a lat and lon, returns the elevation as a string

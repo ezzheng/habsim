@@ -26,8 +26,10 @@ max_requests_jitter = 80  # Random jitter (0-80) added to max_requests to stagge
 # Jitter is ~10% of max_requests, spreading restarts over ~80-880 requests
 
 # Timeouts
-timeout = 300  # 5 minutes for long-running ensemble simulations (worker process timeout)
-# Ensemble runs can take 30-60 seconds, so 5 minutes provides ample headroom
+timeout = 900  # 15 minutes for long-running simulations (ensemble ~30-60s, Monte Carlo ~5-15min)
+# Ensemble runs: ~30-60 seconds
+# Monte Carlo (420 simulations): ~5-15 minutes (most complete in 5-10 min, 15 min provides headroom)
+# Increased from 300s to 900s to safely accommodate Monte Carlo simulations with buffer
 
 # TCP keepalive
 keepalive = 30  # Seconds to keep idle connections open before closing

@@ -142,6 +142,46 @@ function getcolor(index){
 // Cache of polyline objects
 var currpaths = new Array();
 
+// Display Monte Carlo heatmap with probability contours
+function displayHeatmap(heatmapData) {
+    // Clear existing heatmap if any
+    if (heatmapLayer) {
+        heatmapLayer.setMap(null);
+        heatmapLayer = null;
+    }
+    
+    if (!heatmapData || heatmapData.length === 0) {
+        return;
+    }
+    
+    // Convert landing positions to Google Maps LatLng objects with weight
+    // Use weight to create density visualization (each point = 1, aggregated by heatmap)
+    const heatmapPoints = heatmapData.map(point => ({
+        location: new google.maps.LatLng(point.lat, point.lon),
+        weight: 1  // Each landing contributes equally to density
+    }));
+    
+    // Create heatmap layer
+    heatmapLayer = new google.maps.visualization.HeatmapLayer({
+        data: heatmapPoints,
+        map: map,
+        radius: 30,  // Radius of influence for each point (in pixels)
+        opacity: 0.6,  // Opacity of the heatmap
+        gradient: [
+            'rgba(0, 255, 255, 0)',      // Cyan (transparent) - low density
+            'rgba(0, 255, 255, 0.5)',    // Cyan - medium-low
+            'rgba(0, 255, 0, 0.7)',      // Green - medium
+            'rgba(255, 255, 0, 0.8)',    // Yellow - medium-high
+            'rgba(255, 165, 0, 0.9)',    // Orange - high
+            'rgba(255, 0, 0, 1)'         // Red - highest density
+        ],
+        dissipating: true,  // Heatmap fades out as zoom increases
+        maxIntensity: 10    // Maximum intensity for normalization
+    });
+    
+    console.log(`Heatmap displayed with ${heatmapPoints.length} points`);
+}
+
 // Self explanatory
 async function simulate() {
     // If a simulation is already running, interpret this call as a cancel request
@@ -168,6 +208,11 @@ async function simulate() {
         clearWaypoints();
         for (path in currpaths) {currpaths[path].setMap(null);}
         currpaths = new Array();
+        // Clear heatmap
+        if (heatmapLayer) {
+            heatmapLayer.setMap(null);
+            heatmapLayer = null;
+        }
         rawpathcache = new Array()
         console.log("Clearing");
 
@@ -233,17 +278,29 @@ async function simulate() {
             const useSpaceshot = ensembleEnabled && !isHistorical && (btype === 'STANDARD' || btype === 'ZPB');
             
             if (useSpaceshot && modelIds.length > 1) {
-                // Use parallel spaceshot endpoint for ensemble runs
+                // Use parallel spaceshot endpoint for ensemble runs (now includes Monte Carlo)
                 const spaceshotUrl = URL_ROOT + "/spaceshot?timestamp="
                     + time + "&lat=" + lat + "&lon=" + lon + "&alt=" + alt 
                     + "&equil=" + equil + "&eqtime=" + eqtime 
                     + "&asc=" + asc + "&desc=" + desc;
-                console.log("Using spaceshot endpoint:", spaceshotUrl);
+                console.log("Using spaceshot endpoint (with Monte Carlo):", spaceshotUrl);
                 try {
                     const response = await fetch(spaceshotUrl, { signal: window.__simAbort.signal });
-                    const payloads = await response.json(); // Array of results, one per model
+                    const data = await response.json(); // Now returns {paths: [...], heatmap_data: [...]}
+                    
+                    // Handle new response format (backward compatible)
+                    let payloads, heatmapData;
+                    if (Array.isArray(data)) {
+                        // Legacy format: just array of paths
+                        payloads = data;
+                        heatmapData = [];
+                    } else {
+                        // New format: object with paths and heatmap_data
+                        payloads = data.paths || [];
+                        heatmapData = data.heatmap_data || [];
+                    }
 
-                    // Process each result in the array
+                    // Process ensemble paths (existing functionality)
                     // Note: payloads array order matches modelIds order from server config
                     if (payloads.length !== modelIds.length) {
                         console.warn(`Spaceshot returned ${payloads.length} results but expected ${modelIds.length} models`);
@@ -271,6 +328,12 @@ async function simulate() {
                         } else {
                             console.warn(`Model ${modelId} returned null/undefined result`);
                         }
+                    }
+                    
+                    // Display Monte Carlo heatmap if data is available
+                    if (heatmapData && heatmapData.length > 0) {
+                        displayHeatmap(heatmapData);
+                        console.log(`Displaying heatmap with ${heatmapData.length} landing positions`);
                     }
                 } catch (error) {
                     if (error && (error.name === 'AbortError' || error.message === 'The operation was aborted.')) {

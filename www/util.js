@@ -8,6 +8,7 @@ var map = new google.maps.Map(element, {
     gestureHandling: 'greedy'
 });
 var clickMarker = null;
+var heatmapLayer = null; // Global heatmap layer for Monte Carlo visualization
 google.maps.event.addListener(map, 'click', function (event) {
     displayCoordinates(event.latLng);
 });
