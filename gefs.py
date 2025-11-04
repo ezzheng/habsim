@@ -188,6 +188,13 @@ def _ensure_cached(file_name: str) -> Path:
             stream=True,
             timeout=_DEFAULT_TIMEOUT,
         )
+        
+        # Handle file not found errors with helpful message
+        if resp.status_code == 400 or resp.status_code == 404:
+            error_msg = f"File not found in Supabase: {file_name} (status {resp.status_code})"
+            logging.error(error_msg)
+            raise FileNotFoundError(f"{error_msg}. The model file may not have been uploaded yet, or the model timestamp may be incorrect. Check Supabase storage or verify the model timestamp in 'whichgefs'.")
+        
         resp.raise_for_status()
 
         tmp_path = cache_path.with_suffix(cache_path.suffix + ".tmp")

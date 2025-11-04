@@ -179,6 +179,10 @@ def singlezpb(timestamp, lat, lon, alt, equil, eqtime, asc, desc, model):
         dur = (alt) / desc / 3600
         fall = simulate.simulate(timestamp, lat, lon, -desc, 240, dur, alt, model)
         return (rise, coast, fall)
+    except FileNotFoundError as e:
+        # File not found in Supabase - model may not exist yet
+        app.logger.warning(f"Model file not found: {e}")
+        raise  # Re-raise to be handled by route handler
     except Exception as e:
         app.logger.exception("singlezpb failed")
         if str(e) == "alt out of range":
@@ -197,8 +201,13 @@ def singlezpbh():
     eqtime = float(args['eqtime'])
     asc, desc = float(args['asc']), float(args['desc'])
     model = int(args['model'])
-    path = singlezpb(timestamp, lat, lon, alt, equil, eqtime, asc, desc, model)
-    return jsonify(path)
+    try:
+        path = singlezpb(timestamp, lat, lon, alt, equil, eqtime, asc, desc, model)
+        return jsonify(path)
+    except FileNotFoundError as e:
+        # Model file not found in Supabase
+        app.logger.warning(f"Model file not found for request: {e}")
+        return make_response(jsonify({"error": "Model file not available. The requested model may not have been uploaded yet. Please check if the model timestamp is correct."}), 404)
 
 
 @app.route('/sim/spaceshot')
