@@ -258,15 +258,40 @@ def spaceshot():
             }
             
             # Collect results as they complete
+            completed_count = 0
             for future in as_completed(future_to_model):
                 model = future_to_model[future]
                 try:
                     idx = model_ids.index(model)
                     paths[idx] = future.result()
-                except Exception as e:
-                    app.logger.exception(f"Model {model} failed")
+                    completed_count += 1
+                    app.logger.info(f"Model {model} completed ({completed_count}/{len(model_ids)})")
+                except FileNotFoundError as e:
+                    # Model file not found in Supabase
+                    app.logger.warning(f"Model {model} file not found: {e}")
                     idx = model_ids.index(model)
                     paths[idx] = "error"
+                    completed_count += 1
+                except Exception as e:
+                    app.logger.exception(f"Model {model} failed with error: {e}")
+                    idx = model_ids.index(model)
+                    paths[idx] = "error"
+                    completed_count += 1
+            
+            # Log summary
+            success_count = sum(1 for p in paths if p != "error" and p is not None)
+            error_count = sum(1 for p in paths if p == "error")
+            app.logger.info(f"Ensemble run summary: {success_count} successful, {error_count} failed out of {len(model_ids)} models")
+            
+            # Ensure all models have results (even if errors)
+            for i, path in enumerate(paths):
+                if path is None:
+                    app.logger.warning(f"Model {model_ids[i]} did not complete (timeout or missing)")
+                    paths[i] = "error"
+    except Exception as e:
+        app.logger.exception(f"Ensemble run failed with unexpected error: {e}")
+        # Return error for all models if ensemble completely fails
+        paths = ["error"] * len(model_ids)
     finally:
         # Trim cache back to normal size after ensemble run completes
         # This happens automatically via _trim_cache_to_normal() but we can trigger it
