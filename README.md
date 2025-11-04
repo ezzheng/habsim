@@ -73,7 +73,7 @@ This is an offshoot of the prediction server developed for the Stanford Space In
   - CSS Grid layout for mobile (2x3 grid), Flexbox for desktop
   - Google Maps API v3 integration
   - Real-time parameter inputs with validation
-  - Ensemble toggle (models 0-2) vs. single simulation (model 0)
+  - Ensemble toggle vs. single simulation (model 0)
 
 - **`paths.js`** - Map rendering and API client
   - Fetches trajectories via `fetch()` (JavaScript HTTP client) from `/sim/singlezpb` or `/sim/spaceshot`
@@ -95,7 +95,7 @@ This is an offshoot of the prediction server developed for the Stanford Space In
   - Optimized for Render Standard tier (2GB RAM, 1 CPU)
   - `workers=2`, `threads=2` (4 concurrent requests via `gthread` worker class)
   - `preload_app=True` for shared memory between workers (critical optimization)
-  - `max_requests=800` for automatic worker recycling to prevent memory leaks
+  - `max_requests=300` for automatic worker recycling to prevent memory leaks
 
 - **`requirements.txt`** - Python package dependencies
   - `flask==3.0.2`, `flask-cors==4.0.0`, `flask-compress==1.15` (Gzip compression)
@@ -113,7 +113,6 @@ This is an offshoot of the prediction server developed for the Stanford Space In
 ### Automation
 - **`.github/workflows/gefs-downloader.yml`** - GitHub Actions workflow
   - Automatically downloads and uploads GEFS models every 6 hours
-  - Requires `SUPABASE_URL` and `SUPABASE_SECRET` secrets in GitHub repository settings
   - Runs in test mode (single download/upload cycle) on schedule
 
 ### Data Storage
@@ -129,7 +128,7 @@ This is an offshoot of the prediction server developed for the Stanford Space In
   - Virtualenv: `bin/activate`, `lib/python3.13/site-packages/` (installed dependencies)
   - Activate: `source habsim/bin/activate`
 
-## Architecture Changes
+## Architecture Changes From Prev. HABSIM
 
 **Old Version (Client Library):** Python package making HTTP requests to `habsim.org` API. Installed via pip, called functions like `util.predict()`.
 
