@@ -427,18 +427,21 @@ def spaceshot():
                             _progress_tracking[request_id]['completed'] = ensemble_completed + _progress_tracking[request_id]['montecarlo_completed']
             
             # Collect Monte Carlo results
+            # Update progress more frequently for smoother progress indication
             montecarlo_completed = 0
             for future in as_completed(montecarlo_futures):
                 result = future.result()
                 if result is not None:
                     landing_positions.append(result)
                 montecarlo_completed += 1
-                # Update progress
+                # Update progress after every simulation (not just every 100)
+                # This provides smoother progress updates for the client
                 with _progress_lock:
                     if request_id in _progress_tracking:
                         _progress_tracking[request_id]['montecarlo_completed'] = montecarlo_completed
                         _progress_tracking[request_id]['completed'] = _progress_tracking[request_id]['ensemble_completed'] + montecarlo_completed
-                if montecarlo_completed % 100 == 0:
+                # Log progress every 50 simulations (reduced from 100 for better visibility)
+                if montecarlo_completed % 50 == 0:
                     app.logger.info(f"Monte Carlo progress: {montecarlo_completed}/{len(montecarlo_futures)} simulations completed")
             
             # Ensure all ensemble models have results
@@ -491,6 +494,9 @@ def get_progress():
     if progress is None:
         return jsonify({'error': 'Progress not found or completed'}), 404
     
+    # Calculate percentage with integer rounding for cleaner display
+    percentage = round((progress['completed'] / progress['total']) * 100) if progress['total'] > 0 else 0
+    
     return jsonify({
         'completed': progress['completed'],
         'total': progress['total'],
@@ -498,7 +504,7 @@ def get_progress():
         'ensemble_total': progress['ensemble_total'],
         'montecarlo_completed': progress['montecarlo_completed'],
         'montecarlo_total': progress['montecarlo_total'],
-        'percentage': round((progress['completed'] / progress['total']) * 100, 1) if progress['total'] > 0 else 0
+        'percentage': percentage
     })
 
 @app.route('/sim/montecarlo')

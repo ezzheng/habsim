@@ -235,10 +235,12 @@ function displayHeatmap(heatmapData) {
         // Create Google Maps HeatmapLayer
         // This layer automatically aggregates nearby points into density contours
         // and applies the color gradient based on point density
+        // Use dissipating: true so radius scales with zoom (pixel-based, not geographic)
+        // Increase maxIntensity to reduce splotchy appearance while maintaining zoom scaling
         heatmapLayer = new google.maps.visualization.HeatmapLayer({
             data: heatmapPoints,  // Array of {location: LatLng, weight: number}
             map: map,
-            radius: 20,  // Radius of influence for each point (in pixels)
+            radius: 30,  // Radius of influence for each point (in pixels when dissipating=true)
             opacity: 0.6,  // Opacity of the heatmap (allows seeing map underneath)
             gradient: [
                 'rgba(0, 255, 255, 0)',      // Cyan (transparent) - low density
@@ -248,8 +250,8 @@ function displayHeatmap(heatmapData) {
                 'rgba(255, 165, 0, 0.9)',    // Orange - high
                 'rgba(255, 0, 0, 1)'         // Red - highest density (most landing positions)
             ],
-            dissipating: false,  // Keep intensity constant across zoom levels (prevents splotchy appearance)
-            maxIntensity: 10    // Maximum intensity for normalization (caps density calculation)
+            dissipating: true,  // Enable zoom scaling: radius in pixels (scales with zoom level)
+            maxIntensity: 50    // Higher maxIntensity reduces splotchy appearance while maintaining zoom scaling
         });
         
         console.log(`Heatmap displayed successfully with ${heatmapPoints.length} points`);
@@ -270,11 +272,17 @@ function updateEnsembleProgress(progressData) {
     
     const completed = progressData.completed || 0;
     const total = progressData.total || 441; // 21 ensemble + 420 Monte Carlo
+    const percentage = progressData.percentage || Math.round((completed / total) * 100);
     
-    // Update button text - replace "Ensemble" with just the count (e.g., "X/441")
-    // This prevents text from being cut off on mobile
-    // No visual progress bar needed since count is displayed directly
-    ensembleBtn.textContent = `${completed}/${total}`;
+    // Show percentage instead of count for better progress indication
+    // Percentage updates more smoothly as simulations complete
+    if (completed === 0) {
+        ensembleBtn.textContent = '0%';
+    } else if (completed >= total) {
+        ensembleBtn.textContent = '100%';
+    } else {
+        ensembleBtn.textContent = `${percentage}%`;
+    }
 }
 
 async function pollProgress(requestId) {
@@ -462,7 +470,7 @@ async function simulate() {
                                 ensembleProgressInterval = null;
                             }
                         }
-                    }, 2000); // Poll every 2 seconds
+                    }, 500); // Poll every 500ms for smoother progress updates
                 }
                 
                 try {
