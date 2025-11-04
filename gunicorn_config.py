@@ -11,11 +11,28 @@ backlog = 512
 workers = 4  # 4 workers to minimize memory duplication (4 workers × 8 threads = 32 concurrent capacity)
 worker_class = 'gthread'  # Use threads for I/O-bound tasks (NumPy releases GIL for computation)
 threads = 8  # 8 threads per worker = 32 concurrent capacity (matches 32 CPUs, shared memory)
-worker_connections = 500
-max_requests = 1000  # Higher limit since we have more memory headroom
-max_requests_jitter = 100
-timeout = 300  # 5 minutes for long-running ensemble simulations
-keepalive = 10
+
+# Connection limits
+worker_connections = 200  # Maximum simultaneous connections per worker
+# With 4 workers × 8 threads = 32 concurrent requests, 200 per worker provides headroom
+# for connection queuing and burst traffic without excessive resource usage
+
+# Worker recycling (prevents memory leaks)
+max_requests = 800  # Maximum requests a worker processes before restarting
+# Restarts workers periodically to free memory and prevent accumulation of memory leaks
+# 800 is a good balance: frequent enough to prevent leaks, not so frequent it causes overhead
+max_requests_jitter = 80  # Random jitter (0-80) added to max_requests to stagger worker restarts
+# Prevents all workers from restarting simultaneously (which could cause brief downtime)
+# Jitter is ~10% of max_requests, spreading restarts over ~80-880 requests
+
+# Timeouts
+timeout = 300  # 5 minutes for long-running ensemble simulations (worker process timeout)
+# Ensemble runs can take 30-60 seconds, so 5 minutes provides ample headroom
+
+# TCP keepalive
+keepalive = 30  # Seconds to keep idle connections open before closing
+# Allows clients to reuse connections, reducing handshake overhead
+# 30 seconds is optimal for API traffic: long enough to reuse connections, short enough to free resources
 
 # Memory optimization for 32GB RAM
 preload_app = True  # Share memory between workers (efficient for large caches)

@@ -21,18 +21,18 @@ This is an offshoot of the prediction server developed for the Stanford Space In
     - `_prewarm_cache()`: Pre-loads model 0 simulator in RAM (fast single requests)
     - Files download on-demand when needed (cost-optimized to reduce Supabase egress)
   - `ThreadPoolExecutor` (concurrent execution) parallelizes ensemble requests (max_workers=32)
-  - Dynamic cache expansion: Simulator cache expands to 25 when ensemble is called, auto-trims after 90 seconds
+  - Dynamic cache expansion: Simulator cache expands to 25 when ensemble is called, auto-trims after 60 seconds
   - Background cache trimming thread: Automatically trims cache in all workers every 30 seconds when ensemble mode expires
   - HTTP caching headers (`Cache-Control`) + Flask-Compress Gzip compression
   - Exposes model configuration dynamically based on `downloader.py` settings
 
 ### Simulation Engine
 - **`simulate.py`** - Main simulation orchestrator
-  - Dynamic multi-simulator LRU cache: 5 simulators normal mode (~750MB per worker), 25 simulators ensemble mode (~11.5GB per worker)
-  - Ensemble mode: Auto-expands cache when `/sim/spaceshot` is called, auto-trims after 90 seconds
-  - **Pre-loading**: In ensemble mode, full NPZ arrays are loaded into RAM (instead of memory-mapping) for faster CPU-bound simulation
+  - Dynamic multi-simulator LRU cache: 5 simulators normal mode (~750MB per worker), 25 simulators ensemble mode (~3.75GB per worker)
+  - Ensemble mode: Auto-expands cache when `/sim/spaceshot` is called, auto-trims after 60 seconds
+  - Uses memory-mapping for memory efficiency (I/O-bound, but manageable RAM usage)
   - Background cache trimming: Periodic thread (every 30 seconds) ensures idle workers trim their cache
-  - **Important**: Each Gunicorn worker has its own independent cache (4 workers × 11.5GB = 46GB max in ensemble mode)
+  - **Important**: Each Gunicorn worker has its own independent cache (4 workers × 3.75GB = 15GB max in ensemble mode)
   - LRU cache (Least Recently Used eviction policy) for predictions (200 entries, 1hr TTL - Time To Live)
   - Model change management: Automatically detects model updates (checks `whichgefs` every 5 minutes), clears caches when model changes, and deletes old model files from disk cache to prevent accumulation of stale files
   - Coordinates `WindFile`, `ElevationFile`, and `Simulator` classes

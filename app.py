@@ -229,11 +229,11 @@ def spaceshot():
     eqtime = float(args['eqtime'])
     asc, desc = float(args['asc']), float(args['desc'])
     
-    # Enable ensemble mode (expanded cache) for 90 seconds
+    # Enable ensemble mode (expanded cache) for 60 seconds
     # This allows all 21 models to be cached during ensemble runs
-    # If another ensemble run happens within 90 seconds, it extends the duration
-    simulate.set_ensemble_mode(duration_seconds=90)
-    app.logger.info("Ensemble mode enabled: expanded cache for 90 seconds (extends with each ensemble run)")
+    # If another ensemble run happens within 60 seconds, it extends the duration
+    simulate.set_ensemble_mode(duration_seconds=60)
+    app.logger.info("Ensemble mode enabled: expanded cache for 60 seconds (extends with each ensemble run)")
     
     # Build model list based on configuration
     model_ids = []
@@ -298,7 +298,7 @@ def spaceshot():
         # This happens automatically via _trim_cache_to_normal() but we can trigger it
         simulate._trim_cache_to_normal()
         elapsed = time.time() - start_time
-        app.logger.info(f"Ensemble run complete in {elapsed:.1f} seconds, cache will trim to normal size 90 seconds after last ensemble run")
+        app.logger.info(f"Ensemble run complete in {elapsed:.1f} seconds, cache will trim to normal size 60 seconds after last ensemble run")
     
     return jsonify(paths)
 

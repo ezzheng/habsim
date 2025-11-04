@@ -137,8 +137,8 @@ def _get_elevation_data():
         elevation_cache = load_gefs('worldelev.npy')
     return elevation_cache
 
-def set_ensemble_mode(duration_seconds=90):
-    """Enable ensemble mode (larger cache) for specified duration (default 90 seconds / 1.5 minutes)"""
+def set_ensemble_mode(duration_seconds=60):
+    """Enable ensemble mode (larger cache) for specified duration (default 60 seconds / 1 minute)"""
     global _current_max_cache, _ensemble_mode_until
     now = time.time()
     with _cache_lock:
