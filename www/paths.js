@@ -216,7 +216,7 @@ function displayHeatmap(heatmapData) {
         heatmapLayer = new google.maps.visualization.HeatmapLayer({
             data: heatmapPoints,
             map: map,
-            radius: 30,  // Radius of influence for each point (in pixels)
+            radius: 20,  // Radius of influence for each point (in pixels when dissipating=true, or meters when dissipating=false)
             opacity: 0.6,  // Opacity of the heatmap
             gradient: [
                 'rgba(0, 255, 255, 0)',      // Cyan (transparent) - low density
@@ -226,7 +226,7 @@ function displayHeatmap(heatmapData) {
                 'rgba(255, 165, 0, 0.9)',    // Orange - high
                 'rgba(255, 0, 0, 1)'         // Red - highest density
             ],
-            dissipating: true,  // Heatmap fades out as zoom increases
+            dissipating: false,  // Keep intensity constant across zoom levels (prevents splotchy appearance)
             maxIntensity: 10    // Maximum intensity for normalization
         });
         
