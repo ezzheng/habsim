@@ -216,8 +216,11 @@ def spaceshot():
     """
     Run all available ensemble models (respects DOWNLOAD_CONTROL and NUM_PERTURBED_MEMBERS).
     Note: This endpoint is designed for the full ensemble spread, so it uses all configured models.
-    Enables ensemble mode (expanded cache) for 1 hour to speed up ensemble runs.
+    Enables ensemble mode (expanded cache) for 10 minutes to speed up ensemble runs.
     """
+    app.logger.info("Ensemble run started: /sim/spaceshot endpoint called")
+    import time
+    start_time = time.time()
     args = request.args
     timestamp = datetime.utcfromtimestamp(float(args['timestamp'])).replace(tzinfo=timezone.utc)
     lat, lon = float(args['lat']), float(args['lon'])
@@ -237,6 +240,8 @@ def spaceshot():
     if downloader.DOWNLOAD_CONTROL:
         model_ids.append(0)
     model_ids.extend(range(1, 1 + downloader.NUM_PERTURBED_MEMBERS))
+    
+    app.logger.info(f"Ensemble run: Processing {len(model_ids)} models: {model_ids}")
     
     # Parallel execution for faster ensemble runs
     # max_workers=16 for maximum parallelism (we have 32 CPUs, use them!)
@@ -266,7 +271,8 @@ def spaceshot():
         # Trim cache back to normal size after ensemble run completes
         # This happens automatically via _trim_cache_to_normal() but we can trigger it
         simulate._trim_cache_to_normal()
-        app.logger.info("Ensemble run complete, cache will trim to normal size 10 minutes after last ensemble run")
+        elapsed = time.time() - start_time
+        app.logger.info(f"Ensemble run complete in {elapsed:.1f} seconds, cache will trim to normal size 10 minutes after last ensemble run")
     
     return jsonify(paths)
 
