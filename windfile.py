@@ -68,6 +68,12 @@ class WindFile:
         finally:
             npz.close()
 
+        # Validate that data was loaded successfully
+        if self.data is None:
+            raise ValueError(f"Failed to load wind data from {normalized_path}: data is None")
+        if not hasattr(self.data, 'shape') or len(self.data.shape) < 5:
+            raise ValueError(f"Invalid wind data shape from {normalized_path}: expected 5D array, got {type(self.data)}")
+
         self.resolution_lat_multiplier = (self.data.shape[-5] - 1) / 180
         self.resolution_lon_multiplier = (self.data.shape[-4] - 1) / 360
 
@@ -103,6 +109,8 @@ class WindFile:
             lock = _get_memmap_lock(memmap_path)
             with lock:
                 if not memmap_path.exists():
+                    if 'data' not in npz:
+                        raise KeyError(f"NPZ file {path} is missing 'data' key")
                     array = npz['data']
                     memmap_path.parent.mkdir(parents=True, exist_ok=True)
                     mm = open_memmap(memmap_path, mode='w+', dtype=array.dtype, shape=array.shape)
@@ -110,7 +118,10 @@ class WindFile:
                     mm.flush()
                     del mm
                     del array
-        return np.load(memmap_path, mmap_mode='r')
+        memmap_data = np.load(memmap_path, mmap_mode='r')
+        if memmap_data is None:
+            raise RuntimeError(f"Failed to load memory-mapped data from {memmap_path}")
+        return memmap_data
 
     def get(self, lat, lon, altitude, time):
         """Optimized wind data retrieval with bounds checking"""
@@ -176,6 +187,8 @@ class WindFile:
         lon_filter = np.array([1-lon_frac, lon_frac], dtype=np.float32).reshape(1, 2, 1, 1, 1)
 
         # Extract data cube (memory-mapped in normal mode, full array in ensemble mode)
+        if self.data is None:
+            raise RuntimeError("WindFile data is None - file may not have loaded correctly")
         cube = self.data[lat_i:lat_i+2, lon_i:lon_i+2, level_i:level_i+2, time_i:time_i+2, :]
        
         # Single vectorized interpolation operation (CPU-bound when pre-loaded, I/O-bound when memory-mapped)
