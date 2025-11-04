@@ -291,10 +291,24 @@ function clearEnsembleProgress() {
 
 // Self explanatory
 async function simulate() {
+    // Clear previous simulation results immediately (paths and heatmap)
+    clearWaypoints();
+    for (path in currpaths) {currpaths[path].setMap(null);}
+    currpaths = new Array();
+    // Clear heatmap - ensure it's removed before starting new simulation
+    if (heatmapLayer) {
+        heatmapLayer.setMap(null);
+        heatmapLayer = null;
+    }
+    rawpathcache = new Array();
+    console.log("Clearing previous simulation");
+    
     // If a simulation is already running, interpret this call as a cancel request
     if (window.__simRunning && window.__simAbort) {
         try { window.__simAbort.abort(); } catch (e) {}
         clearEnsembleProgress();
+        // Note: Ensemble mode on server will still expire after 60 seconds from when it was set
+        // This is expected behavior - server doesn't know about client-side cancellation
         return;
     }
 
@@ -323,17 +337,6 @@ async function simulate() {
     }
     if (spinner) { spinner.classList.add('active'); }
     try {
-        clearWaypoints();
-        for (path in currpaths) {currpaths[path].setMap(null);}
-        currpaths = new Array();
-        // Clear heatmap
-        if (heatmapLayer) {
-            heatmapLayer.setMap(null);
-            heatmapLayer = null;
-        }
-        rawpathcache = new Array()
-        console.log("Clearing");
-
         allValues = [];
         var time = toTimestamp(Number(document.getElementById('yr').value),
             Number(document.getElementById('mo').value),
