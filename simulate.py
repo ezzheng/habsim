@@ -178,13 +178,27 @@ def _trim_cache_to_normal():
             # Evict models not in the keep list
             models_to_evict = set(_simulator_cache.keys()) - models_to_keep
             evicted_count = len(models_to_evict)
+            
+            # Explicitly clear pre-loaded arrays before deleting simulators
+            # This is critical for pre-loaded arrays (ensemble mode) which can be 100-200MB each
             for model_id in models_to_evict:
+                simulator = _simulator_cache.get(model_id)
+                if simulator and hasattr(simulator, 'wind_file') and hasattr(simulator.wind_file, 'data'):
+                    # Only clear pre-loaded arrays (not memory-mapped arrays which use little RAM)
+                    # Memory-mapped arrays have a 'filename' attribute, pre-loaded arrays don't
+                    if isinstance(simulator.wind_file.data, np.ndarray) and not hasattr(simulator.wind_file.data, 'filename'):
+                        # This is a pre-loaded array - delete it to free memory immediately
+                        del simulator.wind_file.data
+                        simulator.wind_file.data = None
                 del _simulator_cache[model_id]
                 del _simulator_access_times[model_id]
             
             if evicted_count > 0:
-                gc.collect()  # Help GC reclaim memory from evicted simulators
-                logging.info(f"Trimmed cache: evicted {evicted_count} simulators, keeping {len(_simulator_cache)} (limit: {_current_max_cache})")
+                # Multiple GC passes to ensure memory is freed
+                # Python's GC may need multiple passes to fully reclaim large numpy arrays
+                for _ in range(3):
+                    gc.collect()
+                logging.info(f"Trimmed cache: evicted {evicted_count} simulators (cleared pre-loaded arrays), keeping {len(_simulator_cache)} (limit: {_current_max_cache})")
 
 def _periodic_cache_trim():
     """Background thread that periodically trims cache when ensemble mode expires.
@@ -193,8 +207,20 @@ def _periodic_cache_trim():
     """
     while True:
         try:
-            time.sleep(30)  # Check every 30 seconds
-            _trim_cache_to_normal()
+            now = time.time()
+            # Check if ensemble mode has expired - if so, trim more aggressively
+            with _cache_lock:
+                ensemble_expired = _ensemble_mode_until > 0 and now > _ensemble_mode_until
+                cache_size = len(_simulator_cache)
+            
+            if ensemble_expired and cache_size > MAX_SIMULATOR_CACHE_NORMAL:
+                # Ensemble mode expired but cache still large - trim immediately
+                _trim_cache_to_normal()
+                time.sleep(10)  # Check more frequently (every 10s) until cache is trimmed
+            else:
+                # Normal check interval
+                _trim_cache_to_normal()
+                time.sleep(30)  # Check every 30 seconds
         except Exception as e:
             logging.warning(f"Cache trim thread error (non-critical): {e}")
             time.sleep(60)  # Wait longer on error
@@ -233,6 +259,13 @@ def _get_simulator(model):
         # Evict oldest if cache is full
         if len(_simulator_cache) >= _current_max_cache:
             oldest_model = min(_simulator_access_times, key=_simulator_access_times.get)
+            simulator = _simulator_cache.get(oldest_model)
+            # Explicitly clear pre-loaded array before deleting (not memory-mapped arrays)
+            if simulator and hasattr(simulator, 'wind_file') and hasattr(simulator.wind_file, 'data'):
+                # Only clear pre-loaded arrays (memory-mapped arrays have 'filename' attribute)
+                if isinstance(simulator.wind_file.data, np.ndarray) and not hasattr(simulator.wind_file.data, 'filename'):
+                    del simulator.wind_file.data
+                    simulator.wind_file.data = None
             del _simulator_cache[oldest_model]
             del _simulator_access_times[oldest_model]
             gc.collect()  # Help GC reclaim memory from evicted simulator

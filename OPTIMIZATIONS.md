@@ -211,11 +211,16 @@ HABSIM uses a multi-layer caching strategy optimized for Railway (max 32GB RAM, 
   - After fix: Memory-mapped access, OS manages page cache (minimal direct RAM usage)
   - Note: `elev.py` was already memory-mapped, but `ElevationFile` was creating a duplicate full load
 - **Explicit simulator cleanup**: Old simulators are explicitly deleted and garbage collected when cache evicts them
-- **Background cache trimming thread**: `_periodic_cache_trim()` runs in each worker process every 30 seconds
-  - Ensures idle workers trim their cache when ensemble mode expires (prevents 15GB memory usage from lingering)
+  - **Pre-loaded array cleanup**: Pre-loaded numpy arrays (100-200MB each) are explicitly cleared before simulator deletion
+  - Only pre-loaded arrays are cleared (not memory-mapped arrays which use little RAM)
+  - Multiple GC passes (3x) ensure large numpy arrays are fully reclaimed
+- **Background cache trimming thread**: `_periodic_cache_trim()` runs in each worker process
+  - Normal interval: checks every 30 seconds
+  - Aggressive mode: checks every 10 seconds when ensemble mode expires but cache is still large
+  - Ensures idle workers trim their cache when ensemble mode expires (prevents 20-25GB memory usage from lingering)
   - Without this, workers that don't receive requests never trim their cache
   - Each worker maintains its own independent cache, so all workers need periodic trimming
-- **Worker recycling**: `max_requests = 1000` (reduced from original 800 for more aggressive recycling)
+- **Worker recycling**: `max_requests = 800` (restarts workers periodically to prevent memory leaks)
 
 ## UI Optimizations
 - Elevation fetching debounced (150ms) to prevent rapid-fire requests on map clicks
