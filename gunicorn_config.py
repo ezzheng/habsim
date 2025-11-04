@@ -22,11 +22,11 @@ preload_app = True  # Share memory between workers (efficient for large caches)
 reuse_port = True
 
 # Logging
-# Note: Gunicorn's "errorlog" is actually for all application logs (INFO/WARNING/ERROR),
-# not just errors. Railway may display these as "error" level in their UI, but they're normal.
-accesslog = '-'
-errorlog = '-'
-loglevel = 'info'  # Log INFO and above (INFO, WARNING, ERROR)
+# Railway treats stderr as errors, so we set loglevel to 'warning' to only log warnings/errors to stderr
+# INFO logs (normal operation) won't appear in Railway's error view
+accesslog = '-'  # Access logs go to stdout (Railway treats as normal)
+errorlog = '-'   # Error logs go to stderr (Railway treats as errors) - only WARNING/ERROR now
+loglevel = 'warning'  # Only log WARNING and ERROR to stderr (Railway error view)
 access_log_format = '%(h)s %(l)s %(u)s %(t)s "%(r)s" %(s)s %(b)s "%(f)s" "%(a)s" %(D)s'
 
 # Process naming
@@ -34,9 +34,11 @@ proc_name = 'habsim'
 
 def on_starting(server):
     """Called just before the master process is initialized."""
-    # Using server.log instead of app.logger to avoid duplicate logs
-    server.log.info("Starting HABSIM server with Railway configuration (32GB RAM, 32 CPUs - optimized for speed)")
-    server.log.info(f"Workers: {workers}, Threads per worker: {threads}, Max concurrent: {workers * threads}")
+    # Note: These startup messages will still appear but Railway may show them as errors
+    # This is expected - Railway treats all stderr output as errors, but these are normal startup logs
+    # With loglevel='warning', INFO logs are suppressed, but on_starting uses server.log which bypasses filters
+    # Consider these startup messages as informational only
+    pass  # Suppress startup INFO logs to avoid Railway showing them as errors
 
 def post_fork(server, worker):
     """Called just after a worker has been forked."""
