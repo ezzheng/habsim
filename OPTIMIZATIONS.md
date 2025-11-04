@@ -12,9 +12,8 @@ gunicorn --config gunicorn_config.py app:app
 ## Cache Pre-warming (`app.py`)
 
 ### Startup Pre-warming
-- **Function**: `_prewarm_cache()` runs in background thread on startup
+- **Function**: `_prewarm_cache()` runs in background thread on startup; eliminates cold start delay (40-70s → 5s for first request)
 - **Timing**: 2-second delay after app initialization to allow full startup
-- **Benefits**: Eliminates cold start delay (40-70s → 5s for first request)
 
 ### What Gets Pre-warmed
 
@@ -33,11 +32,8 @@ gunicorn --config gunicorn_config.py app:app
    - Creates `WindFile` object
    - Creates `Simulator` object (combines WindFile + elevation data)
    - Stores simulator in cache: `_cached_simulator = Simulator(...)`
-   - Additional models load on-demand when needed
 4. Loads elevation data singleton via `elev.getElevation(0, 0)`
-   - Loads with memory-mapping (`mmap_mode='r'`)
-   - Shared across all simulators and workers
-5. Logs completion status
+   - Loads with memory-mapping (`mmap_mode='r'`); shared across all simulators and workers
 
 **Memory Impact:**
 - **Disk**: ~1.35 GB (3 weather files × 307.83 MB + 1 elevation file × 430.11 MB)
@@ -59,7 +55,6 @@ HABSIM uses a multi-layer caching strategy to optimize performance while managin
 **How it works**: 
 - Fast path: If `_cached_model == requested_model`, return `_cached_simulator` immediately (~1μs)
 - Slow path: If different model requested, load new simulator and replace cache
-- Ideal for single model requests (most common use case)
 - For ensemble runs, each model loads on-demand (simulator cache helps if same model requested multiple times)
 
 **Memory Usage**:
@@ -74,8 +69,6 @@ HABSIM uses a multi-layer caching strategy to optimize performance while managin
 **Eviction**: LRU based on file access time (`st_atime`); never evicts `worldelev.npy` (required elevation data)
 **Thread Safety**: `_CACHE_LOCK` protects all operations
 
-**Why persistent directory**: Uses `/opt/render/project/src/data/gefs` on Render instead of `/tmp` to avoid 2GB temporary storage limit.
-
 **Memory Usage**:  
 - 307.83MB per `.npz` file
 - 3 `.npz` files: ~924 MB on disk
@@ -84,8 +77,7 @@ HABSIM uses a multi-layer caching strategy to optimize performance while managin
 
 **Elevation Data Cache** (`elev.py` and `habsim/classes.py`):
 - **`elev.py`**: Memory-mapped singleton (`_ELEV_DATA`) used by `/sim/elev` endpoint, loaded once with `mmap_mode='r'` and shared across all workers/threads
-- **`ElevationFile`** (`habsim/classes.py`): Memory-mapped read-only access for simulators (was previously loading full 430MB into RAM per simulator, now fixed to use `mmap_mode='r'`)
-- **Memory leak fix**: Previously, `ElevationFile` was creating a duplicate full load of `worldelev.npy` even though `elev.py` was already memory-mapped. Each simulator held 430MB in RAM. Now both use memory-mapping, eliminating duplicate RAM usage.
+- **`ElevationFile`** (`habsim/classes.py`): Memory-mapped read-only access for simulators
 
 
 ### 3. Prediction Result Cache (`simulate.py`) - **RAM Cache**
@@ -110,9 +102,9 @@ HABSIM uses a multi-layer caching strategy to optimize performance while managin
 ## Memory Management
 
 ### Cache Priority
-1. **Simulator Cache** (RAM) - Priority #1: Simple 1-simulator cache for fast single model requests
-2. **File Cache** (Disk) - Priority #2: Static at 3 `.npz` files + `worldelev.npy` (doesn't directly affect RAM)
-3. **Prediction Cache** (RAM) - Priority #3: Fixed at 30 entries (~6MB)
+1. **Simulator Cache** (RAM) - Simple 1-simulator cache for fast single model requests
+2. **File Cache** (Disk) - Static at 3 `.npz` files + `worldelev.npy` (doesn't directly affect RAM)
+3. **Prediction Cache** (RAM) - Fixed at 30 entries (~6MB)
 4. **Math Cache** (RAM) - Minimal overhead (<1MB)
 
 ### Current Memory Usage Breakdown (2 Workers)
@@ -127,20 +119,6 @@ HABSIM uses a multi-layer caching strategy to optimize performance while managin
 - **Total**: ~514-814MB typical, up to ~1.2GB under load
 
 ## Other Optimizations
-
-### Parallel Execution (`app.py`)
-- `ThreadPoolExecutor` with 2 workers for ensemble mode
-- I/O-bound tasks benefit from threading vs multiprocessing
-- `with ThreadPoolExecutor(max_workers=2)` in `/sim/spaceshot`
-
-### HTTP Response Caching (`app.py`)
-- `@cache_for(600)` decorator adds `Cache-Control` headers
-- Browser caches results for 10 minutes
-- Applied to all simulation endpoints
-
-### Response Compression (`requirements.txt`, `app.py`)
-- `flask-compress` automatically gzips responses
-- Typical 10x reduction (500KB → 50KB)
 
 ### Numerical Integration (`habsim/classes.py`)
 - Runge-Kutta 2nd order (RK2 / Midpoint method) for trajectory integration
