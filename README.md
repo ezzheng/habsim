@@ -101,12 +101,14 @@ This is an offshoot of the prediction server developed for the Stanford Space In
   - Fetches model configuration from `/sim/models` endpoint on page load
   - Dynamically uses server-configured model IDs for ensemble runs
   - Draws `google.maps.Polyline` objects with color-coded paths (21 ensemble paths)
-  - **Monte Carlo Heatmap**: Displays probability density heatmap using `google.maps.visualization.HeatmapLayer`
+  - **Monte Carlo Heatmap**: Displays probability density heatmap using custom canvas overlay (`CustomHeatmapOverlay`)
     - **Data Source**: 420 landing positions from Monte Carlo simulations (20 perturbations × 21 models)
-    - **Visualization**: Aggregates nearby landing positions into density contours
+    - **Visualization**: Custom kernel density estimation with controllable smoothing (preserves actual data shape)
+    - **Smoothing Options**: `'epanechnikov'` (default, shape-preserving), `'none'` (raw density), `'uniform'`, `'gaussian'`
     - **Color Gradient**: Cyan (transparent/low density) → Green → Yellow → Orange → Red (solid/high density)
     - **High-Density Zones**: Red areas indicate where many simulations landed (high probability landing zones)
-    - **Properties**: `dissipating: false` (maintains intensity across zoom levels), `radius: 20px` (influence area), `opacity: 0.6` (allows seeing map underneath)
+    - **Properties**: `opacity: 0.6` (allows seeing map underneath), `gridResolution: 100` (density grid resolution)
+    - **Advantage**: Avoids Google Maps' forced circular Gaussian smoothing, preserving actual data distribution shape
     - **Overlay**: Heatmap overlays on ensemble paths for comprehensive visualization showing both individual trajectories and probability density
   - **Progress Tracking**: Real-time progress bar in ensemble button showing X/441 completed simulations
   - Waypoint circles with click handlers showing altitude/time info windows

@@ -25,14 +25,20 @@ The ensemble endpoint (`/sim/spaceshot`) includes Monte Carlo simulation to quan
    - Low-density areas (cyan) indicate few simulations landed there
 
 ### Heatmap Visualization
-- **Library**: Google Maps `visualization.HeatmapLayer`
+- **Implementation**: Custom canvas overlay (`CustomHeatmapOverlay` extending `google.maps.OverlayView`)
 - **Data**: 420 landing positions (lat, lon) with equal weight
-- **Aggregation**: Automatically aggregates nearby points into density contours
+- **Density Estimation**: Custom kernel density estimation with configurable smoothing kernels
+- **Smoothing Options**:
+  - `'epanechnikov'` (default) - Epanechnikov kernel, shape-preserving, recommended for preserving actual data distribution
+  - `'none'` - Raw density grid, no smoothing, maximum shape preservation
+  - `'uniform'` - Uniform kernel, rectangular shape
+  - `'gaussian'` - Gaussian kernel, smooth but circular (similar to Google Maps default)
 - **Color Gradient**: Cyan (transparent/low) → Green → Yellow → Orange → Red (solid/high)
 - **Properties**: 
-  - `dissipating: false` - maintains intensity across zoom levels
-  - `radius: 20px` - influence area for each point
-  - `opacity: 0.6` - allows seeing map/ensemble paths underneath
+  - `opacity: 0.6` - overlay opacity (allows seeing map/ensemble paths underneath)
+  - `gridResolution: 100` - density grid resolution (higher = smoother but slower)
+  - `smoothingBandwidth: null` - auto-calculated (5% of data range) or manually specified
+- **Advantage**: Avoids Google Maps' forced circular Gaussian smoothing, preserving actual data distribution shape
 - **Visualization**: Overlays on ensemble paths to show both individual trajectories and probability density
 
 ## Deploy to Railway

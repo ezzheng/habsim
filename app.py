@@ -295,10 +295,18 @@ def spaceshot():
     # - Equilibrium altitude: ±200m - burst altitude uncertainty
     # - Equilibrium time: ±10% - timing variation in reaching equilibrium
     # - Ascent/Descent rate: ±0.1 m/s - rate measurement uncertainty
+    #
+    # Note: Using uniform random distribution for perturbations. If landing positions
+    # appear circular/concentric, it's likely due to Google Maps heatmap smoothing
+    # (applies Gaussian-like aggregation), not the perturbation distribution itself.
     # ============================================================================
     perturbations = []
+    # Use random seed based on request parameters for reproducibility while maintaining randomness
+    # This ensures perturbations are different each time but consistent within a request
+    random.seed(hash(request_key) & 0xFFFFFFFF)
     for i in range(num_perturbations):
         # Generate random perturbations within reasonable bounds
+        # Using uniform distribution - each parameter varies independently
         pert_lat = base_lat + random.uniform(-0.1, 0.1)  # ±0.1° ≈ ±11km
         pert_lon = (base_lon + random.uniform(-0.1, 0.1)) % 360  # Wrap longitude to [0, 360)
         pert_alt = max(0, base_alt + random.uniform(-50, 50))  # ±50m, min 0
@@ -388,7 +396,8 @@ def spaceshot():
         # Thread pool: 32 workers
         # ========================================================================
         with ThreadPoolExecutor(max_workers=32) as executor:
-            # Submit ensemble tasks (21 models) - returns full trajectory paths
+            # Submit ALL tasks first (both ensemble and Monte Carlo)
+            # This ensures progress tracking starts immediately as tasks complete
             ensemble_futures = {
                 executor.submit(run_ensemble_simulation, model): model
                 for model in model_ids
@@ -401,48 +410,67 @@ def spaceshot():
                 for model in model_ids:
                     montecarlo_futures.append(executor.submit(run_montecarlo_simulation, pert, model))
             
-            # Collect ensemble results
-            ensemble_completed = 0
-            for future in as_completed(ensemble_futures):
-                model = ensemble_futures[future]
-                try:
-                    idx = model_ids.index(model)
-                    paths[idx] = future.result()
-                    ensemble_completed += 1
-                    # Update progress
-                    with _progress_lock:
-                        if request_id in _progress_tracking:
-                            _progress_tracking[request_id]['ensemble_completed'] = ensemble_completed
-                            _progress_tracking[request_id]['completed'] = ensemble_completed + _progress_tracking[request_id]['montecarlo_completed']
-                    app.logger.info(f"Ensemble model {model} completed ({ensemble_completed}/{len(model_ids)})")
-                except Exception as e:
-                    app.logger.exception(f"Ensemble model {model} result processing failed: {e}")
-                    idx = model_ids.index(model)
-                    paths[idx] = "error"
-                    # Still count as completed for progress
-                    ensemble_completed += 1
-                    with _progress_lock:
-                        if request_id in _progress_tracking:
-                            _progress_tracking[request_id]['ensemble_completed'] = ensemble_completed
-                            _progress_tracking[request_id]['completed'] = ensemble_completed + _progress_tracking[request_id]['montecarlo_completed']
+            # Combine all futures into one list for unified progress tracking
+            # This allows us to track progress as ANY simulation completes, not just ensemble or Monte Carlo separately
+            all_futures = list(ensemble_futures.keys()) + montecarlo_futures
+            total_futures = len(all_futures)
             
-            # Collect Monte Carlo results
-            # Update progress more frequently for smoother progress indication
+            # Track which futures are ensemble vs Monte Carlo
+            ensemble_future_set = set(ensemble_futures.keys())
+            
+            # Collect results as they complete (unified progress tracking)
+            ensemble_completed = 0
             montecarlo_completed = 0
-            for future in as_completed(montecarlo_futures):
-                result = future.result()
-                if result is not None:
-                    landing_positions.append(result)
-                montecarlo_completed += 1
-                # Update progress after every simulation (not just every 100)
-                # This provides smoother progress updates for the client
+            total_completed = 0
+            
+            for future in as_completed(all_futures):
+                total_completed += 1
+                
+                # Update progress immediately as each task completes
+                # This provides real-time progress updates instead of waiting for batches
                 with _progress_lock:
                     if request_id in _progress_tracking:
-                        _progress_tracking[request_id]['montecarlo_completed'] = montecarlo_completed
-                        _progress_tracking[request_id]['completed'] = _progress_tracking[request_id]['ensemble_completed'] + montecarlo_completed
-                # Log progress every 50 simulations (reduced from 100 for better visibility)
-                if montecarlo_completed % 50 == 0:
-                    app.logger.info(f"Monte Carlo progress: {montecarlo_completed}/{len(montecarlo_futures)} simulations completed")
+                        _progress_tracking[request_id]['completed'] = total_completed
+                
+                # Check if this is an ensemble or Monte Carlo future
+                if future in ensemble_future_set:
+                    # Ensemble simulation
+                    model = ensemble_futures[future]
+                    try:
+                        idx = model_ids.index(model)
+                        paths[idx] = future.result()
+                        ensemble_completed += 1
+                        with _progress_lock:
+                            if request_id in _progress_tracking:
+                                _progress_tracking[request_id]['ensemble_completed'] = ensemble_completed
+                        app.logger.info(f"Ensemble model {model} completed ({ensemble_completed}/{len(model_ids)})")
+                    except Exception as e:
+                        app.logger.exception(f"Ensemble model {model} result processing failed: {e}")
+                        idx = model_ids.index(model)
+                        paths[idx] = "error"
+                        ensemble_completed += 1
+                        with _progress_lock:
+                            if request_id in _progress_tracking:
+                                _progress_tracking[request_id]['ensemble_completed'] = ensemble_completed
+                else:
+                    # Monte Carlo simulation
+                    try:
+                        result = future.result()
+                        if result is not None:
+                            landing_positions.append(result)
+                        montecarlo_completed += 1
+                        with _progress_lock:
+                            if request_id in _progress_tracking:
+                                _progress_tracking[request_id]['montecarlo_completed'] = montecarlo_completed
+                        # Log progress every 50 simulations for visibility
+                        if montecarlo_completed % 50 == 0:
+                            app.logger.info(f"Monte Carlo progress: {montecarlo_completed}/{len(montecarlo_futures)} simulations completed")
+                    except Exception as e:
+                        app.logger.warning(f"Monte Carlo simulation result processing failed: {e}")
+                        montecarlo_completed += 1
+                        with _progress_lock:
+                            if request_id in _progress_tracking:
+                                _progress_tracking[request_id]['montecarlo_completed'] = montecarlo_completed
             
             # Ensure all ensemble models have results
             for i, path in enumerate(paths):
