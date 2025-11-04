@@ -212,7 +212,8 @@ HABSIM uses a multi-layer caching strategy optimized for Railway (max 32GB RAM, 
 
 **File Cache**:
 - `_MAX_CACHED_FILES = 25` in `gefs.py` (allows 25 weather files for 21-model ensemble + buffer)
-- Cache directory: `/app/data/gefs` on Railway (persistent volume)
+- Cache directory: `/app/data/gefs` on Railway (ephemeral storage, or persistent volume if Railway beta access)
+- **Note**: Railway persistent volumes are in private beta. Without access, cache is ephemeral (files persist during session, lost on restart).
 
 **Simulator Cache**:
 - `MAX_SIMULATOR_CACHE_NORMAL = 5` in `simulate.py` (normal mode: 5 simulators)

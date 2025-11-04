@@ -136,12 +136,13 @@ This is an offshoot of the prediction server developed for the Stanford Space In
 - **Access**: Files downloaded on-demand when needed
 
 ### Railway/Render Instance (Local Disk Cache)
-- **Location**: `/app/data/gefs` on Railway (persistent volume) or `/opt/render/project/src/data/gefs` on Render
+- **Location**: `/app/data/gefs` on Railway (ephemeral storage, or persistent volume if beta access) or `/opt/render/project/src/data/gefs` on Render
 - **Files**: Up to 25 `.npz` files (~7.7GB) cached on disk
 - **Purpose**: Fast local access, eliminates download delays after first download
 - **Eviction**: LRU (Least Recently Used) when cache exceeds 25 files
 - **Download Strategy**: Files download on-demand when needed (reduces Supabase egress costs)
 - **Model Change Cleanup**: Automatically deletes old model files when GEFS models update every 6 hours (prevents accumulation of stale cached files from previous model timestamps)
+- **Note**: Railway persistent volumes are currently in private beta. Without volume access, files are cached in ephemeral storage (lost on restart but reduce egress during active sessions).
 
 ## Architecture Changes From Prev. HABSIM
 
