@@ -93,8 +93,21 @@ class ElevationFile:
         self.resolution = 120
 
     def elev(self, lat, lon): # return elevation
+        # Normalize longitude to [-180, 180] range
+        lon = ((lon + 180) % 360) - 180
+        
+        # Clamp latitude to valid range
+        lat = max(-90, min(90, lat))
+        
+        # Convert to array indices
         x = int(round((lon + 180) * self.resolution))
         y = int(round((90 - lat) * self.resolution)) - 1
+        
+        # Clamp indices to valid array bounds
+        shape = self.data.shape
+        x = max(0, min(x, shape[1] - 1))
+        y = max(0, min(y, shape[0] - 1))
+        
         return max(0, self.data[y, x])
 
 class Balloon:

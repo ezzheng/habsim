@@ -139,6 +139,10 @@
             border-color: #10b981;
         }
         /* Ensemble button styles */
+        #ensemble-toggle {
+            position: relative;
+            overflow: hidden;
+        }
         #ensemble-toggle.on {
             background: var(--bg);
             color: var(--fg);
@@ -151,6 +155,20 @@
         #ensemble-toggle.on:active {
             background: var(--bg);
             border-color: #10b981;
+        }
+        /* Progress bar inside ensemble button */
+        #ensemble-toggle .progress-bar {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            height: 3px;
+            background: linear-gradient(90deg, #10b981, #34d399);
+            transition: width 0.3s ease;
+            z-index: 1;
+        }
+        #ensemble-toggle .progress-text {
+            position: relative;
+            z-index: 2;
         }
         /* Segmented button styles - commented out for Standard-only version
         .segmented {

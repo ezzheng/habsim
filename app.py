@@ -30,6 +30,11 @@ from gefs import listdir_gefs, open_gefs
 import simulate
 import downloader  # Import to access model configuration
 
+# Progress tracking for ensemble + Monte Carlo simulations
+# Key: request_id (hash of parameters), Value: {completed: int, total: int, ensemble_completed: int, ensemble_total: int}
+_progress_tracking = {}
+_progress_lock = threading.Lock()
+
 # File pre-warming removed to reduce Supabase egress costs
 # Files will download on-demand when needed (still fast due to file cache)
 
@@ -233,6 +238,16 @@ def spaceshot():
     # Optional: number of perturbations (default 20)
     num_perturbations = int(args.get('num_perturbations', 20))
     
+    # Generate unique request ID for progress tracking
+    # Use simple hash that's easy to replicate on client side
+    request_key = f"{args['timestamp']}_{args['lat']}_{args['lon']}_{args['alt']}_{args['equil']}_{args['eqtime']}_{args['asc']}_{args['desc']}"
+    # Simple hash function (same as client-side)
+    hash_val = 0
+    for char in request_key:
+        hash_val = ((hash_val << 5) - hash_val) + ord(char)
+        hash_val = hash_val & 0xFFFFFFFF  # Convert to 32-bit integer
+    request_id = format(abs(hash_val), 'x').zfill(16)[:16]
+    
     # Enable ensemble mode (expanded cache) for 60 seconds
     simulate.set_ensemble_mode(duration_seconds=60)
     app.logger.info("Ensemble mode enabled: expanded cache for 60 seconds (ensemble + Monte Carlo)")
@@ -243,7 +258,22 @@ def spaceshot():
         model_ids.append(0)
     model_ids.extend(range(1, 1 + downloader.NUM_PERTURBED_MEMBERS))
     
-    app.logger.info(f"Ensemble run: Processing {len(model_ids)} models + Monte Carlo ({num_perturbations} perturbations × {len(model_ids)} models)")
+    # Initialize progress tracking
+    total_ensemble = len(model_ids)
+    total_montecarlo = num_perturbations * len(model_ids)
+    total_simulations = total_ensemble + total_montecarlo
+    
+    with _progress_lock:
+        _progress_tracking[request_id] = {
+            'completed': 0,
+            'total': total_simulations,
+            'ensemble_completed': 0,
+            'ensemble_total': total_ensemble,
+            'montecarlo_completed': 0,
+            'montecarlo_total': total_montecarlo
+        }
+    
+    app.logger.info(f"Ensemble run: Processing {len(model_ids)} models + Monte Carlo ({num_perturbations} perturbations × {len(model_ids)} models), request_id={request_id}")
     
     # Generate Monte Carlo perturbations
     perturbations = []
@@ -328,11 +358,22 @@ def spaceshot():
                     idx = model_ids.index(model)
                     paths[idx] = future.result()
                     ensemble_completed += 1
+                    # Update progress
+                    with _progress_lock:
+                        if request_id in _progress_tracking:
+                            _progress_tracking[request_id]['ensemble_completed'] = ensemble_completed
+                            _progress_tracking[request_id]['completed'] = ensemble_completed + _progress_tracking[request_id]['montecarlo_completed']
                     app.logger.info(f"Ensemble model {model} completed ({ensemble_completed}/{len(model_ids)})")
                 except Exception as e:
                     app.logger.exception(f"Ensemble model {model} result processing failed: {e}")
                     idx = model_ids.index(model)
                     paths[idx] = "error"
+                    # Still count as completed for progress
+                    ensemble_completed += 1
+                    with _progress_lock:
+                        if request_id in _progress_tracking:
+                            _progress_tracking[request_id]['ensemble_completed'] = ensemble_completed
+                            _progress_tracking[request_id]['completed'] = ensemble_completed + _progress_tracking[request_id]['montecarlo_completed']
             
             # Collect Monte Carlo results
             montecarlo_completed = 0
@@ -341,6 +382,11 @@ def spaceshot():
                 if result is not None:
                     landing_positions.append(result)
                 montecarlo_completed += 1
+                # Update progress
+                with _progress_lock:
+                    if request_id in _progress_tracking:
+                        _progress_tracking[request_id]['montecarlo_completed'] = montecarlo_completed
+                        _progress_tracking[request_id]['completed'] = _progress_tracking[request_id]['ensemble_completed'] + montecarlo_completed
                 if montecarlo_completed % 100 == 0:
                     app.logger.info(f"Monte Carlo progress: {montecarlo_completed}/{len(montecarlo_futures)} simulations completed")
             
@@ -361,11 +407,39 @@ def spaceshot():
         landing_positions = []
     finally:
         simulate._trim_cache_to_normal()
+        # Clean up progress tracking after completion
+        with _progress_lock:
+            if request_id in _progress_tracking:
+                del _progress_tracking[request_id]
     
-    # Return both paths and heatmap data
+    # Return both paths and heatmap data, plus request_id for progress tracking
     return jsonify({
         'paths': paths,  # Original 21 ensemble paths for line plotting
-        'heatmap_data': landing_positions  # Monte Carlo landing positions for heatmap
+        'heatmap_data': landing_positions,  # Monte Carlo landing positions for heatmap
+        'request_id': request_id  # For progress polling
+    })
+
+@app.route('/sim/progress')
+def get_progress():
+    """Get progress for a running simulation"""
+    request_id = request.args.get('request_id')
+    if not request_id:
+        return jsonify({'error': 'request_id required'}), 400
+    
+    with _progress_lock:
+        progress = _progress_tracking.get(request_id)
+    
+    if progress is None:
+        return jsonify({'error': 'Progress not found or completed'}), 404
+    
+    return jsonify({
+        'completed': progress['completed'],
+        'total': progress['total'],
+        'ensemble_completed': progress['ensemble_completed'],
+        'ensemble_total': progress['ensemble_total'],
+        'montecarlo_completed': progress['montecarlo_completed'],
+        'montecarlo_total': progress['montecarlo_total'],
+        'percentage': round((progress['completed'] / progress['total']) * 100, 1) if progress['total'] > 0 else 0
     })
 
 @app.route('/sim/montecarlo')

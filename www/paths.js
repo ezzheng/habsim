@@ -144,42 +144,176 @@ var currpaths = new Array();
 
 // Display Monte Carlo heatmap with probability contours
 function displayHeatmap(heatmapData) {
-    // Clear existing heatmap if any
-    if (heatmapLayer) {
-        heatmapLayer.setMap(null);
-        heatmapLayer = null;
+    try {
+        // Check if Google Maps API is loaded
+        if (!window.google || !window.google.maps) {
+            console.error('Google Maps API not loaded yet. Waiting...');
+            setTimeout(() => displayHeatmap(heatmapData), 1000);
+            return;
+        }
+        
+        // Check if visualization library is loaded
+        if (!google.maps.visualization || !google.maps.visualization.HeatmapLayer) {
+            console.error('Google Maps visualization library not loaded. Attempting to load...');
+            // Try loading visualization library dynamically
+            const script = document.createElement('script');
+            script.src = 'https://maps.googleapis.com/maps/api/js?key=AIzaSyC62-iKLT_54_N0cPnbQlrzIsEKQxiAJgA&libraries=visualization&callback=function(){}';
+            script.onload = () => {
+                console.log('Visualization library loaded, retrying heatmap display');
+                displayHeatmap(heatmapData);
+            };
+            document.head.appendChild(script);
+            return;
+        }
+        
+        // Check if map is initialized
+        if (!map) {
+            console.error('Map not initialized yet');
+            setTimeout(() => displayHeatmap(heatmapData), 500);
+            return;
+        }
+        
+        // Clear existing heatmap if any
+        if (heatmapLayer) {
+            heatmapLayer.setMap(null);
+            heatmapLayer = null;
+        }
+        
+        if (!heatmapData || heatmapData.length === 0) {
+            console.log('No heatmap data to display');
+            return;
+        }
+        
+        console.log(`Creating heatmap with ${heatmapData.length} landing positions`);
+        
+        // Convert landing positions to Google Maps LatLng objects with weight
+        // Use weight to create density visualization (each point = 1, aggregated by heatmap)
+        const heatmapPoints = heatmapData.map(point => {
+            // Validate point has lat/lon
+            if (typeof point.lat !== 'number' || typeof point.lon !== 'number') {
+                console.warn('Invalid heatmap point:', point);
+                return null;
+            }
+            // Normalize longitude to [-180, 180] for display
+            let lon = point.lon;
+            if (lon > 180) {
+                lon = ((lon + 180) % 360) - 180;
+            }
+            return {
+                location: new google.maps.LatLng(point.lat, lon),
+                weight: 1  // Each landing contributes equally to density
+            };
+        }).filter(p => p !== null); // Remove invalid points
+        
+        if (heatmapPoints.length === 0) {
+            console.warn('No valid heatmap points after filtering');
+            return;
+        }
+        
+        console.log(`Creating heatmap layer with ${heatmapPoints.length} valid points`);
+        
+        // Create heatmap layer
+        heatmapLayer = new google.maps.visualization.HeatmapLayer({
+            data: heatmapPoints,
+            map: map,
+            radius: 30,  // Radius of influence for each point (in pixels)
+            opacity: 0.6,  // Opacity of the heatmap
+            gradient: [
+                'rgba(0, 255, 255, 0)',      // Cyan (transparent) - low density
+                'rgba(0, 255, 255, 0.5)',    // Cyan - medium-low
+                'rgba(0, 255, 0, 0.7)',      // Green - medium
+                'rgba(255, 255, 0, 0.8)',    // Yellow - medium-high
+                'rgba(255, 165, 0, 0.9)',    // Orange - high
+                'rgba(255, 0, 0, 1)'         // Red - highest density
+            ],
+            dissipating: true,  // Heatmap fades out as zoom increases
+            maxIntensity: 10    // Maximum intensity for normalization
+        });
+        
+        console.log(`Heatmap displayed successfully with ${heatmapPoints.length} points`);
+    } catch (error) {
+        console.error('Error displaying heatmap:', error);
+        console.error('Heatmap data:', heatmapData);
+    }
+}
+
+// Progress tracking for ensemble simulations
+let ensembleProgressInterval = null;
+let ensembleStartTime = null;
+let currentRequestId = null;
+
+function updateEnsembleProgress(progressData) {
+    const ensembleBtn = document.getElementById('ensemble-toggle');
+    if (!ensembleBtn || !window.ensembleEnabled) return;
+    
+    const completed = progressData.completed || 0;
+    const total = progressData.total || 441; // 21 ensemble + 420 Monte Carlo
+    const percentage = progressData.percentage || 0;
+    
+    // Create progress bar if it doesn't exist
+    let progressBar = ensembleBtn.querySelector('.progress-bar');
+    if (!progressBar) {
+        progressBar = document.createElement('div');
+        progressBar.className = 'progress-bar';
+        ensembleBtn.appendChild(progressBar);
     }
     
-    if (!heatmapData || heatmapData.length === 0) {
-        return;
+    // Update progress bar width based on actual completion
+    progressBar.style.width = `${percentage}%`;
+    
+    // Update button text with actual progress
+    let progressText = ensembleBtn.querySelector('.progress-text');
+    if (!progressText) {
+        // Wrap existing text in progress-text span
+        const textSpan = document.createElement('span');
+        textSpan.className = 'progress-text';
+        ensembleBtn.innerHTML = '';
+        ensembleBtn.appendChild(textSpan);
+        ensembleBtn.appendChild(progressBar);
+        progressText = textSpan;
     }
+    progressText.textContent = `Ensemble (${completed}/${total})`;
+}
+
+async function pollProgress(requestId) {
+    if (!requestId) return null;
     
-    // Convert landing positions to Google Maps LatLng objects with weight
-    // Use weight to create density visualization (each point = 1, aggregated by heatmap)
-    const heatmapPoints = heatmapData.map(point => ({
-        location: new google.maps.LatLng(point.lat, point.lon),
-        weight: 1  // Each landing contributes equally to density
-    }));
+    try {
+        const response = await fetch(`${URL_ROOT}/progress?request_id=${requestId}`);
+        if (response.ok) {
+            const data = await response.json();
+            return data;
+        }
+    } catch (error) {
+        console.warn('Progress polling failed:', error);
+    }
+    return null;
+}
+
+function clearEnsembleProgress() {
+    if (ensembleProgressInterval) {
+        clearInterval(ensembleProgressInterval);
+        ensembleProgressInterval = null;
+    }
+    ensembleStartTime = null;
+    currentRequestId = null;
     
-    // Create heatmap layer
-    heatmapLayer = new google.maps.visualization.HeatmapLayer({
-        data: heatmapPoints,
-        map: map,
-        radius: 30,  // Radius of influence for each point (in pixels)
-        opacity: 0.6,  // Opacity of the heatmap
-        gradient: [
-            'rgba(0, 255, 255, 0)',      // Cyan (transparent) - low density
-            'rgba(0, 255, 255, 0.5)',    // Cyan - medium-low
-            'rgba(0, 255, 0, 0.7)',      // Green - medium
-            'rgba(255, 255, 0, 0.8)',    // Yellow - medium-high
-            'rgba(255, 165, 0, 0.9)',    // Orange - high
-            'rgba(255, 0, 0, 1)'         // Red - highest density
-        ],
-        dissipating: true,  // Heatmap fades out as zoom increases
-        maxIntensity: 10    // Maximum intensity for normalization
-    });
-    
-    console.log(`Heatmap displayed with ${heatmapPoints.length} points`);
+    const ensembleBtn = document.getElementById('ensemble-toggle');
+    if (ensembleBtn) {
+        const progressBar = ensembleBtn.querySelector('.progress-bar');
+        if (progressBar) {
+            progressBar.remove();
+        }
+        const progressText = ensembleBtn.querySelector('.progress-text');
+        if (progressText) {
+            // Restore button text, preserve button state
+            ensembleBtn.innerHTML = 'Ensemble';
+            // Re-apply the 'on' class if ensemble is still enabled
+            if (window.ensembleEnabled) {
+                ensembleBtn.classList.add('on');
+            }
+        }
+    }
 }
 
 // Self explanatory
@@ -187,6 +321,7 @@ async function simulate() {
     // If a simulation is already running, interpret this call as a cancel request
     if (window.__simRunning && window.__simAbort) {
         try { window.__simAbort.abort(); } catch (e) {}
+        clearEnsembleProgress();
         return;
     }
 
@@ -197,6 +332,16 @@ async function simulate() {
     const simBtn = document.getElementById('simulate-btn');
     const spinner = document.getElementById('sim-spinner');
     const originalButtonText = simBtn ? simBtn.textContent : null;
+    
+    // Start progress tracking for ensemble mode
+    if (window.ensembleEnabled) {
+        clearEnsembleProgress();
+        ensembleStartTime = Date.now();
+        // Progress will be updated when we get request_id from response
+        // For now, show initial state
+        updateEnsembleProgress({completed: 0, total: 441, percentage: 0});
+    }
+    
     if (simBtn) {
         simBtn.disabled = true;
         simBtn.classList.add('loading');
@@ -284,20 +429,81 @@ async function simulate() {
                     + "&equil=" + equil + "&eqtime=" + eqtime 
                     + "&asc=" + asc + "&desc=" + desc;
                 console.log("Using spaceshot endpoint (with Monte Carlo):", spaceshotUrl);
+                
+                // Start polling progress BEFORE fetch (so we can track progress during the long-running request)
+                if (window.ensembleEnabled) {
+                    // Compute request_id from parameters (same as server's hash function)
+                    const requestKey = `${time}_${lat}_${lon}_${alt}_${equil}_${eqtime}_${asc}_${desc}`;
+                    
+                    // Simple hash function (matches server-side implementation)
+                    let hash = 0;
+                    for (let i = 0; i < requestKey.length; i++) {
+                        hash = ((hash << 5) - hash) + requestKey.charCodeAt(i);
+                        hash = hash & 0xFFFFFFFF; // Convert to 32-bit integer
+                    }
+                    currentRequestId = Math.abs(hash).toString(16).padStart(16, '0').substring(0, 16);
+                    
+                    // Start polling immediately (before fetch completes)
+                    ensembleProgressInterval = setInterval(async () => {
+                        if (currentRequestId && window.__simRunning) {
+                            const progressData = await pollProgress(currentRequestId);
+                            if (progressData) {
+                                updateEnsembleProgress(progressData);
+                                // If completed, stop polling
+                                if (progressData.completed >= progressData.total) {
+                                    if (ensembleProgressInterval) {
+                                        clearInterval(ensembleProgressInterval);
+                                        ensembleProgressInterval = null;
+                                    }
+                                }
+                            }
+                        } else {
+                            // Simulation stopped, stop polling
+                            if (ensembleProgressInterval) {
+                                clearInterval(ensembleProgressInterval);
+                                ensembleProgressInterval = null;
+                            }
+                        }
+                    }, 2000); // Poll every 2 seconds
+                }
+                
                 try {
                     const response = await fetch(spaceshotUrl, { signal: window.__simAbort.signal });
-                    const data = await response.json(); // Now returns {paths: [...], heatmap_data: [...]}
+                    const data = await response.json(); // Now returns {paths: [...], heatmap_data: [...], request_id: ...}
+                    
+                    console.log('Spaceshot response received:', {
+                        isArray: Array.isArray(data),
+                        hasPaths: !Array.isArray(data) && 'paths' in data,
+                        hasHeatmapData: !Array.isArray(data) && 'heatmap_data' in data,
+                        pathsLength: Array.isArray(data) ? data.length : (data.paths ? data.paths.length : 0),
+                        heatmapLength: Array.isArray(data) ? 0 : (data.heatmap_data ? data.heatmap_data.length : 0),
+                        sampleHeatmapPoint: !Array.isArray(data) && data.heatmap_data && data.heatmap_data.length > 0 ? data.heatmap_data[0] : null
+                    });
                     
                     // Handle new response format (backward compatible)
-                    let payloads, heatmapData;
+                    let payloads, heatmapData, requestId;
                     if (Array.isArray(data)) {
                         // Legacy format: just array of paths
                         payloads = data;
                         heatmapData = [];
+                        requestId = null;
+                        console.log('Using legacy array format (no heatmap data)');
                     } else {
                         // New format: object with paths and heatmap_data
                         payloads = data.paths || [];
                         heatmapData = data.heatmap_data || [];
+                        requestId = data.request_id || null;
+                        console.log(`New format: ${payloads.length} paths, ${heatmapData.length} heatmap points`);
+                        // Update request_id if server provided one (should match our computed one)
+                        if (requestId) {
+                            currentRequestId = requestId;
+                        }
+                    }
+                    
+                    // Stop polling once fetch completes (simulation is done)
+                    if (ensembleProgressInterval) {
+                        clearInterval(ensembleProgressInterval);
+                        ensembleProgressInterval = null;
                     }
 
                     // Process ensemble paths (existing functionality)
@@ -331,9 +537,12 @@ async function simulate() {
                     }
                     
                     // Display Monte Carlo heatmap if data is available
+                    console.log(`Heatmap data received: ${heatmapData ? heatmapData.length : 0} points`);
                     if (heatmapData && heatmapData.length > 0) {
+                        console.log('Calling displayHeatmap with', heatmapData.length, 'points');
                         displayHeatmap(heatmapData);
-                        console.log(`Displaying heatmap with ${heatmapData.length} landing positions`);
+                    } else {
+                        console.warn('No heatmap data to display (heatmapData is empty or null)');
                     }
                 } catch (error) {
                     if (error && (error.name === 'AbortError' || error.message === 'The operation was aborted.')) {
@@ -388,6 +597,7 @@ async function simulate() {
         if (waypointsToggle) {showWaypoints()}
     } finally {
         window.__simRunning = false;
+        clearEnsembleProgress(); // Clear progress when simulation completes
         window.__simAbort = null;
         // Blank out elevation to require refetch before next simulation
         try {
