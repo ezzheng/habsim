@@ -22,9 +22,11 @@ preload_app = True  # Share memory between workers (efficient for large caches)
 reuse_port = True
 
 # Logging
+# Note: Gunicorn's "errorlog" is actually for all application logs (INFO/WARNING/ERROR),
+# not just errors. Railway may display these as "error" level in their UI, but they're normal.
 accesslog = '-'
 errorlog = '-'
-loglevel = 'info'
+loglevel = 'info'  # Log INFO and above (INFO, WARNING, ERROR)
 access_log_format = '%(h)s %(l)s %(u)s %(t)s "%(r)s" %(s)s %(b)s "%(f)s" "%(a)s" %(D)s'
 
 # Process naming
@@ -32,11 +34,12 @@ proc_name = 'habsim'
 
 def on_starting(server):
     """Called just before the master process is initialized."""
+    # Using server.log instead of app.logger to avoid duplicate logs
     server.log.info("Starting HABSIM server with Railway configuration (32GB RAM, 32 CPUs - optimized for speed)")
     server.log.info(f"Workers: {workers}, Threads per worker: {threads}, Max concurrent: {workers * threads}")
-    server.log.info("Optimized for speed using allocated resources (32GB RAM, 32 CPUs)")
 
 def post_fork(server, worker):
     """Called just after a worker has been forked."""
-    server.log.info(f"Worker spawned (pid: {worker.pid})")
+    # Reduced verbosity - worker spawn is normal, no need to log each one
+    pass
 
