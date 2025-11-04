@@ -20,15 +20,18 @@ This is an offshoot of the prediction server developed for the Stanford Space In
   - Background thread pre-warms cache on startup:
     - `_prewarm_cache()`: Pre-loads model 0 simulator in RAM (fast single requests)
     - Files download on-demand when needed (cost-optimized to reduce Supabase egress)
-  - `ThreadPoolExecutor` (concurrent execution) parallelizes ensemble requests (max_workers=16)
-  - Dynamic cache expansion: Simulator cache expands to 25 when ensemble is called, auto-trims after 10 minutes
+  - `ThreadPoolExecutor` (concurrent execution) parallelizes ensemble requests (max_workers=32)
+  - Dynamic cache expansion: Simulator cache expands to 25 when ensemble is called, auto-trims after 90 seconds
+  - Background cache trimming thread: Automatically trims cache in all workers every 30 seconds when ensemble mode expires
   - HTTP caching headers (`Cache-Control`) + Flask-Compress Gzip compression
   - Exposes model configuration dynamically based on `downloader.py` settings
 
 ### Simulation Engine
 - **`simulate.py`** - Main simulation orchestrator
-  - Dynamic multi-simulator LRU cache: 5 simulators normal mode (~750MB), 25 simulators ensemble mode (~3.75GB)
-  - Ensemble mode: Auto-expands cache when `/sim/spaceshot` is called, auto-trims after 10 minutes
+  - Dynamic multi-simulator LRU cache: 5 simulators normal mode (~750MB per worker), 25 simulators ensemble mode (~3.75GB per worker)
+  - Ensemble mode: Auto-expands cache when `/sim/spaceshot` is called, auto-trims after 90 seconds
+  - Background cache trimming: Periodic thread (every 30 seconds) ensures idle workers trim their cache
+  - **Important**: Each Gunicorn worker has its own independent cache (4 workers × 3.75GB = 15GB max in ensemble mode)
   - LRU cache (Least Recently Used eviction policy) for predictions (200 entries, 1hr TTL - Time To Live)
   - Model change management: Automatically detects model updates (checks `whichgefs` every 5 minutes), clears caches when model changes, and deletes old model files from disk cache to prevent accumulation of stale files
   - Coordinates `WindFile`, `ElevationFile`, and `Simulator` classes
@@ -105,7 +108,8 @@ This is an offshoot of the prediction server developed for the Stanford Space In
 - **`gunicorn_config.py`** - Production WSGI server config for Gunicorn (Python WSGI HTTP server)
   - Optimized for Railway (32GB RAM, 32 vCPU)
   - `workers=4`, `threads=8` (32 concurrent capacity via `gthread` worker class)
-  - `preload_app=True` for shared memory between workers (efficient for large caches)
+  - `preload_app=True` for shared code between workers (reduces memory duplication)
+  - **Strategy**: Fewer workers + more threads = same CPU capacity with less RAM (threads share memory)
   - `max_requests=1000` for automatic worker recycling to prevent memory leaks
   - `timeout=300` (5 minutes) for long-running ensemble simulations
 

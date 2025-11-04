@@ -5,12 +5,12 @@ import os
 bind = f"0.0.0.0:{os.getenv('PORT', '8000')}"
 backlog = 512
 
-# Worker processes - OPTIMIZED for SPEED (we have 32GB RAM, 32 CPUs - use them!)
-# Balance between workers and threads for optimal parallelism
-# More workers = better CPU utilization, but more RAM duplication
-workers = 4  # 4 workers for better parallelism (4 workers × 8 threads = 32 concurrent capacity)
-worker_class = 'gthread'  # Use threads for I/O-bound tasks
-threads = 8  # 8 threads per worker = 32 concurrent capacity (matches 32 CPUs)
+# Worker processes - OPTIMIZED for CPU without increasing memory
+# Balance: Fewer workers (less memory) + More threads (shared memory, better CPU usage)
+# Threads share memory within a process, so this maximizes CPU usage without RAM cost
+workers = 4  # 4 workers to minimize memory duplication (4 workers × 8 threads = 32 concurrent capacity)
+worker_class = 'gthread'  # Use threads for I/O-bound tasks (NumPy releases GIL for computation)
+threads = 8  # 8 threads per worker = 32 concurrent capacity (matches 32 CPUs, shared memory)
 worker_connections = 500
 max_requests = 1000  # Higher limit since we have more memory headroom
 max_requests_jitter = 100

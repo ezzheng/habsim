@@ -5,6 +5,7 @@ import elev
 import hashlib
 import time
 import threading
+import logging
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from windfile import WindFile
@@ -29,6 +30,7 @@ elevation_cache = None
 
 currgefs = "Unavailable"
 _last_refresh_check = 0.0
+_cache_trim_thread_started = False
 
 # Prediction cache - increased for 32GB RAM
 _prediction_cache = {}
@@ -135,8 +137,8 @@ def _get_elevation_data():
         elevation_cache = load_gefs('worldelev.npy')
     return elevation_cache
 
-def set_ensemble_mode(duration_seconds=600):
-    """Enable ensemble mode (larger cache) for specified duration (default 10 minutes)"""
+def set_ensemble_mode(duration_seconds=90):
+    """Enable ensemble mode (larger cache) for specified duration (default 90 seconds / 1.5 minutes)"""
     global _current_max_cache, _ensemble_mode_until
     now = time.time()
     with _cache_lock:
@@ -169,17 +171,43 @@ def _trim_cache_to_normal():
             
             # Evict models not in the keep list
             models_to_evict = set(_simulator_cache.keys()) - models_to_keep
+            evicted_count = len(models_to_evict)
             for model_id in models_to_evict:
                 del _simulator_cache[model_id]
                 del _simulator_access_times[model_id]
             
-            if models_to_evict:
+            if evicted_count > 0:
                 gc.collect()  # Help GC reclaim memory from evicted simulators
+                logging.info(f"Trimmed cache: evicted {evicted_count} simulators, keeping {len(_simulator_cache)} (limit: {_current_max_cache})")
+
+def _periodic_cache_trim():
+    """Background thread that periodically trims cache when ensemble mode expires.
+    This ensures idle workers trim their cache even if they don't receive requests.
+    Without this, each worker process maintains its own cache, and idle workers never trim.
+    """
+    while True:
+        try:
+            time.sleep(30)  # Check every 30 seconds
+            _trim_cache_to_normal()
+        except Exception as e:
+            logging.warning(f"Cache trim thread error (non-critical): {e}")
+            time.sleep(60)  # Wait longer on error
+
+def _start_cache_trim_thread():
+    """Start background thread for periodic cache trimming (called once per worker)"""
+    global _cache_trim_thread_started
+    if not _cache_trim_thread_started:
+        _cache_trim_thread_started = True
+        thread = threading.Thread(target=_periodic_cache_trim, daemon=True)
+        thread.start()
 
 def _get_simulator(model):
     """Get simulator for given model, with dynamic multi-simulator LRU cache."""
     global _simulator_cache, _simulator_access_times, _last_refresh_check, _current_max_cache
     now = time.time()
+    
+    # Start background cache trim thread if not already started
+    _start_cache_trim_thread()
     
     # Refresh GEFS data if needed
     if currgefs == "Unavailable" or now - _last_refresh_check > 300:

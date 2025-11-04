@@ -229,11 +229,11 @@ def spaceshot():
     eqtime = float(args['eqtime'])
     asc, desc = float(args['asc']), float(args['desc'])
     
-    # Enable ensemble mode (expanded cache) for 10 minutes
+    # Enable ensemble mode (expanded cache) for 90 seconds
     # This allows all 21 models to be cached during ensemble runs
-    # If another ensemble run happens within 10 min, it extends the duration
-    simulate.set_ensemble_mode(duration_seconds=600)
-    app.logger.info("Ensemble mode enabled: expanded cache for 10 minutes (extends with each ensemble run)")
+    # If another ensemble run happens within 90 seconds, it extends the duration
+    simulate.set_ensemble_mode(duration_seconds=90)
+    app.logger.info("Ensemble mode enabled: expanded cache for 90 seconds (extends with each ensemble run)")
     
     # Build model list based on configuration
     model_ids = []
@@ -244,13 +244,14 @@ def spaceshot():
     app.logger.info(f"Ensemble run: Processing {len(model_ids)} models: {model_ids}")
     
     # Parallel execution for faster ensemble runs
-    # max_workers=16 for maximum parallelism (we have 32 CPUs, use them!)
-    # Since we're paying for 32 CPUs, might as well use them for speed
+    # max_workers=32 to fully utilize all 32 CPUs (one per CPU)
+    # This allows all 21 models to run in parallel + extra capacity for file I/O operations
+    # Since we're paying for 32 CPUs, let's use them all for maximum speed!
     from concurrent.futures import ThreadPoolExecutor, as_completed
     paths = [None] * len(model_ids)  # Pre-allocate to preserve order
     
     try:
-        with ThreadPoolExecutor(max_workers=16) as executor:
+        with ThreadPoolExecutor(max_workers=32) as executor:
             # Submit all tasks
             future_to_model = {
                 executor.submit(singlezpb, timestamp, lat, lon, alt, equil, eqtime, asc, desc, model): model
@@ -297,7 +298,7 @@ def spaceshot():
         # This happens automatically via _trim_cache_to_normal() but we can trigger it
         simulate._trim_cache_to_normal()
         elapsed = time.time() - start_time
-        app.logger.info(f"Ensemble run complete in {elapsed:.1f} seconds, cache will trim to normal size 10 minutes after last ensemble run")
+        app.logger.info(f"Ensemble run complete in {elapsed:.1f} seconds, cache will trim to normal size 90 seconds after last ensemble run")
     
     return jsonify(paths)
 
