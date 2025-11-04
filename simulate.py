@@ -151,7 +151,7 @@ def set_ensemble_mode(duration_seconds=600):
 
 def _trim_cache_to_normal():
     """Trim cache back to normal size, keeping most recently used models"""
-    global _current_max_cache, _simulator_cache, _simulator_access_times
+    global _current_max_cache, _simulator_cache, _simulator_access_times, _ensemble_mode_until
     now = time.time()
     
     with _cache_lock:
