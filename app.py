@@ -57,7 +57,7 @@ def _prewarm_cache():
                 app.logger.info(f"Model {model_id} pre-warmed")
                 time.sleep(0.5)
             except Exception as e:
-                app.logger.warning(f"Failed to pre-warm model {model_id}: {e}")
+                app.logger.info(f"Failed to pre-warm model {model_id} (non-critical, will retry on-demand): {e}")
         
         app.logger.info(f"Cache pre-warming complete! Model 0 ready. Ensemble runs will build simulators from file cache on-demand.")
         
@@ -66,11 +66,11 @@ def _prewarm_cache():
             _ = elev.getElevation(0, 0)
             app.logger.info("Elevation pre-warmed successfully")
         except Exception as ee:
-            app.logger.warning(f"Elevation pre-warm failed (non-critical): {ee}")
+            app.logger.info(f"Elevation pre-warm failed (non-critical, will retry on-demand): {ee}")
         
         app.logger.info(f"Cache pre-warming complete! All {len(model_ids)} models pre-warmed")
     except Exception as e:
-        app.logger.warning(f"Cache pre-warming failed (non-critical): {e}")
+        app.logger.info(f"Cache pre-warming failed (non-critical, will retry on-demand): {e}")
 
 # Start pre-warming in background thread
 _cache_warmer_thread = threading.Thread(target=_prewarm_cache, daemon=True)
@@ -92,7 +92,7 @@ def status():
         f.close()
         return "Ready"
     except Exception as e:
-        app.logger.warning(f"Status check failed: {e}")
+        app.logger.info(f"Status check failed (non-critical): {e}")
         return "Unavailable"
 
 @app.route('/sim/models')
