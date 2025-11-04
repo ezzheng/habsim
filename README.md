@@ -22,7 +22,7 @@ This is an offshoot of the prediction server developed for the Stanford Space In
     - Files download on-demand when needed (cost-optimized to reduce Supabase egress)
   - `ThreadPoolExecutor` (concurrent execution) parallelizes ensemble requests (max_workers=32)
   - **Ensemble + Monte Carlo**: `/sim/spaceshot` runs both 21 ensemble paths AND 420 Monte Carlo simulations (20 perturbations × 21 models) for heatmap visualization
-  - Dynamic cache expansion: Simulator cache expands to 25 when ensemble is called, auto-trims after 120 seconds (extended for Monte Carlo)
+  - Dynamic cache expansion: Simulator cache expands to 25 when ensemble is called, auto-trims after 60 seconds
   - Background cache trimming thread: Automatically trims cache in all workers every 30 seconds when ensemble mode expires
   - HTTP caching headers (`Cache-Control`) + Flask-Compress Gzip compression
   - Exposes model configuration dynamically based on `downloader.py` settings
@@ -30,7 +30,7 @@ This is an offshoot of the prediction server developed for the Stanford Space In
 ### Simulation Engine
 - **`simulate.py`** - Main simulation orchestrator
   - Dynamic multi-simulator LRU cache: 5 simulators normal mode (~750MB per worker), 25 simulators ensemble mode (~3.75GB per worker)
-  - Ensemble mode: Auto-expands cache when `/sim/spaceshot` is called, auto-trims after 120 seconds (extended for Monte Carlo)
+  - Ensemble mode: Auto-expands cache when `/sim/spaceshot` is called, auto-trims after 60 seconds
   - Uses memory-mapping for memory efficiency (I/O-bound, but manageable RAM usage)
   - Background cache trimming: Periodic thread (every 30 seconds) ensures idle workers trim their cache
   - **Important**: Each Gunicorn worker has its own independent cache (4 workers × 3.75GB = 15GB max in ensemble mode)

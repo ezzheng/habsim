@@ -233,9 +233,9 @@ def spaceshot():
     # Optional: number of perturbations (default 20)
     num_perturbations = int(args.get('num_perturbations', 20))
     
-    # Enable ensemble mode (expanded cache) for longer duration to accommodate Monte Carlo
-    simulate.set_ensemble_mode(duration_seconds=120)
-    app.logger.info("Ensemble mode enabled: expanded cache for 120 seconds (ensemble + Monte Carlo)")
+    # Enable ensemble mode (expanded cache) for 60 seconds
+    simulate.set_ensemble_mode(duration_seconds=60)
+    app.logger.info("Ensemble mode enabled: expanded cache for 60 seconds (ensemble + Monte Carlo)")
     
     # Build model list based on configuration
     model_ids = []
@@ -406,10 +406,9 @@ def montecarlo():
     # Optional: number of perturbations (default 20)
     num_perturbations = int(args.get('num_perturbations', 20))
     
-    # Enable ensemble mode (expanded cache) for longer duration
-    # Monte Carlo takes longer, so extend ensemble mode
-    simulate.set_ensemble_mode(duration_seconds=120)
-    app.logger.info(f"Ensemble mode enabled: expanded cache for 120 seconds (Monte Carlo run)")
+    # Enable ensemble mode (expanded cache) for 60 seconds
+    simulate.set_ensemble_mode(duration_seconds=60)
+    app.logger.info(f"Ensemble mode enabled: expanded cache for 60 seconds (Monte Carlo run)")
     
     # Build model list based on configuration
     model_ids = []

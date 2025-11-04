@@ -191,8 +191,8 @@ HABSIM uses a multi-layer caching strategy optimized for Railway (max 32GB RAM, 
   - 420 Monte Carlo simulations (20 perturbations × 21 models) for heatmap visualization
   - Both run in parallel using the same 32-worker pool
   - Returns `{paths: [...], heatmap_data: [...]}` for frontend visualization
-- **Auto-extension**: Each ensemble run extends ensemble mode by 120 seconds (extended for Monte Carlo)
-- **Auto-trimming**: Cache trims back to 5 simulators 120 seconds after last ensemble run
+- **Auto-extension**: Each ensemble run extends ensemble mode by 60 seconds
+- **Auto-trimming**: Cache trims back to 5 simulators 60 seconds after last ensemble run
 
 ### Model Change Management (`simulate.py`)
 - **Automatic Detection**: `refresh()` checks `whichgefs` every 5 minutes for model updates
@@ -245,8 +245,7 @@ HABSIM uses a multi-layer caching strategy optimized for Railway (max 32GB RAM, 
 
 **Ensemble Mode**:
 - Auto-enabled when `/sim/spaceshot` is called
-- Duration: 120 seconds (2 minutes, auto-extends with each ensemble run)
-- Extended duration to accommodate Monte Carlo simulations (420 total simulations)
+- Duration: 60 seconds (1 minute, auto-extends with each ensemble run)
 - Auto-trims cache to 5 simulators after expiration
 
 ## Performance Profile
@@ -274,13 +273,13 @@ HABSIM uses a multi-layer caching strategy optimized for Railway (max 32GB RAM, 
   - Files cached on disk for subsequent runs (no additional egress)
 - **Output**: Returns both `paths` (21 ensemble trajectories) and `heatmap_data` (420 landing positions)
 
-### Subsequent Ensemble Runs (Within 120 Seconds)
+### Subsequent Ensemble Runs (Within 60 Seconds)
 - **Speed**: ~5-15 minutes (simulators cached, but still need to run all simulations)
 - **RAM**: ~15-16GB (worst case), typically ~5-6GB (maintained from first run)
 - **CPU**: Moderate (32 ThreadPoolExecutor workers + 32 Gunicorn threads, I/O-bound)
 - **Why Faster**: All 21 simulators already in RAM cache across workers (memory-mapped files)
 
-### After 120 Seconds (Auto-trim)
+### After 60 Seconds (Auto-trim)
 - **RAM**: Trims to ~3GB (4 workers × 750MB) via background thread, typically ~1.5-2GB (models distributed)
 - **CPU**: Minimal (idle)
 - **Cost**: Frees ~12GB RAM automatically (from 15GB → 3GB worst case)
