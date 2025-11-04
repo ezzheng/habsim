@@ -136,7 +136,7 @@ This is an offshoot of the prediction server developed for the Stanford Space In
 - **Access**: Files downloaded on-demand when needed
 
 ### Railway/Render Instance (Local Disk Cache)
-- **Location**: `/app/data/gefs` on Railway (ephemeral storage, or persistent volume if beta access) or `/opt/render/project/src/data/gefs` on Render
+- **Location**: `/app/data/gefs` on Railway (ephemeral storage)
 - **Files**: Up to 25 `.npz` files (~7.7GB) cached on disk
 - **Purpose**: Fast local access, eliminates download delays after first download
 - **Eviction**: LRU (Least Recently Used) when cache exceeds 25 files
