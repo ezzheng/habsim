@@ -29,9 +29,11 @@ from gefs import listdir_gefs, open_gefs
 import simulate
 import downloader  # Import to access model configuration
 
-# Pre-warm cache on startup in background
+# File pre-warming removed to reduce Supabase egress costs
+# Files will download on-demand when needed (still fast due to file cache)
+
 def _prewarm_cache():
-    """Pre-load all configured models to avoid cold starts"""
+    """Pre-load only model 0 for fast single requests (cost-optimized)"""
     try:
         import time
         time.sleep(2)  # Give the app a moment to fully initialize
@@ -42,16 +44,22 @@ def _prewarm_cache():
             model_ids.append(0)
         model_ids.extend(range(1, 1 + downloader.NUM_PERTURBED_MEMBERS))
         
-        app.logger.info(f"Pre-warming cache: loading models {model_ids}...")
+        app.logger.info(f"Pre-warming cache: configured models {model_ids}...")
         
-        # Pre-warm model 0 (most common, fastest path for single model requests)
-        models_to_prewarm = model_ids[:1]  # Pre-warm only model 0
+        # Pre-warm only model 0 for fast single requests (cost-optimized)
+        # Ensemble runs will build simulators on-demand from file cache (files pre-downloaded to disk)
+        models_to_prewarm = model_ids[:1]  # Pre-warm only model 0 (fast path for single requests)
+        app.logger.info(f"Pre-warming {len(models_to_prewarm)} model(s) for fast single requests: {models_to_prewarm}")
+        
         for model_id in models_to_prewarm:
             try:
                 simulate._get_simulator(model_id)
                 app.logger.info(f"Model {model_id} pre-warmed")
+                time.sleep(0.5)
             except Exception as e:
                 app.logger.warning(f"Failed to pre-warm model {model_id}: {e}")
+        
+        app.logger.info(f"Cache pre-warming complete! Model 0 ready. Ensemble runs will build simulators from file cache on-demand.")
         
         # Pre-warm elevation memmap used by /elev endpoint
         try:
@@ -60,7 +68,7 @@ def _prewarm_cache():
         except Exception as ee:
             app.logger.warning(f"Elevation pre-warm failed (non-critical): {ee}")
         
-        app.logger.info(f"Cache pre-warming complete! ({len(model_ids)} models)")
+        app.logger.info(f"Cache pre-warming complete! All {len(model_ids)} models pre-warmed")
     except Exception as e:
         app.logger.warning(f"Cache pre-warming failed (non-critical): {e}")
 
@@ -199,6 +207,7 @@ def spaceshot():
     """
     Run all available ensemble models (respects DOWNLOAD_CONTROL and NUM_PERTURBED_MEMBERS).
     Note: This endpoint is designed for the full ensemble spread, so it uses all configured models.
+    Enables ensemble mode (expanded cache) for 1 hour to speed up ensemble runs.
     """
     args = request.args
     timestamp = datetime.utcfromtimestamp(float(args['timestamp'])).replace(tzinfo=timezone.utc)
@@ -208,6 +217,12 @@ def spaceshot():
     eqtime = float(args['eqtime'])
     asc, desc = float(args['asc']), float(args['desc'])
     
+    # Enable ensemble mode (expanded cache) for 10 minutes
+    # This allows all 21 models to be cached during ensemble runs
+    # If another ensemble run happens within 10 min, it extends the duration
+    simulate.set_ensemble_mode(duration_seconds=600)
+    app.logger.info("Ensemble mode enabled: expanded cache for 10 minutes (extends with each ensemble run)")
+    
     # Build model list based on configuration
     model_ids = []
     if downloader.DOWNLOAD_CONTROL:
@@ -215,27 +230,34 @@ def spaceshot():
     model_ids.extend(range(1, 1 + downloader.NUM_PERTURBED_MEMBERS))
     
     # Parallel execution for faster ensemble runs
-    # Conservative max_workers=2 for 2GB RAM, 1 CPU limit
+    # max_workers=16 for maximum parallelism (we have 32 CPUs, use them!)
+    # Since we're paying for 32 CPUs, might as well use them for speed
     from concurrent.futures import ThreadPoolExecutor, as_completed
     paths = [None] * len(model_ids)  # Pre-allocate to preserve order
     
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        # Submit all tasks
-        future_to_model = {
-            executor.submit(singlezpb, timestamp, lat, lon, alt, equil, eqtime, asc, desc, model): model
-            for model in model_ids
-        }
-        
-        # Collect results as they complete
-        for future in as_completed(future_to_model):
-            model = future_to_model[future]
-            try:
-                idx = model_ids.index(model)
-                paths[idx] = future.result()
-            except Exception as e:
-                app.logger.exception(f"Model {model} failed")
-                idx = model_ids.index(model)
-                paths[idx] = "error"
+    try:
+        with ThreadPoolExecutor(max_workers=16) as executor:
+            # Submit all tasks
+            future_to_model = {
+                executor.submit(singlezpb, timestamp, lat, lon, alt, equil, eqtime, asc, desc, model): model
+                for model in model_ids
+            }
+            
+            # Collect results as they complete
+            for future in as_completed(future_to_model):
+                model = future_to_model[future]
+                try:
+                    idx = model_ids.index(model)
+                    paths[idx] = future.result()
+                except Exception as e:
+                    app.logger.exception(f"Model {model} failed")
+                    idx = model_ids.index(model)
+                    paths[idx] = "error"
+    finally:
+        # Trim cache back to normal size after ensemble run completes
+        # This happens automatically via _trim_cache_to_normal() but we can trigger it
+        simulate._trim_cache_to_normal()
+        app.logger.info("Ensemble run complete, cache will trim to normal size 10 minutes after last ensemble run")
     
     return jsonify(paths)
 

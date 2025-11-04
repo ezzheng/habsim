@@ -59,14 +59,20 @@ _SESSION.mount("http://", _ADAPTER)
 
 _DEFAULT_TIMEOUT = (3, 60)
 _CACHEABLE_SUFFIXES = (".npz", ".npy")
-# Use persistent directory on Render (/opt/render/project/src) instead of /tmp (limited to 2GB)
-# Falls back to tempdir if not on Render
-_default_cache_dir = Path("/opt/render/project/src/data/gefs") if Path("/opt/render/project/src").exists() else Path(tempfile.gettempdir()) / "habsim-gefs"
+# Use persistent directory on Railway or Render, fallback to tempdir
+# Check for Railway first (persistent volume), then Render, then tempdir
+_default_cache_dir = None
+if Path("/opt/render/project/src").exists():
+    _default_cache_dir = Path("/opt/render/project/src/data/gefs")
+elif Path("/app/data").exists():  # Railway default app directory
+    _default_cache_dir = Path("/app/data/gefs")
+else:
+    _default_cache_dir = Path(tempfile.gettempdir()) / "habsim-gefs"
 _CACHE_DIR = Path(os.environ.get("HABSIM_CACHE_DIR", _default_cache_dir))
 _CACHE_DIR.mkdir(parents=True, exist_ok=True)
 _CACHE_LOCK = threading.Lock()
 _CHUNK_SIZE = 1024 * 1024
-_MAX_CACHED_FILES = 3  # Allow 3 weather files (~924MB) for ensemble runs
+_MAX_CACHED_FILES = 25  # Allow 25 weather files (~7.7GB) - handles full 21-model ensemble + buffer
 
 def _object_url(path: str) -> str:
     return f"{_BASE_URL}/storage/v1/object/{path}"
@@ -159,6 +165,7 @@ def _ensure_cached(file_name: str) -> Path:
     if cache_path.exists():
         # Update access time to mark as recently used
         cache_path.touch()
+        logging.debug(f"File cache HIT: {file_name} (no Supabase egress)")
         return cache_path
 
     cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -166,11 +173,15 @@ def _ensure_cached(file_name: str) -> Path:
     with _CACHE_LOCK:
         if cache_path.exists():
             cache_path.touch()
+            logging.debug(f"File cache HIT: {file_name} (no Supabase egress)")
             return cache_path
 
         # Clean up old files before downloading new one
         _cleanup_old_cache_files()
 
+        # Log download attempt (this will use Supabase egress)
+        logging.info(f"File cache MISS: {file_name} - downloading from Supabase (will use egress)")
+        
         resp = _SESSION.get(
             _object_url(f"{_BUCKET}/{file_name}"),
             headers=_COMMON_HEADERS,
@@ -213,6 +224,10 @@ def _ensure_cached(file_name: str) -> Path:
             if expected_size and actual_size != expected_size:
                 raise IOError(f"Download incomplete: {file_name} expected {expected_size} bytes, got {actual_size}")
             
+            # Log successful download with size (for egress tracking)
+            size_mb = actual_size / (1024 * 1024)
+            logging.info(f"Downloaded {file_name} from Supabase: {size_mb:.2f} MB (egress used)")
+            
             # Validate NPZ file structure before committing
             if file_name.endswith('.npz'):
                 try:
@@ -231,6 +246,8 @@ def _ensure_cached(file_name: str) -> Path:
             # Verify final file exists and is not empty
             if not cache_path.exists() or cache_path.stat().st_size == 0:
                 raise IOError(f"Downloaded file {file_name} is missing or empty after rename")
+            
+            logging.info(f"Cached {file_name} to disk: {cache_path} (future reads will use zero egress)")
         except Exception as e:
             # Clean up partial download
             if tmp_path.exists():

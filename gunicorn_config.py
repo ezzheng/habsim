@@ -1,23 +1,24 @@
-# Gunicorn configuration file optimized for Render (2GB RAM, 1 CPU)
+# Gunicorn configuration file optimized for Railway (32GB RAM, 32 vCPU)
 import os
 
 # Server socket
 bind = f"0.0.0.0:{os.getenv('PORT', '8000')}"
 backlog = 512
 
-# Worker processes - CONSERVATIVE for 2GB RAM, 1 CPU
-# With 1 CPU, we use 2 workers max to avoid context switching overhead
-workers = 2  # 2 workers for 1 CPU (allows graceful restarts)
+# Worker processes - OPTIMIZED for SPEED (we have 32GB RAM, 32 CPUs - use them!)
+# Balance between workers and threads for optimal parallelism
+# More workers = better CPU utilization, but more RAM duplication
+workers = 4  # 4 workers for better parallelism (4 workers × 8 threads = 32 concurrent capacity)
 worker_class = 'gthread'  # Use threads for I/O-bound tasks
-threads = 2  # 2 threads per worker = 4 concurrent requests total
+threads = 8  # 8 threads per worker = 32 concurrent capacity (matches 32 CPUs)
 worker_connections = 500
-max_requests = 300  # Restart workers more aggressively to prevent memory leaks (was 800)
-max_requests_jitter = 50  # Reduced jitter for more predictable recycling
-timeout = 120  # Allow 2 minutes for long-running simulations
-keepalive = 5
+max_requests = 1000  # Higher limit since we have more memory headroom
+max_requests_jitter = 100
+timeout = 300  # 5 minutes for long-running ensemble simulations
+keepalive = 10
 
-# Memory optimization for 2GB limit
-preload_app = True  # Share memory between workers (critical for 2GB!)
+# Memory optimization for 32GB RAM
+preload_app = True  # Share memory between workers (efficient for large caches)
 reuse_port = True
 
 # Logging
@@ -31,8 +32,9 @@ proc_name = 'habsim'
 
 def on_starting(server):
     """Called just before the master process is initialized."""
-    server.log.info("Starting HABSIM server with optimized configuration")
-    server.log.info(f"Workers: {workers}, Threads per worker: {threads}")
+    server.log.info("Starting HABSIM server with Railway configuration (32GB RAM, 32 CPUs - optimized for speed)")
+    server.log.info(f"Workers: {workers}, Threads per worker: {threads}, Max concurrent: {workers * threads}")
+    server.log.info("Optimized for speed using allocated resources (32GB RAM, 32 CPUs)")
 
 def post_fork(server, worker):
     """Called just after a worker has been forked."""
