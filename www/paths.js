@@ -261,7 +261,8 @@ function updateEnsembleProgress(progressData) {
     // Update progress bar width based on actual completion
     progressBar.style.width = `${percentage}%`;
     
-    // Update button text with actual progress
+    // Update button text - replace "Ensemble" with just the count (e.g., "X/441")
+    // This prevents text from being cut off on mobile
     let progressText = ensembleBtn.querySelector('.progress-text');
     if (!progressText) {
         // Wrap existing text in progress-text span
@@ -272,7 +273,8 @@ function updateEnsembleProgress(progressData) {
         ensembleBtn.appendChild(progressBar);
         progressText = textSpan;
     }
-    progressText.textContent = `Ensemble (${completed}/${total})`;
+    // Show only the count (e.g., "X/441") instead of "Ensemble (X/441)"
+    progressText.textContent = `${completed}/${total}`;
 }
 
 async function pollProgress(requestId) {
@@ -306,9 +308,18 @@ function clearEnsembleProgress() {
         }
         const progressText = ensembleBtn.querySelector('.progress-text');
         if (progressText) {
-            // Restore button text, preserve button state
+            // Restore "Ensemble" text when simulation finishes or is cancelled
             ensembleBtn.innerHTML = 'Ensemble';
             // Re-apply the 'on' class if ensemble is still enabled
+            if (window.ensembleEnabled) {
+                ensembleBtn.classList.add('on');
+            }
+        } else {
+            // If no progress-text span exists, just ensure button says "Ensemble"
+            // This handles edge cases where progress was never initialized
+            if (ensembleBtn.textContent.trim() !== 'Ensemble') {
+                ensembleBtn.textContent = 'Ensemble';
+            }
             if (window.ensembleEnabled) {
                 ensembleBtn.classList.add('on');
             }
