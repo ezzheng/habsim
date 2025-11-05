@@ -32,6 +32,8 @@ elevation_cache = None
 currgefs = "Unavailable"
 _last_refresh_check = 0.0
 _cache_trim_thread_started = False
+_in_use_models = set()
+_in_use_lock = threading.Lock()
 _IDLE_RESET_TIMEOUT = 180.0  # seconds of no requests before forcing deep cleanup
 _IDLE_CLEAN_COOLDOWN = 180.0  # minimum delay between idle cleanups
 _last_activity_timestamp = time.time()
@@ -278,6 +280,9 @@ def _trim_cache_to_normal():
             
             # Evict models not in the keep list
             models_to_evict = set(_simulator_cache.keys()) - models_to_keep
+            # Do not evict models currently in use
+            with _in_use_lock:
+                models_to_evict = {m for m in models_to_evict if m not in _in_use_models}
             evicted_count = len(models_to_evict)
             
             # Explicitly clear WindFile objects and all their data before deleting simulators
@@ -440,6 +445,9 @@ def _force_aggressive_trim():
         
         # Evict all others
         for model_id in list(_simulator_cache.keys()):
+            with _in_use_lock:
+                if model_id in _in_use_models:
+                    continue
             if model_id != model_to_keep:
                 simulator = _simulator_cache.get(model_id)
                 if simulator:
@@ -511,8 +519,12 @@ def _get_simulator(model):
         if model in _simulator_cache:
             simulator = _simulator_cache[model]
             # Verify simulator is still valid (wind_file.data hasn't been cleaned up)
-            if simulator and hasattr(simulator, 'wind_file') and simulator.wind_file:
-                if simulator.wind_file.data is None:
+            if simulator:
+                if not hasattr(simulator, 'wind_file') or simulator.wind_file is None:
+                    logging.warning(f"Simulator {model} has no wind_file - removing and recreating")
+                    del _simulator_cache[model]
+                    del _simulator_access_times[model]
+                elif getattr(simulator.wind_file, 'data', None) is None:
                     # Simulator was cleaned up but still in cache - remove it and recreate
                     logging.warning(f"Simulator {model} found in cache but wind_file.data is None - removing and recreating")
                     del _simulator_cache[model]
@@ -558,8 +570,8 @@ def _get_simulator(model):
             gc.collect()  # Help GC reclaim memory from evicted simulator
     
     # Load new simulator (outside lock to avoid blocking other threads)
-    # Pre-load full arrays into RAM if in ensemble mode (faster, CPU-bound) vs memory-map (slower, I/O-bound)
-    preload_arrays = _is_ensemble_mode()
+    # Use memory-mapped access to keep memory low and avoid large preloads
+    preload_arrays = False
     wind_file = WindFile(load_gefs(f'{currgefs}_{str(model).zfill(2)}.npz'), preload=preload_arrays)
     simulator = Simulator(wind_file, _get_elevation_data())
     
@@ -595,6 +607,9 @@ def simulate(simtime, lat, lon, rate, step, max_duration, alt, model, coefficien
     if cached_result is not None:
         return cached_result
     
+    # Mark model as in use to prevent cleanup races
+    with _in_use_lock:
+        _in_use_models.add(model)
     try:
         simulator = _get_simulator(model)
         balloon = Balloon(location=(lat, lon), alt=alt, time=simtime, ascent_rate=rate)
@@ -627,4 +642,7 @@ def simulate(simtime, lat, lon, rate, step, max_duration, alt, model, coefficien
     except Exception as e:
         # Don't cache errors
         raise e
+    finally:
+        with _in_use_lock:
+            _in_use_models.discard(model)
 
