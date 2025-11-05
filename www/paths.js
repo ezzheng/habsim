@@ -690,19 +690,27 @@ function displayContours(heatmapData) {
                 const path = contour.map(p => new google.maps.LatLng(p.lat, p.lon));
                 const color = getContourColor(threshold);
                 
+                // Ensure the contour is closed (last point should equal first point from convex hull)
+                // Double-check by adding first point at end if not already there
+                const firstPoint = path[0];
+                const lastPoint = path[path.length - 1];
+                if (firstPoint.lat() !== lastPoint.lat() || firstPoint.lng() !== lastPoint.lng()) {
+                    path.push(firstPoint);
+                }
+                
                 // Add label at midpoint of contour, breaking the line around it
                 const midIndex = Math.floor(path.length / 2);
                 const midPoint = path[midIndex];
                 
                 // Split path into two segments to create gap for label
                 // Create gap by skipping points around the label position
-                const gapSize = Math.max(3, Math.floor(path.length * 0.1)); // 10% gap, min 3 points
+                const gapSize = Math.max(3, Math.floor(path.length * 0.08)); // 8% gap, min 3 points
                 const gapStart = Math.max(0, midIndex - gapSize);
                 const gapEnd = Math.min(path.length, midIndex + gapSize);
                 
                 // First segment: start to gap
                 const path1 = path.slice(0, gapStart + 1);
-                // Second segment: gap end to finish
+                // Second segment: gap end to finish (will close back to start)
                 const path2 = path.slice(gapEnd);
                 
                 // Create two polylines instead of one (with gap for label)

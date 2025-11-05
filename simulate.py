@@ -275,25 +275,35 @@ def _periodic_cache_trim():
                 # Ensemble mode expired but cache still large - trim immediately and aggressively
                 logging.info(f"Ensemble mode expired/exceeded, trimming cache from {cache_size} to {MAX_SIMULATOR_CACHE_NORMAL}")
                 _trim_cache_to_normal()
+                # Force additional GC passes to ensure memory is released
+                for _ in range(3):
+                    gc.collect()
+                try:
+                    import ctypes
+                    libc = ctypes.CDLL("libc.so.6")
+                    libc.malloc_trim(0)
+                    logging.info("Forced malloc_trim after cache trim")
+                except:
+                    pass
                 # Check immediately after trimming to see if it worked
                 with _cache_lock:
                     new_size = len(_simulator_cache)
                 if new_size > MAX_SIMULATOR_CACHE_NORMAL:
                     consecutive_trim_failures += 1
                     logging.warning(f"Cache trim didn't reduce size enough: {new_size} > {MAX_SIMULATOR_CACHE_NORMAL} (failure #{consecutive_trim_failures})")
-                    if consecutive_trim_failures > 3:
+                    if consecutive_trim_failures > 2:  # Reduced from 3 to 2 for faster response
                         # Force more aggressive trimming
                         logging.warning("Multiple trim failures, forcing aggressive cleanup")
                         _force_aggressive_trim()
                         consecutive_trim_failures = 0
                 else:
                     consecutive_trim_failures = 0
-                time.sleep(5)  # Check very frequently (every 5s) until cache is trimmed
+                time.sleep(3)  # Check even more frequently (reduced from 5s) when trim failing
             else:
                 # Normal check interval - always call trim to handle edge cases
                 _trim_cache_to_normal()
                 consecutive_trim_failures = 0
-                time.sleep(30)  # Check every 30 seconds
+                time.sleep(20)  # Check more frequently (reduced from 30s)
         except Exception as e:
             logging.warning(f"Cache trim thread error (non-critical): {e}", exc_info=True)
             time.sleep(60)  # Wait longer on error

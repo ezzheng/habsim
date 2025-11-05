@@ -243,7 +243,7 @@ def singlezpbh():
 
 
 @app.route('/sim/spaceshot')
-@cache_for(600)  # Cache for 10 minutes
+# NO CACHING - This is a real-time simulation with progress tracking
 def spaceshot():
     """
     Run all available ensemble models with Monte Carlo analysis.

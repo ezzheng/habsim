@@ -249,13 +249,15 @@
         #param-panel {
             padding: 20px 24px 24px 24px;
             background: var(--bg);
-            max-height: 60vh;
+            max-height: 80vh;
             overflow-y: auto;
             overflow-x: hidden;
             width: 100%;
             box-sizing: border-box;
             -webkit-overflow-scrolling: touch;
-            transition: max-height 0.3s ease-in-out, padding 0.3s ease-in-out, opacity 0.3s ease-in-out;
+            transition: max-height 0.35s cubic-bezier(0.4, 0, 0.2, 1), 
+                        padding 0.35s cubic-bezier(0.4, 0, 0.2, 1), 
+                        opacity 0.25s ease-out;
             opacity: 1;
         }
         #param-panel.collapsed {
