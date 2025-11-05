@@ -237,18 +237,24 @@ def _trim_cache_to_normal():
                 del _simulator_access_times[model_id]
             
             if evicted_count > 0:
+                # Aggressive memory cleanup - critical for ensemble mode with large arrays
                 # Multiple GC passes to ensure memory is freed
                 # Python's GC may need multiple passes to fully reclaim large numpy arrays
-                for _ in range(3):
+                for _ in range(5):  # Increased from 3 to 5 passes
                     gc.collect()
-                # Force Python to release memory back to OS if possible
+                    gc.collect(generation=2)  # Force full collection including all generations
+                
+                # Force Python to release memory back to OS
                 try:
                     import ctypes
                     libc = ctypes.CDLL("libc.so.6")
                     libc.malloc_trim(0)  # Release free memory back to OS (Linux only)
-                except:
-                    pass  # Not available on all platforms, ignore failure
+                    logging.info("malloc_trim(0) executed to release memory to OS")
+                except Exception as e:
+                    logging.debug(f"malloc_trim not available (non-Linux): {e}")
+                
                 logging.info(f"Trimmed cache: evicted {evicted_count} simulators (cleared pre-loaded arrays), keeping {len(_simulator_cache)} (limit: {_current_max_cache})")
+                logging.info(f"Memory cleanup: performed 5 GC passes + malloc_trim to maximize memory release")
 
 def _periodic_cache_trim():
     """Background thread that periodically trims cache when ensemble mode expires.

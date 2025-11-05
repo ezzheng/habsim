@@ -709,16 +709,40 @@ function displayContours(heatmapData) {
                     zIndex: 1000 + index
                 });
                 
-                // Calculate centroid for label placement
-                let latSum = 0, lonSum = 0;
-                for (const point of path) {
-                    latSum += point.lat();
-                    lonSum += point.lng();
+                // Calculate proper centroid using polygon area weighting
+                // This gives better label placement for irregular shapes
+                let area = 0;
+                let centroidLat = 0;
+                let centroidLon = 0;
+                
+                for (let i = 0; i < path.length - 1; i++) {
+                    const lat1 = path[i].lat();
+                    const lon1 = path[i].lng();
+                    const lat2 = path[i + 1].lat();
+                    const lon2 = path[i + 1].lng();
+                    
+                    const cross = lon1 * lat2 - lon2 * lat1;
+                    area += cross;
+                    centroidLat += (lat1 + lat2) * cross;
+                    centroidLon += (lon1 + lon2) * cross;
                 }
-                const centroid = new google.maps.LatLng(
-                    latSum / path.length,
-                    lonSum / path.length
-                );
+                
+                area /= 2;
+                if (area !== 0) {
+                    centroidLat /= (6 * area);
+                    centroidLon /= (6 * area);
+                } else {
+                    // Fallback to simple average if area calculation fails
+                    let latSum = 0, lonSum = 0;
+                    for (const point of path) {
+                        latSum += point.lat();
+                        lonSum += point.lng();
+                    }
+                    centroidLat = latSum / path.length;
+                    centroidLon = lonSum / path.length;
+                }
+                
+                const centroid = new google.maps.LatLng(centroidLat, centroidLon);
                 
                 // Create label marker with white background
                 const label = new google.maps.Marker({
@@ -895,26 +919,7 @@ function updateContourVisibility() {
     });
 }
 
-// Simple ensemble status indicator - no complex progress tracking
-function showEnsembleRunning() {
-    const ensembleBtn = document.getElementById('ensemble-toggle');
-    if (ensembleBtn && window.ensembleEnabled) {
-        ensembleBtn.textContent = 'Running...';
-        ensembleBtn.style.pointerEvents = 'none';  // Disable during simulation
-    }
-}
-
-function clearEnsembleRunning() {
-    const ensembleBtn = document.getElementById('ensemble-toggle');
-    if (ensembleBtn) {
-        ensembleBtn.textContent = 'Ensemble';
-        ensembleBtn.style.pointerEvents = 'auto';  // Re-enable
-        // Re-apply the 'on' class if ensemble is still enabled
-        if (window.ensembleEnabled) {
-            ensembleBtn.classList.add('on');
-        }
-    }
-}
+// No visual feedback needed on ensemble button during simulation
 
 // Self explanatory
 async function simulate() {
@@ -924,7 +929,6 @@ async function simulate() {
     // If a simulation is already running, interpret this call as a cancel request
     if (window.__simRunning && window.__simAbort) {
         try { window.__simAbort.abort(); } catch (e) {}
-        clearEnsembleRunning();
         // Note: Ensemble mode on server will still expire after 60 seconds from when it was set
         // This is expected behavior - server doesn't know about client-side cancellation
         return;
@@ -937,11 +941,6 @@ async function simulate() {
     const simBtn = document.getElementById('simulate-btn');
     const spinner = document.getElementById('sim-spinner');
     const originalButtonText = simBtn ? simBtn.textContent : null;
-    
-    // Show ensemble running status
-    if (window.ensembleEnabled) {
-        showEnsembleRunning();
-    }
     
     if (simBtn) {
         simBtn.disabled = true;
@@ -1148,7 +1147,6 @@ async function simulate() {
         if (waypointsToggle) {showWaypoints()}
     } finally {
         window.__simRunning = false;
-        clearEnsembleRunning(); // Clear running status when simulation completes
         window.__simAbort = null;
         // Blank out elevation to require refetch before next simulation
         try {
