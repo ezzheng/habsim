@@ -47,10 +47,19 @@ function displayCoordinates(pnt) {
     rawpathcache = new Array();
     // Clear heatmap and contours when new location is clicked
     if (heatmapLayer) {
-        if (heatmapLayer.setMap) {
-            heatmapLayer.setMap(null);
-        } else if (heatmapLayer.onRemove) {
-            heatmapLayer.onRemove();
+        try {
+            if (heatmapLayer.setMap) {
+                heatmapLayer.setMap(null);
+            }
+            if (heatmapLayer.onRemove) {
+                heatmapLayer.onRemove();
+            }
+            // Also remove any event listeners
+            if (heatmapLayer._boundsListener) {
+                google.maps.event.removeListener(heatmapLayer._boundsListener);
+            }
+        } catch (e) {
+            console.warn('Error clearing heatmap:', e);
         }
         heatmapLayer = null;
     }

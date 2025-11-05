@@ -408,10 +408,19 @@ function displayHeatmap(heatmapData) {
         
         // Clear existing heatmap and contours if any (prevents overlapping visualizations)
         if (heatmapLayer) {
-            if (heatmapLayer.setMap) {
-                heatmapLayer.setMap(null);
-            } else if (heatmapLayer.onRemove) {
-                heatmapLayer.onRemove();
+            try {
+                if (heatmapLayer.setMap) {
+                    heatmapLayer.setMap(null);
+                }
+                if (heatmapLayer.onRemove) {
+                    heatmapLayer.onRemove();
+                }
+                // Also remove any event listeners
+                if (heatmapLayer._boundsListener) {
+                    google.maps.event.removeListener(heatmapLayer._boundsListener);
+                }
+            } catch (e) {
+                console.warn('Error clearing heatmap:', e);
             }
             heatmapLayer = null;
         }
@@ -465,8 +474,8 @@ function displayHeatmap(heatmapData) {
         
         heatmapLayer.setMap(map);
         
-        // Redraw on zoom/pan to update heatmap
-        google.maps.event.addListener(map, 'bounds_changed', () => {
+        // Redraw on zoom/pan to update heatmap - store listener for cleanup
+        heatmapLayer._boundsListener = google.maps.event.addListener(map, 'bounds_changed', () => {
             if (heatmapLayer) {
                 heatmapLayer.draw();
             }
@@ -808,6 +817,65 @@ function updateEnsembleProgress(progressData) {
 
 // Track if we've received first progress update (to detect when server is ready)
 let hasReceivedProgress = false;
+let progressEventSource = null;
+
+function startProgressStream(requestId) {
+    // Close existing stream if any
+    if (progressEventSource) {
+        progressEventSource.close();
+        progressEventSource = null;
+    }
+    
+    if (!requestId) return;
+    
+    // Use Server-Sent Events for real-time progress updates
+    const eventSourceUrl = `${URL_ROOT}/progress-stream?request_id=${requestId}`;
+    progressEventSource = new EventSource(eventSourceUrl);
+    
+    progressEventSource.onmessage = function(event) {
+        try {
+            const data = JSON.parse(event.data);
+            
+            if (data.error) {
+                console.warn('Progress stream error:', data.error);
+                if (progressEventSource) {
+                    progressEventSource.close();
+                    progressEventSource = null;
+                }
+                return;
+            }
+            
+            // We got valid progress data
+            if (!hasReceivedProgress) {
+                hasReceivedProgress = true;
+            }
+            
+            updateEnsembleProgress(data);
+            
+            // If completed, close stream
+            if (data.completed >= data.total) {
+                if (progressEventSource) {
+                    progressEventSource.close();
+                    progressEventSource = null;
+                }
+            }
+        } catch (error) {
+            console.error('Error parsing progress data:', error);
+        }
+    };
+    
+    progressEventSource.onerror = function(error) {
+        console.warn('Progress stream error:', error);
+        // Stream will automatically reconnect on error
+        // But if it's a 404 or similar, we should fall back to polling
+        if (progressEventSource && progressEventSource.readyState === EventSource.CLOSED) {
+            console.log('Progress stream closed, falling back to polling');
+            progressEventSource = null;
+            // Fall back to polling
+            startProgressPolling(requestId);
+        }
+    };
+}
 
 async function pollProgress(requestId) {
     if (!requestId) return null;
@@ -824,10 +892,55 @@ async function pollProgress(requestId) {
     return null;
 }
 
+function startProgressPolling(requestId) {
+    // Fallback polling method if SSE doesn't work
+    let pollInterval = 200;
+    hasReceivedProgress = false;
+    
+    const pollProgressRecursive = async () => {
+        if (!requestId || !window.__simRunning) {
+            if (ensembleProgressInterval) {
+                clearTimeout(ensembleProgressInterval);
+                ensembleProgressInterval = null;
+            }
+            return;
+        }
+        
+        const progressData = await pollProgress(requestId);
+        
+        if (progressData) {
+            if (!hasReceivedProgress) {
+                hasReceivedProgress = true;
+                pollInterval = 500;
+            }
+            
+            updateEnsembleProgress(progressData);
+            
+            if (progressData.completed >= progressData.total) {
+                if (ensembleProgressInterval) {
+                    clearTimeout(ensembleProgressInterval);
+                    ensembleProgressInterval = null;
+                }
+                return;
+            }
+        } else if (hasReceivedProgress) {
+            pollInterval = 1000;
+        }
+        
+        ensembleProgressInterval = setTimeout(pollProgressRecursive, pollInterval);
+    };
+    
+    ensembleProgressInterval = setTimeout(pollProgressRecursive, 100);
+}
+
 function clearEnsembleProgress() {
     if (ensembleProgressInterval) {
         clearTimeout(ensembleProgressInterval);
         ensembleProgressInterval = null;
+    }
+    if (progressEventSource) {
+        progressEventSource.close();
+        progressEventSource = null;
     }
     ensembleStartTime = null;
     currentRequestId = null;
@@ -852,10 +965,19 @@ async function simulate() {
     currpaths = new Array();
     // Clear heatmap - ensure it's removed before starting new simulation
     if (heatmapLayer) {
-        if (heatmapLayer.setMap) {
-            heatmapLayer.setMap(null);
-        } else if (heatmapLayer.onRemove) {
-            heatmapLayer.onRemove();
+        try {
+            if (heatmapLayer.setMap) {
+                heatmapLayer.setMap(null);
+            }
+            if (heatmapLayer.onRemove) {
+                heatmapLayer.onRemove();
+            }
+            // Also remove any event listeners
+            if (heatmapLayer._boundsListener) {
+                google.maps.event.removeListener(heatmapLayer._boundsListener);
+            }
+        } catch (e) {
+            console.warn('Error clearing heatmap:', e);
         }
         heatmapLayer = null;
     }
@@ -980,56 +1102,20 @@ async function simulate() {
                     currentRequestId = Math.abs(hash).toString(16).padStart(16, '0').substring(0, 16);
                     hasReceivedProgress = false;
                     
-                    // Use a recursive setTimeout pattern for adaptive polling
-                    // Start with shorter interval (200ms) to catch progress quickly
-                    // Then switch to longer interval (500ms) once we know it's running
-                    let pollInterval = 200; // Start with 200ms for faster initial detection
-                    
-                    // Use a recursive setTimeout pattern instead of setInterval for adaptive polling
-                    const pollProgressRecursive = async () => {
-                        if (!currentRequestId || !window.__simRunning) {
-                            // Simulation stopped, stop polling
-                            if (ensembleProgressInterval) {
-                                clearTimeout(ensembleProgressInterval);
-                                ensembleProgressInterval = null;
-                            }
-                            return;
+                    // Start Server-Sent Events stream for real-time progress updates
+                    // Falls back to polling if SSE is not supported or fails
+                    try {
+                        if (typeof EventSource !== 'undefined') {
+                            startProgressStream(currentRequestId);
+                        } else {
+                            // Fallback to polling if EventSource not available
+                            console.log('EventSource not available, using polling');
+                            startProgressPolling(currentRequestId);
                         }
-                        
-                        const progressData = await pollProgress(currentRequestId);
-                        
-                        if (progressData) {
-                            // We got valid progress data - server is responding
-                            if (!hasReceivedProgress) {
-                                hasReceivedProgress = true;
-                                // Switch to longer interval once we know server is responding
-                                pollInterval = 500;
-                            }
-                            
-                            updateEnsembleProgress(progressData);
-                            
-                            // If completed, stop polling
-                            if (progressData.completed >= progressData.total) {
-                                if (ensembleProgressInterval) {
-                                    clearTimeout(ensembleProgressInterval);
-                                    ensembleProgressInterval = null;
-                                }
-                                return;
-                            }
-                        } else if (hasReceivedProgress) {
-                            // We had progress before but now it's gone - might be completed or error
-                            // Keep polling but with longer interval
-                            pollInterval = 1000;
-                        }
-                        // If no progress data and we haven't received any yet, keep trying with short interval
-                        
-                        // Schedule next poll with current interval (pollInterval is in closure scope)
-                        ensembleProgressInterval = setTimeout(pollProgressRecursive, pollInterval);
-                    };
-                    
-                    // Start polling immediately (before fetch completes)
-                    // First poll happens right away (100ms), then continues with adaptive interval
-                    ensembleProgressInterval = setTimeout(pollProgressRecursive, 100);
+                    } catch (error) {
+                        console.warn('Failed to start progress stream, using polling:', error);
+                        startProgressPolling(currentRequestId);
+                    }
                 }
                 
                 try {

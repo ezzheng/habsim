@@ -38,6 +38,17 @@ _progress_lock = threading.Lock()
 # File pre-warming removed to reduce Supabase egress costs
 # Files will download on-demand when needed (still fast due to file cache)
 
+def _start_cache_trim_thread():
+    """Start cache trim thread early in each worker to ensure memory management is active"""
+    try:
+        import simulate
+        # Access _get_simulator to trigger thread start
+        # This ensures the background trimming thread is running even before first request
+        simulate._start_cache_trim_thread()
+        app.logger.info("Cache trim thread startup triggered")
+    except Exception as e:
+        app.logger.warning(f"Failed to start cache trim thread (non-critical): {e}")
+
 def _prewarm_cache():
     """Pre-load only model 0 for fast single requests (cost-optimized)"""
     try:
@@ -77,6 +88,10 @@ def _prewarm_cache():
         app.logger.info(f"Cache pre-warming complete! All {len(model_ids)} models pre-warmed")
     except Exception as e:
         app.logger.info(f"Cache pre-warming failed (non-critical, will retry on-demand): {e}")
+
+# Start cache trim thread early (ensures memory management is active from startup)
+_cache_trim_thread = threading.Thread(target=_start_cache_trim_thread, daemon=True)
+_cache_trim_thread.start()
 
 # Start pre-warming in background thread
 _cache_warmer_thread = threading.Thread(target=_prewarm_cache, daemon=True)
@@ -516,7 +531,7 @@ def spaceshot():
 
 @app.route('/sim/progress')
 def get_progress():
-    """Get progress for a running simulation"""
+    """Get progress for a running simulation (polling endpoint)"""
     request_id = request.args.get('request_id')
     if not request_id:
         return jsonify({'error': 'request_id required'}), 400
@@ -538,6 +553,57 @@ def get_progress():
         'montecarlo_completed': progress['montecarlo_completed'],
         'montecarlo_total': progress['montecarlo_total'],
         'percentage': percentage
+    })
+
+@app.route('/sim/progress-stream')
+def progress_stream():
+    """Server-Sent Events stream for real-time progress updates"""
+    from flask import Response, stream_with_context
+    import json
+    request_id = request.args.get('request_id')
+    if not request_id:
+        return jsonify({'error': 'request_id required'}), 400
+    
+    def generate():
+        last_completed = -1
+        while True:
+            with _progress_lock:
+                progress = _progress_tracking.get(request_id)
+            
+            if progress is None:
+                # Progress not found or completed
+                yield f"data: {json.dumps({'error': 'Progress not found or completed'})}\n\n"
+                break
+            
+            current_completed = progress['completed']
+            total = progress['total']
+            percentage = round((current_completed / total) * 100) if total > 0 else 0
+            
+            # Only send update if progress changed
+            if current_completed != last_completed:
+                data = {
+                    'completed': current_completed,
+                    'total': total,
+                    'ensemble_completed': progress['ensemble_completed'],
+                    'ensemble_total': progress['ensemble_total'],
+                    'montecarlo_completed': progress['montecarlo_completed'],
+                    'montecarlo_total': progress['montecarlo_total'],
+                    'percentage': percentage
+                }
+                yield f"data: {json.dumps(data)}\n\n"
+                last_completed = current_completed
+                
+                # If completed, send final update and close
+                if current_completed >= total:
+                    break
+            
+            # Sleep briefly before next check
+            import time
+            time.sleep(0.5)  # Check every 500ms
+    
+    return Response(stream_with_context(generate()), mimetype='text/event-stream', headers={
+        'Cache-Control': 'no-cache',
+        'X-Accel-Buffering': 'no'  # Disable nginx buffering
     })
 
 @app.route('/sim/montecarlo')

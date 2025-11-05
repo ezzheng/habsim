@@ -208,17 +208,31 @@ def _trim_cache_to_normal():
             models_to_evict = set(_simulator_cache.keys()) - models_to_keep
             evicted_count = len(models_to_evict)
             
-            # Explicitly clear pre-loaded arrays before deleting simulators
+            # Explicitly clear WindFile objects and all their data before deleting simulators
             # This is critical for pre-loaded arrays (ensemble mode) which can be 100-200MB each
             for model_id in models_to_evict:
                 simulator = _simulator_cache.get(model_id)
-                if simulator and hasattr(simulator, 'wind_file') and hasattr(simulator.wind_file, 'data'):
-                    # Only clear pre-loaded arrays (not memory-mapped arrays which use little RAM)
-                    # Memory-mapped arrays have a 'filename' attribute, pre-loaded arrays don't
-                    if isinstance(simulator.wind_file.data, np.ndarray) and not hasattr(simulator.wind_file.data, 'filename'):
-                        # This is a pre-loaded array - delete it to free memory immediately
-                        del simulator.wind_file.data
-                        simulator.wind_file.data = None
+                if simulator:
+                    # Clear WindFile data (pre-loaded arrays are the main memory consumers)
+                    if hasattr(simulator, 'wind_file') and simulator.wind_file:
+                        wind_file = simulator.wind_file
+                        # Use WindFile's cleanup method if available, otherwise manual cleanup
+                        if hasattr(wind_file, 'cleanup'):
+                            wind_file.cleanup()
+                        else:
+                            # Manual cleanup fallback
+                            if hasattr(wind_file, 'data') and wind_file.data is not None:
+                                if isinstance(wind_file.data, np.ndarray) and not hasattr(wind_file.data, 'filename'):
+                                    del wind_file.data
+                                    wind_file.data = None
+                            if hasattr(wind_file, 'levels') and isinstance(wind_file.levels, np.ndarray):
+                                del wind_file.levels
+                                wind_file.levels = None
+                        # Break reference to WindFile
+                        del wind_file
+                        simulator.wind_file = None
+                    # Break reference to Simulator
+                    del simulator
                 del _simulator_cache[model_id]
                 del _simulator_access_times[model_id]
             
@@ -241,25 +255,107 @@ def _periodic_cache_trim():
     This ensures idle workers trim their cache even if they don't receive requests.
     Without this, each worker process maintains its own cache, and idle workers never trim.
     """
+    logging.info("Cache trim background thread started")
+    consecutive_trim_failures = 0
     while True:
         try:
             now = time.time()
             # Check if ensemble mode has expired - if so, trim more aggressively
             with _cache_lock:
                 ensemble_expired = _ensemble_mode_until > 0 and now > _ensemble_mode_until
+                ensemble_exceeded_max = _ensemble_mode_started > 0 and (now - _ensemble_mode_started) >= 300  # 5 minutes
                 cache_size = len(_simulator_cache)
+                current_max = _current_max_cache
             
-            if ensemble_expired and cache_size > MAX_SIMULATOR_CACHE_NORMAL:
-                # Ensemble mode expired but cache still large - trim immediately
+            # Log state for debugging
+            if cache_size > MAX_SIMULATOR_CACHE_NORMAL:
+                logging.info(f"Cache trim check: size={cache_size}, max={current_max}, ensemble_expired={ensemble_expired}, exceeded_max={ensemble_exceeded_max}")
+            
+            if (ensemble_expired or ensemble_exceeded_max) and cache_size > MAX_SIMULATOR_CACHE_NORMAL:
+                # Ensemble mode expired but cache still large - trim immediately and aggressively
+                logging.info(f"Ensemble mode expired/exceeded, trimming cache from {cache_size} to {MAX_SIMULATOR_CACHE_NORMAL}")
                 _trim_cache_to_normal()
-                time.sleep(10)  # Check more frequently (every 10s) until cache is trimmed
+                # Check immediately after trimming to see if it worked
+                with _cache_lock:
+                    new_size = len(_simulator_cache)
+                if new_size > MAX_SIMULATOR_CACHE_NORMAL:
+                    consecutive_trim_failures += 1
+                    logging.warning(f"Cache trim didn't reduce size enough: {new_size} > {MAX_SIMULATOR_CACHE_NORMAL} (failure #{consecutive_trim_failures})")
+                    if consecutive_trim_failures > 3:
+                        # Force more aggressive trimming
+                        logging.warning("Multiple trim failures, forcing aggressive cleanup")
+                        _force_aggressive_trim()
+                        consecutive_trim_failures = 0
+                else:
+                    consecutive_trim_failures = 0
+                time.sleep(5)  # Check very frequently (every 5s) until cache is trimmed
             else:
-                # Normal check interval
+                # Normal check interval - always call trim to handle edge cases
                 _trim_cache_to_normal()
+                consecutive_trim_failures = 0
                 time.sleep(30)  # Check every 30 seconds
         except Exception as e:
-            logging.warning(f"Cache trim thread error (non-critical): {e}")
+            logging.warning(f"Cache trim thread error (non-critical): {e}", exc_info=True)
             time.sleep(60)  # Wait longer on error
+
+def _force_aggressive_trim():
+    """Force aggressive cache trimming - removes all but 1 most recently used simulator"""
+    global _simulator_cache, _simulator_access_times, _current_max_cache
+    with _cache_lock:
+        if len(_simulator_cache) <= 1:
+            return
+        
+        logging.warning(f"Force aggressive trim: removing {len(_simulator_cache) - 1} simulators, keeping only 1")
+        
+        # Sort by access time (most recent first)
+        sorted_models = sorted(_simulator_access_times.items(), key=lambda x: x[1], reverse=True)
+        
+        # Keep only the most recently used model
+        model_to_keep = sorted_models[0][0] if sorted_models else None
+        
+        # Evict all others
+        for model_id in list(_simulator_cache.keys()):
+            if model_id != model_to_keep:
+                simulator = _simulator_cache.get(model_id)
+                if simulator:
+                    # Clear WindFile data (pre-loaded arrays are the main memory consumers)
+                    if hasattr(simulator, 'wind_file') and simulator.wind_file:
+                        wind_file = simulator.wind_file
+                        # Use WindFile's cleanup method if available
+                        if hasattr(wind_file, 'cleanup'):
+                            wind_file.cleanup()
+                        else:
+                            # Manual cleanup fallback
+                            if hasattr(wind_file, 'data') and wind_file.data is not None:
+                                if isinstance(wind_file.data, np.ndarray) and not hasattr(wind_file.data, 'filename'):
+                                    del wind_file.data
+                                    wind_file.data = None
+                            if hasattr(wind_file, 'levels') and isinstance(wind_file.levels, np.ndarray):
+                                del wind_file.levels
+                                wind_file.levels = None
+                        # Break reference to WindFile
+                        del wind_file
+                        simulator.wind_file = None
+                    # Break reference to Simulator
+                    del simulator
+                del _simulator_cache[model_id]
+                del _simulator_access_times[model_id]
+        
+        _current_max_cache = MAX_SIMULATOR_CACHE_NORMAL
+        
+        # Multiple GC passes
+        for _ in range(5):
+            gc.collect()
+        
+        # Force OS memory release
+        try:
+            import ctypes
+            libc = ctypes.CDLL("libc.so.6")
+            libc.malloc_trim(0)
+        except:
+            pass
+        
+        logging.info(f"Aggressive trim complete: kept {len(_simulator_cache)} simulator(s)")
 
 def _start_cache_trim_thread():
     """Start background thread for periodic cache trimming (called once per worker)"""
@@ -282,26 +378,56 @@ def _get_simulator(model):
         refresh()
         _last_refresh_check = now
     
-    # Trim cache if ensemble mode expired
+    # Trim cache if ensemble mode expired (called on every simulator access)
     _trim_cache_to_normal()
     
     with _cache_lock:
         # Fast path: return cached simulator if available
         if model in _simulator_cache:
-            _simulator_access_times[model] = now
-            return _simulator_cache[model]
+            simulator = _simulator_cache[model]
+            # Verify simulator is still valid (wind_file.data hasn't been cleaned up)
+            if simulator and hasattr(simulator, 'wind_file') and simulator.wind_file:
+                if simulator.wind_file.data is None:
+                    # Simulator was cleaned up but still in cache - remove it and recreate
+                    logging.warning(f"Simulator {model} found in cache but wind_file.data is None - removing and recreating")
+                    del _simulator_cache[model]
+                    del _simulator_access_times[model]
+                else:
+                    # Valid simulator - return it
+                    _simulator_access_times[model] = now
+                    return simulator
+            else:
+                # Invalid simulator - remove it
+                logging.warning(f"Simulator {model} found in cache but is invalid - removing")
+                del _simulator_cache[model]
+                del _simulator_access_times[model]
         
         # Cache miss - need to load new simulator
         # Evict oldest if cache is full
         if len(_simulator_cache) >= _current_max_cache:
             oldest_model = min(_simulator_access_times, key=_simulator_access_times.get)
             simulator = _simulator_cache.get(oldest_model)
-            # Explicitly clear pre-loaded array before deleting (not memory-mapped arrays)
-            if simulator and hasattr(simulator, 'wind_file') and hasattr(simulator.wind_file, 'data'):
-                # Only clear pre-loaded arrays (memory-mapped arrays have 'filename' attribute)
-                if isinstance(simulator.wind_file.data, np.ndarray) and not hasattr(simulator.wind_file.data, 'filename'):
-                    del simulator.wind_file.data
-                    simulator.wind_file.data = None
+            # Explicitly clear WindFile and all its data before deleting
+            if simulator:
+                if hasattr(simulator, 'wind_file') and simulator.wind_file:
+                    wind_file = simulator.wind_file
+                    # Use WindFile's cleanup method if available
+                    if hasattr(wind_file, 'cleanup'):
+                        wind_file.cleanup()
+                    else:
+                        # Manual cleanup fallback
+                        if hasattr(wind_file, 'data') and wind_file.data is not None:
+                            if isinstance(wind_file.data, np.ndarray) and not hasattr(wind_file.data, 'filename'):
+                                del wind_file.data
+                                wind_file.data = None
+                        if hasattr(wind_file, 'levels') and isinstance(wind_file.levels, np.ndarray):
+                            del wind_file.levels
+                            wind_file.levels = None
+                    # Break reference to WindFile
+                    del wind_file
+                    simulator.wind_file = None
+                # Break reference to Simulator
+                del simulator
             del _simulator_cache[oldest_model]
             del _simulator_access_times[oldest_model]
             gc.collect()  # Help GC reclaim memory from evicted simulator

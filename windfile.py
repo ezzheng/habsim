@@ -102,6 +102,37 @@ class WindFile:
         
         # Pre-compute time bounds for faster validation
         self._time_max = self.time + self.interval * (self.data.shape[-2]-1)
+    
+    def cleanup(self):
+        """Explicitly cleanup all numpy arrays and resources to free memory.
+        
+        WARNING: Only call this when the WindFile is guaranteed to not be in use.
+        This should only be called when the simulator is being evicted from cache
+        and no other threads are using it.
+        """
+        # Clear main data array (biggest memory consumer)
+        # Only clear pre-loaded arrays (memory-mapped arrays use little RAM and are safer to leave)
+        if hasattr(self, 'data') and self.data is not None:
+            if isinstance(self.data, np.ndarray):
+                # For pre-loaded arrays, delete them to free memory
+                # Memory-mapped arrays have a 'filename' attribute, pre-loaded arrays don't
+                if not hasattr(self.data, 'filename'):
+                    # Pre-loaded array - delete it
+                    del self.data
+                    self.data = None
+                # For memory-mapped arrays, we don't delete them (they use little RAM)
+                # The OS will handle page cache cleanup
+        
+        # Clear other numpy arrays (these are smaller but still consume memory)
+        if hasattr(self, 'levels') and isinstance(self.levels, np.ndarray):
+            del self.levels
+            self.levels = None
+        if hasattr(self, '_interp_levels') and isinstance(self._interp_levels, np.ndarray):
+            del self._interp_levels
+            self._interp_levels = None
+        if hasattr(self, '_interp_indices') and isinstance(self._interp_indices, np.ndarray):
+            del self._interp_indices
+            self._interp_indices = None
 
     def _load_memmap_data(self, npz: np.lib.npyio.NpzFile, path: Path):
         memmap_path = Path(f"{path}.data.npy")
@@ -168,6 +199,10 @@ class WindFile:
 
     def interpolate(self, lat, lon, level, time):
         """Optimized 4D interpolation"""
+        # Check if data is available before proceeding
+        if self.data is None:
+            raise RuntimeError("WindFile data is None - file may not have loaded correctly or was cleaned up while in use")
+        
         # Pre-compute integer indices
         lat_i = int(lat)
         lon_i = int(lon)
@@ -186,9 +221,11 @@ class WindFile:
         lat_filter = np.array([1-lat_frac, lat_frac], dtype=np.float32).reshape(2, 1, 1, 1, 1)
         lon_filter = np.array([1-lon_frac, lon_frac], dtype=np.float32).reshape(1, 2, 1, 1, 1)
 
-        # Extract data cube (memory-mapped in normal mode, full array in ensemble mode)
+        # Double-check data is still available (race condition protection)
         if self.data is None:
-            raise RuntimeError("WindFile data is None - file may not have loaded correctly")
+            raise RuntimeError("WindFile data became None during interpolation - possible race condition with cleanup")
+        
+        # Extract data cube (memory-mapped in normal mode, full array in ensemble mode)
         cube = self.data[lat_i:lat_i+2, lon_i:lon_i+2, level_i:level_i+2, time_i:time_i+2, :]
        
         # Single vectorized interpolation operation (CPU-bound when pre-loaded, I/O-bound when memory-mapped)
