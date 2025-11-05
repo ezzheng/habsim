@@ -528,9 +528,24 @@
             }
             
             #map {
+                height: 100vh !important;
+                width: 100vw !important;
+                position: relative !important;
+                margin: 0 !important;
+                padding: 0 !important;
+                background: white !important;
+            }
+
+            /* Ensure internal Google map containers fill the page and remove gray bars */
+            .gm-style, .gm-style > div {
                 height: 100% !important;
                 width: 100% !important;
-                position: relative !important;
+                background: white !important;
+            }
+
+            /* Hide Google logos/attribution and controls in print */
+            .gm-style-cc, .gmnoprint, .gm-fullscreen-control, .gm-control-active, .gm-svpc {
+                display: none !important;
             }
             
             /* Show print overlay with parameters */
@@ -596,6 +611,7 @@
             html, body {
                 margin: 0 !important;
                 padding: 0 !important;
+                background: white !important;
             }
             
             /* Ensure print overlay is truly at top-left of the map */

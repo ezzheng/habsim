@@ -506,17 +506,18 @@ function displayHeatmap(heatmapData) {
         // Create custom heatmap overlay
         // Options: 'none' (raw), 'epanechnikov' (recommended), 'uniform', 'gaussian'
         heatmapLayer = new CustomHeatmapOverlay(heatmapPoints, {
-            opacity: 0.6,
+            opacity: 0.65,
             smoothingType: 'epanechnikov',  // Change to 'none' for raw density, 'gaussian' for smooth circular
             smoothingBandwidth: null,        // null = auto-calculate (5% of data range)
             gridResolution: 100,             // Higher = smoother but slower
             gradient: [
-                {stop: 0.0, color: 'rgba(0, 255, 255, 0)'},      // Cyan (transparent) - low density
-                {stop: 0.2, color: 'rgba(0, 255, 255, 0.5)'},    // Cyan - medium-low
-                {stop: 0.4, color: 'rgba(0, 255, 0, 0.7)'},      // Green - medium
-                {stop: 0.6, color: 'rgba(255, 255, 0, 0.8)'},    // Yellow - medium-high
-                {stop: 0.8, color: 'rgba(255, 165, 0, 0.9)'},     // Orange - high
-                {stop: 1.0, color: 'rgba(255, 0, 0, 1)'}         // Red - highest density
+                {stop: 0.00, color: 'rgba(0, 255, 255, 0)'},      // Fully transparent
+                {stop: 0.15, color: 'rgba(0, 200, 255, 0.35)'},   // Light cyan
+                {stop: 0.30, color: 'rgba(0, 180, 0, 0.55)'},     // Green
+                {stop: 0.50, color: 'rgba(255, 215, 0, 0.70)'},   // Gold
+                {stop: 0.70, color: 'rgba(255, 140, 0, 0.85)'},   // Darker orange
+                {stop: 0.85, color: 'rgba(220, 0, 0, 0.95)'},     // Deep red
+                {stop: 1.00, color: 'rgba(140, 0, 0, 1)'}         // Very deep red
             ]
         });
         
@@ -683,7 +684,7 @@ function displayContours(heatmapData) {
         
         // Extract contours at cumulative probability thresholds
         // Compute density cutoff values so that area ABOVE cutoff contains target mass
-        const thresholds = [0.5, 0.7, 0.9];  // 50%, 70%, 90% (outer ring encloses more area)
+        const thresholds = [0.3, 0.5, 0.7, 0.9];  // 30%, 50%, 70%, 90% (higher % encloses larger area)
         const flat = densityGrid.flat();
         const totalMass = flat.reduce((a, b) => a + b, 0);
         const sortedDesc = [...flat].sort((a, b) => b - a);
@@ -728,7 +729,8 @@ function displayContours(heatmapData) {
                     fillColor: color,
                     fillOpacity: 0.05,  // Very subtle fill to show enclosed area
                     map: map,
-                    zIndex: 1000 + index
+                    clickable: false,
+                    zIndex: 10 + index
                 });
                 
                 // Place labels along the contour at different positions to avoid overlap
@@ -778,7 +780,7 @@ function displayContours(heatmapData) {
                     map: map,
                     icon: {
                         path: google.maps.SymbolPath.CIRCLE,
-                        scale: 12,
+                        scale: 10,
                         fillColor: 'white',
                         fillOpacity: 0.95,
                         strokeColor: color,
@@ -791,7 +793,8 @@ function displayContours(heatmapData) {
                         fontSize: '11px',
                         fontWeight: 'bold'
                     },
-                    zIndex: 1100 + index
+                    clickable: false,
+                    zIndex: 20 + index
                 });
                 
                 contourLayers.push({ 
