@@ -510,14 +510,14 @@ function displayHeatmap(heatmapData) {
             smoothingType: 'epanechnikov',  // Change to 'none' for raw density, 'gaussian' for smooth circular
             smoothingBandwidth: null,        // null = auto-calculate (5% of data range)
             gridResolution: 100,             // Higher = smoother but slower
-            // Higher density (inner) → red; lower density (outer) → green
+            // Lower density (outer) → green; higher density (inner) → red
             gradient: [
-                {stop: 0.00, color: 'rgba(0, 255, 0, 0.00)'},   // transparent
-                {stop: 0.20, color: 'rgba(0, 170, 0, 0.40)'},   // green
-                {stop: 0.40, color: 'rgba(200, 200, 0, 0.65)'}, // yellow
-                {stop: 0.65, color: 'rgba(255, 140, 0, 0.85)'}, // orange
-                {stop: 0.85, color: 'rgba(220, 0, 0, 0.95)'},   // red
-                {stop: 1.00, color: 'rgba(140, 0, 0, 1.00)'}    // deep red
+                {stop: 0.00, color: 'rgba(0, 255, 0, 0.00)'},   // fully transparent at zero density
+                {stop: 0.15, color: 'rgba(0, 180, 0, 0.35)'},   // green (outer)
+                {stop: 0.35, color: 'rgba(200, 200, 0, 0.60)'}, // yellow
+                {stop: 0.60, color: 'rgba(255, 140, 0, 0.80)'}, // orange
+                {stop: 0.80, color: 'rgba(220, 0, 0, 0.95)'},   // red (inner)
+                {stop: 1.00, color: 'rgba(160, 0, 0, 1.00)'}    // deep red (peak)
             ]
         });
         
@@ -924,11 +924,11 @@ function crossProduct(o, a, b) {
 }
 
 function getContourColor(threshold) {
-    // Color gradient based on probability threshold (darker colors for better visibility)
-    if (threshold >= 0.7) return '#CC0000';      // Dark red - high probability
-    if (threshold >= 0.5) return '#CC6600';      // Dark orange
-    if (threshold >= 0.3) return '#CCAA00';      // Dark gold
-    return '#00AA00';                             // Dark green - lower probability
+    // Inner (higher %) → red; outer (lower %) → green
+    if (threshold >= 0.7) return '#CC0000';      // red (inner)
+    if (threshold >= 0.5) return '#CC6600';      // orange
+    if (threshold >= 0.3) return '#CCAA00';      // yellow
+    return '#00AA00';                             // green (outermost)
 }
 
 function updateContourVisibility() {
