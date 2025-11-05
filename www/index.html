@@ -878,11 +878,44 @@
             // Add timestamp
             const now = new Date();
             printTimestamp.textContent = `Exported: ${now.toLocaleString()}`;
+
+            // Also update document title for PDF export naming
+            try {
+                const yr = document.getElementById('yr')?.value || '';
+                const mo = (document.getElementById('mo')?.value || '').padStart(2,'0');
+                const day = (document.getElementById('day')?.value || '').padStart(2,'0');
+                const hr = (document.getElementById('hr')?.value || '').padStart(2,'0');
+                const mn = (document.getElementById('mn')?.value || '').padStart(2,'0');
+                const lat = document.getElementById('lat')?.value || '';
+                const lon = document.getElementById('lon')?.value || '';
+                const modeStr = window.ensembleEnabled ? 'Ensemble' : 'Single';
+                const titleStr = `HABSIM ${modeStr} ${yr}-${mo}-${day} ${hr}:${mn} ${lat} ${lon}`.trim();
+                window.__origTitle = window.__origTitle || document.title;
+                document.title = titleStr;
+            } catch (e) {}
         }
         
         // Update print overlay after simulations complete
         // This is called from paths.js after rendering
         window.updatePrintOverlay = updatePrintOverlay;
+
+        // Ensure title is set just before printing, and restored after
+        (function(){
+            function setTitleBeforePrint(){
+                try { updatePrintOverlay(); } catch(e) {}
+            }
+            function restoreTitleAfterPrint(){
+                if (window.__origTitle) document.title = window.__origTitle;
+            }
+            if (window.matchMedia) {
+                const mediaQueryList = window.matchMedia('print');
+                mediaQueryList.addListener(function(mql){
+                    if (mql.matches) setTitleBeforePrint(); else restoreTitleAfterPrint();
+                });
+            }
+            window.addEventListener('beforeprint', setTitleBeforePrint);
+            window.addEventListener('afterprint', restoreTitleAfterPrint);
+        })();
     </script>
 <!-- Vercel Web Analytics (no framework) -->
 <script>
