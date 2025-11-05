@@ -935,15 +935,26 @@ async function pollProgress(requestId) {
     if (!requestId) return null;
     
     try {
-        const response = await fetch(`${URL_ROOT}/progress?request_id=${requestId}`);
+        const url = `${URL_ROOT}/progress?request_id=${requestId}`;
+        const response = await fetch(url);
+        
         if (response.ok) {
             const data = await response.json();
             return data;
+        } else if (response.status === 404) {
+            // Progress not found yet (server hasn't created entry) - this is normal initially
+            // Return null to indicate we should keep polling
+            return null;
+        } else {
+            // Other error status
+            console.warn(`Progress poll failed: ${response.status} ${response.statusText}`);
+            return null;
         }
     } catch (error) {
-        // Silently fail - progress tracking is optional
+        // Network error - log but don't fail completely
+        console.warn('Progress poll error:', error);
+        return null;
     }
-    return null;
 }
 
 function startProgressPolling(requestId) {
@@ -953,13 +964,26 @@ function startProgressPolling(requestId) {
         ensembleProgressInterval = null;
     }
     
-    if (!requestId) return;
+    if (!requestId) {
+        console.warn('startProgressPolling called without requestId');
+        return;
+    }
     
     currentRequestId = requestId;
     let pollCount = 0;
     let lastCompleted = -1;
     
-    // Poll every 300ms for responsive updates
+    // Immediately set button text to 0% when polling starts
+    const ensembleBtn = document.getElementById('ensemble-toggle');
+    if (ensembleBtn && window.ensembleEnabled) {
+        ensembleBtn.textContent = '0%';
+        console.log(`Progress polling started with request_id: ${requestId}`);
+    } else {
+        console.warn('Progress polling started but ensemble button not found or ensemble not enabled');
+    }
+    
+    // Start polling immediately - server creates progress entry right when request arrives
+    // We handle 404s gracefully (progress entry not created yet) and keep polling
     ensembleProgressInterval = setInterval(async () => {
         if (!window.__simRunning || !currentRequestId) {
             if (ensembleProgressInterval) {
@@ -976,9 +1000,11 @@ function startProgressPolling(requestId) {
             if (progressData.completed !== lastCompleted) {
                 updateEnsembleProgress(progressData);
                 lastCompleted = progressData.completed;
+                console.log(`Progress update: ${progressData.completed}/${progressData.total} (${progressData.percentage}%)`);
                 
                 // If completed, stop polling
                 if (progressData.completed >= progressData.total) {
+                    console.log('Progress polling completed');
                     if (ensembleProgressInterval) {
                         clearInterval(ensembleProgressInterval);
                         ensembleProgressInterval = null;
@@ -988,6 +1014,7 @@ function startProgressPolling(requestId) {
         } else if (pollCount > 100) {
             // If we've polled 100 times (30 seconds) without getting progress, stop polling
             // This prevents infinite polling if the request_id is invalid
+            console.warn(`Progress polling stopped after 100 attempts without valid progress data (request_id: ${currentRequestId})`);
             if (ensembleProgressInterval) {
                 clearInterval(ensembleProgressInterval);
                 ensembleProgressInterval = null;
