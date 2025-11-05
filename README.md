@@ -139,15 +139,15 @@ This is an offshoot of the prediction server developed for the Stanford Space In
 - **Access pattern**: First request per worker per model hits Supabase; subsequent accesses come from CDN cache or local disk
 - **Cached egress**: Supabase reports CDN-served bytes as "cached egress". Large values usually mean many workers warmed the same files (or downloads resumed after stalls), not repeated origin downloads
 
-### Railway/Render Instance (Local Disk Cache)
-- **Location**: `/app/data/gefs` on Railway (ephemeral storage)
+### Railway Instance (Local Disk Cache)
+- **Location**: `/app/data/gefs` on Railway (persistent volume if mounted, otherwise ephemeral storage)
 - **Files**: Up to 25 `.npz` files (~7.7GB) cached on disk
 - **Purpose**: Fast local access, eliminates download delays after first download
 - **Eviction**: LRU when cache exceeds 25 files (`worldelev.npy` is exempt)
 - **Download Strategy**: Files download on-demand with per-file locking, extended timeouts, and stall detection
 - **Model Change Cleanup**: Automatically deletes old model files when GEFS updates every 6 hours
 - **Idle effect**: Idle worker cleanup does not delete disk cache; simulators are rebuilt from these on next request
-- **Note**: Railway persistent volumes are currently in private beta. Without volume access, files are cached in ephemeral storage (lost on restart but reduce egress during active sessions).
+- **Persistent Volume**: When mounted to `/app/data`, files persist across restarts and are shared across all workers, reducing Supabase egress from ~25 GB (4 workers × 6.4 GB) to ~6.4 GB (one download shared)
 
 ## Architecture Changes From Prev. HABSIM
 

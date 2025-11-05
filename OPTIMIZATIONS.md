@@ -107,7 +107,7 @@ HABSIM uses a multi-layer caching strategy optimized for Railway (max 32GB RAM, 
 
 ### 2. GEFS File Cache (`gefs.py`) - **Disk Cache**
 
-**Location**: `/app/data/gefs` on Railway (or `/opt/render/project/src/data/gefs`, `/tmp/habsim-gefs/` fallback)
+**Location**: `/app/data/gefs` on Railway (or `/tmp/habsim-gefs/` fallback if persistent volume not mounted)
 **Storage**: 21 `.npz` wind files + `worldelev.npy`
 **Capacity**: 25 `.npz` files (~7.7 GB) + `worldelev.npy` (451 MB, never evicted)
 **Eviction**: LRU by file access time (`worldelev.npy` exempt)

@@ -60,12 +60,9 @@ _SESSION.mount("http://", _ADAPTER)
 
 _DEFAULT_TIMEOUT = (3, 60)
 _CACHEABLE_SUFFIXES = (".npz", ".npy")
-# Use persistent directory on Railway or Render, fallback to tempdir
-# Check for Railway first (persistent volume), then Render, then tempdir
+# Use Railway persistent volume if available, fallback to tempdir
 _default_cache_dir = None
-if Path("/opt/render/project/src").exists():
-    _default_cache_dir = Path("/opt/render/project/src/data/gefs")
-elif Path("/app/data").exists():  # Railway default app directory
+if Path("/app/data").exists():  # Railway persistent volume mount
     _default_cache_dir = Path("/app/data/gefs")
 else:
     _default_cache_dir = Path(tempfile.gettempdir()) / "habsim-gefs"

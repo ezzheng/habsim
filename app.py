@@ -33,12 +33,16 @@ import downloader  # Import to access model configuration
 
 @app.before_request
 def _record_worker_activity():
-    """Mark the worker as active so idle cleanup waits until the user is gone."""
-    try:
-        simulate.record_activity()
-    except Exception:
-        # Non-critical; if simulate isn't ready yet we just skip recording.
-        pass
+    """Mark the worker as active so idle cleanup waits until the user is gone.
+    Excludes status/health endpoints that poll continuously."""
+    # Don't reset idle timer for status/health endpoints that poll frequently
+    excluded_paths = ['/sim/status', '/sim/models', '/sim/cache-status']
+    if request.path not in excluded_paths:
+        try:
+            simulate.record_activity()
+        except Exception:
+            # Non-critical; if simulate isn't ready yet we just skip recording.
+            pass
 
 # Progress tracking for ensemble + Monte Carlo simulations
 # Key: request_id (hash of parameters), Value: {completed: int, total: int, ensemble_completed: int, ensemble_total: int}

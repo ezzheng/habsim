@@ -180,8 +180,6 @@ def _cleanup_old_model_files(old_timestamp: str):
             # Fallback to default path detection (same logic as gefs.py)
             if Path("/app/data").exists():
                 cache_dir = Path("/app/data/gefs")
-            elif Path("/opt/render/project/src").exists():
-                cache_dir = Path("/opt/render/project/src/data/gefs")
             else:
                 import tempfile
                 cache_dir = Path(tempfile.gettempdir()) / "habsim-gefs"
@@ -337,7 +335,11 @@ def _periodic_cache_trim():
         try:
             now = time.time()
             idle_duration = now - _last_activity_timestamp
+            # Log idle status periodically for debugging (every 60s when idle)
+            if idle_duration > 60 and int(idle_duration) % 60 < 2:  # Log roughly once per minute when idle
+                logging.info(f"Idle check: {idle_duration:.1f}s idle (threshold: {_IDLE_RESET_TIMEOUT}s), cache size: {len(_simulator_cache)}")
             if idle_duration >= _IDLE_RESET_TIMEOUT and (now - _last_idle_cleanup) >= _IDLE_CLEAN_COOLDOWN:
+                logging.info(f"Idle threshold reached: {idle_duration:.1f}s without user activity, triggering cleanup")
                 _idle_memory_cleanup(idle_duration)
                 _last_idle_cleanup = time.time()
                 consecutive_trim_failures = 0
