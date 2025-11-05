@@ -32,6 +32,11 @@ elevation_cache = None
 currgefs = "Unavailable"
 _last_refresh_check = 0.0
 _cache_trim_thread_started = False
+_IDLE_RESET_TIMEOUT = 180.0  # seconds of no requests before forcing deep cleanup
+_IDLE_CLEAN_COOLDOWN = 180.0  # minimum delay between idle cleanups
+_last_activity_timestamp = time.time()
+_last_idle_cleanup = 0.0
+_idle_cleanup_lock = threading.Lock()
 
 # Prediction cache - increased for 32GB RAM
 _prediction_cache = {}
@@ -96,6 +101,70 @@ def reset():
         _ensemble_mode_started = 0
     elevation_cache = None
     gc.collect()
+
+
+def record_activity():
+    """Record that the worker handled a request (used for idle cleanup)."""
+    global _last_activity_timestamp
+    _last_activity_timestamp = time.time()
+
+
+def _idle_memory_cleanup(idle_duration):
+    """Deep cleanup when the worker has been idle for a while."""
+    global _current_max_cache, _ensemble_mode_until, _ensemble_mode_started, elevation_cache
+    if not _idle_cleanup_lock.acquire(blocking=False):
+        return
+    try:
+        logging.info(f"Idle memory cleanup triggered after {idle_duration:.1f}s without requests")
+        with _cache_lock:
+            simulators = list(_simulator_cache.values())
+            _simulator_cache.clear()
+            _simulator_access_times.clear()
+            _current_max_cache = MAX_SIMULATOR_CACHE_NORMAL
+            _ensemble_mode_until = 0
+            _ensemble_mode_started = 0
+        # Clean up simulator resources outside the cache lock
+        evicted = 0
+        for simulator in simulators:
+            if simulator is None:
+                continue
+            try:
+                if hasattr(simulator, 'wind_file') and simulator.wind_file:
+                    wind_file = simulator.wind_file
+                    try:
+                        if hasattr(wind_file, 'cleanup'):
+                            wind_file.cleanup()
+                        else:
+                            if hasattr(wind_file, 'data') and wind_file.data is not None:
+                                if isinstance(wind_file.data, np.ndarray) and not hasattr(wind_file.data, 'filename'):
+                                    del wind_file.data
+                                    wind_file.data = None
+                            if hasattr(wind_file, 'levels') and isinstance(wind_file.levels, np.ndarray):
+                                del wind_file.levels
+                                wind_file.levels = None
+                    finally:
+                        simulator.wind_file = None
+                evicted += 1
+            except Exception as cleanup_error:
+                logging.debug(f"Idle cleanup: simulator cleanup error: {cleanup_error}", exc_info=True)
+        simulators.clear()
+
+        # Multiple GC passes to ensure numpy arrays are freed
+        for _ in range(5):
+            gc.collect()
+            gc.collect(generation=2)
+        # Force memory release back to OS when available
+        try:
+            import ctypes
+            libc = ctypes.CDLL("libc.so.6")
+            libc.malloc_trim(0)
+            logging.info("Idle cleanup: executed malloc_trim(0) to return free memory to OS")
+        except Exception as trim_error:
+            logging.debug(f"Idle cleanup: malloc_trim not available: {trim_error}")
+
+        logging.info(f"Idle cleanup complete: released {evicted} simulator(s); cache reset to baseline")
+    finally:
+        _idle_cleanup_lock.release()
 
 def _cleanup_old_model_files(old_timestamp: str):
     """Clean up disk cache files from old model timestamp when model changes"""
@@ -263,9 +332,17 @@ def _periodic_cache_trim():
     """
     logging.info("Cache trim background thread started")
     consecutive_trim_failures = 0
+    global _last_idle_cleanup
     while True:
         try:
             now = time.time()
+            idle_duration = now - _last_activity_timestamp
+            if idle_duration >= _IDLE_RESET_TIMEOUT and (now - _last_idle_cleanup) >= _IDLE_CLEAN_COOLDOWN:
+                _idle_memory_cleanup(idle_duration)
+                _last_idle_cleanup = time.time()
+                consecutive_trim_failures = 0
+                time.sleep(5)
+                continue
             # Check if ensemble mode has expired - if so, trim more aggressively
             with _cache_lock:
                 ensemble_expired = _ensemble_mode_until > 0 and now > _ensemble_mode_until

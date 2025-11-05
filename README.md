@@ -15,34 +15,22 @@ This is an offshoot of the prediction server developed for the Stanford Space In
 ## Files
 
 ### Core Application
-- **`app.py`** - Flask (Python web framework) WSGI (Web Server Gateway Interface) application serving REST API and static files
-  - Routes: `/sim/singlezpb` (ZPB prediction), `/sim/spaceshot` (ensemble + Monte Carlo), `/sim/elev` (elevation), `/sim/models` (model configuration), `/sim/progress` (progress tracking)
-  - Background thread pre-warms cache on startup:
-    - `_prewarm_cache()`: Pre-loads model 0 simulator in RAM and pre-downloads `worldelev.npy` (451MB elevation file)
-    - Weather files download on-demand when needed (cost-optimized to reduce Supabase egress)
-  - `ThreadPoolExecutor` (concurrent execution) parallelizes ensemble requests (max_workers=32)
-  - **Ensemble + Monte Carlo**: `/sim/spaceshot` runs both 21 ensemble paths AND 420 Monte Carlo simulations (20 perturbations × 21 models) for heatmap visualization
-    - **Monte Carlo Process**: Generates 20 parameter perturbations (random variations in launch conditions), runs each through all 21 weather models, collects 420 landing positions
-    - **Perturbation Ranges**: ±0.1° lat/lon (≈ ±11km), ±50m altitude, ±200m equilibrium altitude, ±10% equilibrium time, ±0.1 m/s ascent/descent rates
-    - **Parallel Execution**: All 441 simulations (21 ensemble + 420 Monte Carlo) run in parallel using 32-worker thread pool
-    - **Response Format**: Returns both `paths` (full trajectories for line plotting) and `heatmap_data` (landing positions for density visualization)
-  - Dynamic cache expansion: Simulator cache expands to 25 when ensemble is called, auto-trims after 60 seconds
-  - Background cache trimming thread: Automatically trims cache in all workers every 30 seconds when ensemble mode expires
-  - HTTP caching headers (`Cache-Control`) + Flask-Compress Gzip compression
-  - Exposes model configuration dynamically based on `downloader.py` settings
+- **`app.py`** - Flask WSGI application serving REST API + static assets
+  - Routes: `/sim/singlezpb`, `/sim/spaceshot`, `/sim/elev`, `/sim/models`, `/sim/progress`, `/sim/cache-status`
+  - Startup helpers: `_start_cache_trim_thread()` (ensures background trim thread is running) and `_prewarm_cache()` (builds simulator for model 0, memory-maps `worldelev.npy`)
+  - `ThreadPoolExecutor(max_workers=32)` drives ensemble + Monte Carlo runs (441 simulations)
+  - Dynamic cache expansion: ensemble requests lift simulator cap to 25; trims back to 5 after the run finishes
+  - Idle watchdog: workers that stay idle for 3 minutes trigger a deep cleanup (drops simulators, keeps `worldelev.npy` mapped, runs multi-pass GC + `malloc_trim`)
+  - `Cache-Control` headers + `flask-compress` for smaller responses; `/sim/cache-status` surfaces cache/memory state for debugging
 
 ### Simulation Engine
-- **`simulate.py`** - Main simulation orchestrator
-  - Dynamic multi-simulator LRU cache: 5 simulators normal mode (~750MB per worker), 25 simulators ensemble mode (~3.75GB per worker)
-  - Ensemble mode: Auto-expands cache when `/sim/spaceshot` is called, auto-trims after 60 seconds
-  - Uses memory-mapping for memory efficiency (I/O-bound, but manageable RAM usage)
-  - Background cache trimming: Periodic thread (every 30 seconds) ensures idle workers trim their cache
-  - **Important**: Each Gunicorn worker has its own independent cache (4 workers × 3.75GB = 15GB max in ensemble mode)
-  - LRU cache (Least Recently Used eviction policy) for predictions (200 entries, 1hr TTL - Time To Live)
-  - Model change management: Automatically detects model updates (checks `whichgefs` every 5 minutes), clears caches when model changes, and deletes old model files from disk cache to prevent accumulation of stale files
-  - Coordinates `WindFile`, `ElevationFile`, and `Simulator` classes
-  - Handles ascent/coast/descent phases with configurable rates
-  - Returns trajectory as `[[timestamp, lat, lon, alt], ...]` arrays
+- **`simulate.py`** - Simulation orchestrator
+  - Multi-simulator LRU cache: 5 simulators in normal mode, 25 during ensemble (per worker)
+  - Ensemble window auto-expires after 60s (capped at 5 minutes). When idle >3 minutes, a deep cleanup clears simulators, resets cache limits, and trims RSS via `malloc_trim(0)`
+  - Uses memory-mapped wind files by default; ensemble mode temporarily preloads arrays into RAM for speed
+  - `_periodic_cache_trim()` runs every ~20s, enforces limits, and calls the idle cleaner when appropriate
+  - Prediction cache: 200 entries, 1hr TTL; refreshed whenever GEFS cycle changes
+  - Coordinates `WindFile`, `ElevationFile`, and `Simulator`, returning `[timestamp, lat, lon, alt]` paths
 
 - **`windfile.py`** - GEFS data parser with 4D interpolation
   - Loads NumPy-compressed `.npz` files (wind vectors at pressure levels)
@@ -146,17 +134,19 @@ This is an offshoot of the prediction server developed for the Stanford Space In
 
 ### Supabase Storage (Cloud)
 - **Location**: Supabase Storage bucket (`habsim`)
-- **Files**: All 21 model `.npz` files + `whichgefs` status file
-- **Purpose**: Long-term storage, source of truth
-- **Access**: Files downloaded on-demand when needed
+- **Files**: 21 model `.npz` files per forecast cycle + `whichgefs` timestamp file
+- **Purpose**: Long-term storage, source of truth for weather datasets
+- **Access pattern**: First request per worker per model hits Supabase; subsequent accesses come from CDN cache or local disk
+- **Cached egress**: Supabase reports CDN-served bytes as "cached egress". Large values usually mean many workers warmed the same files (or downloads resumed after stalls), not repeated origin downloads
 
 ### Railway/Render Instance (Local Disk Cache)
 - **Location**: `/app/data/gefs` on Railway (ephemeral storage)
 - **Files**: Up to 25 `.npz` files (~7.7GB) cached on disk
 - **Purpose**: Fast local access, eliminates download delays after first download
-- **Eviction**: LRU (Least Recently Used) when cache exceeds 25 files
-- **Download Strategy**: Files download on-demand when needed (reduces Supabase egress costs)
-- **Model Change Cleanup**: Automatically deletes old model files when GEFS models update every 6 hours (prevents accumulation of stale cached files from previous model timestamps)
+- **Eviction**: LRU when cache exceeds 25 files (`worldelev.npy` is exempt)
+- **Download Strategy**: Files download on-demand with per-file locking, extended timeouts, and stall detection
+- **Model Change Cleanup**: Automatically deletes old model files when GEFS updates every 6 hours
+- **Idle effect**: Idle worker cleanup does not delete disk cache; simulators are rebuilt from these on next request
 - **Note**: Railway persistent volumes are currently in private beta. Without volume access, files are cached in ephemeral storage (lost on restart but reduce egress during active sessions).
 
 ## Architecture Changes From Prev. HABSIM

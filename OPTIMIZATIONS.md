@@ -53,9 +53,8 @@ gunicorn --config gunicorn_config.py app:app
 ### Startup Pre-warming
 One background thread runs on startup to optimize performance:
 
-1. **`_prewarm_cache()`**: Pre-loads simulator for model 0 (fast single requests)
-   - Files download on-demand when needed (cost-optimized to reduce Supabase egress)
-   - Files are cached on disk after first download, so subsequent runs are fast
+1. **`_prewarm_cache()`**: Builds the model 0 simulator (fast single requests) and memory-maps `worldelev.npy`
+   - Weather files still download on-demand; once cached on disk they are reused by later runs
 
 ### What Gets Pre-warmed
 
@@ -67,9 +66,8 @@ One background thread runs on startup to optimize performance:
 
 **Pre-warming Process:**
 1. Waits 2 seconds for app initialization
-2. Pre-warms model 0 simulator (fast single requests)
-3. Pre-downloads `worldelev.npy` (451MB) to avoid on-demand download failures
-4. Loads elevation data into memory-mapped mode
+2. Builds the model 0 simulator (fast single requests)
+3. Touches `worldelev.npy` (451 MB) so the elevation grid is memory-mapped before first use
 
 **File Downloading:**
 - Weather files download on-demand when ensemble runs are requested (cost-optimized)
@@ -92,44 +90,29 @@ HABSIM uses a multi-layer caching strategy optimized for Railway (max 32GB RAM, 
 
 ### 1. Simulator Cache (`simulate.py`) - **Dynamic RAM Cache**
 
-**Location**: In-memory (RAM)  
-**Storage**: `_simulator_cache` dictionary `{model_id: simulator}`  
-**Capacity**: Dynamic - 5 simulators normal mode (~750MB), 25 simulators ensemble mode (~3.75GB)  
-**Eviction**: LRU (Least Recently Used) when cache is full  
-**Thread Safety**: `_cache_lock` protects all operations
+**Location**: RAM  
+**Storage**: `_simulator_cache` `{model_id: simulator}`  
+**Capacity**: 5 simulators (normal) → 25 simulators (ensemble) per worker  
+**Eviction**: LRU with aggressive cleanup, guarded by `_cache_lock`
 
-**Dynamic Behavior:**
-- **Normal Mode**: Cache limit = 5 simulators (~750MB)
-  - Used for single model requests (default)
-  - Only model 0 pre-warmed
-- **Ensemble Mode**: Cache expands to 25 simulators (~3.75GB per worker)
-  - Triggered when `/sim/spaceshot` is called
-  - Duration: 60 seconds (1 minute, auto-extends with each ensemble run)
-  - Allows all 21 models to be cached during ensemble runs
-  - Uses memory-mapping for memory efficiency (I/O-bound, but manageable RAM usage)
-- **Auto-trimming**: After 60 seconds of no ensemble runs, cache trims to 5 most recently used models
-  - Background thread runs every 30 seconds to trim cache in all workers (even idle ones)
-  - Simulators evicted → memory automatically freed
-  - Frees ~3GB RAM per worker automatically (from 3.75GB → 750MB)
-  - Keeps most recently used models for fast subsequent requests
+**Dynamic behavior**
+- **Normal mode**: 5 simulators (~750 MB per worker). Only model 0 is built during startup warm-up.
+- **Ensemble mode**: `/sim/spaceshot` raises the cap to 25 for 60 s (auto-extends, hard cap 5 min). Ensemble mode preloads wind arrays into RAM so runs stay CPU-bound.
+- **Auto-trim**: `_periodic_cache_trim()` wakes roughly every 20 s (or 3 s when trims fail) and shrinks back to 5 simulators once the ensemble window closes.
+- **Idle reset**: If the worker is idle for ≥180 s, `_idle_memory_cleanup()` clears every simulator, resets limits, runs multi-pass GC, and calls `malloc_trim(0)` to release memory while keeping `worldelev.npy` mapped.
 
-**Memory Usage**:
-- **Normal mode**: ~150MB per simulator (includes WindFile metadata + memory-mapped data)
-  - 5 simulators = ~750MB per worker
-  - Uses memory-mapping (I/O-bound, memory-efficient)
-- **Ensemble mode**: ~150MB per simulator (same as normal mode - uses memory-mapping)
-  - 25 simulators = ~3.75GB per worker (4 workers × 3.75GB = ~15GB worst case)
-  - Uses memory-mapping for memory efficiency (I/O-bound, but more manageable RAM usage)
-  - Auto-trims back to ~750MB per worker after ensemble mode expires (via background thread)
+**Memory usage**
+- ~150 MB per simulator when preloaded; memory-mapped access keeps single runs lighter.
+- Worst case (25 simulators) ≈ 3.75 GB per worker; idle cleanup drops usage back near the cold-start baseline automatically.
 
 ### 2. GEFS File Cache (`gefs.py`) - **Disk Cache**
 
-**Location**: Disk (`/app/data/gefs` on Railway, `/opt/render/project/src/data/gefs` on Render, or `/tmp/habsim-gefs/` as fallback)  
-**Storage**: `.npz` files (compressed NumPy arrays) and `worldelev.npy` (elevation data)  
-**Capacity**: 25 `.npz` files (~7.7GB) + `worldelev.npy` (451MB, always kept, pre-downloaded at startup)  
-**Eviction**: LRU based on file access time; `worldelev.npy` never evicted (exempt from cleanup)  
-**Thread Safety**: `_CACHE_LOCK` protects all operations; per-file locking prevents concurrent downloads  
-**Download Robustness**: 20-minute timeout for large files, progress logging, stall detection, per-file locking
+**Location**: `/app/data/gefs` on Railway (or `/opt/render/project/src/data/gefs`, `/tmp/habsim-gefs/` fallback)
+**Storage**: 21 `.npz` wind files + `worldelev.npy`
+**Capacity**: 25 `.npz` files (~7.7 GB) + `worldelev.npy` (451 MB, never evicted)
+**Eviction**: LRU by file access time (`worldelev.npy` exempt)
+**Thread safety**: `_CACHE_LOCK` plus inter-process file locks stop duplicate downloads
+**Reliability**: Extended timeouts (30 min read), stall detection, resumable downloads, corruption checks, download progress logging
 
 **Memory Usage**:  
 - 308MB per `.npz` file
@@ -239,14 +222,11 @@ HABSIM uses a multi-layer caching strategy optimized for Railway (max 32GB RAM, 
 - Original Euler implementation preserved in comments for reference
 
 ### Memory Management
-- **WindFile cleanup**: Explicit cleanup method deletes all numpy arrays (data, levels, interpolation arrays) when simulators are evicted
-- **Explicit object deletion**: Simulators and WindFile objects are explicitly deleted and garbage collected
-- **Multiple GC passes**: 3x GC passes + `malloc_trim()` to force OS memory release
-- **Background cache trimming**: `_periodic_cache_trim()` runs every 30s (5s when ensemble expired but cache large)
-  - Ensures idle workers trim cache when ensemble mode expires
-  - Maximum duration cap: Forces trim after 5 minutes even with consecutive calls
-  - Auto-trims from 3.75GB → 750MB per worker after 60 seconds
-- **Worker recycling**: `max_requests = 800` (restarts workers periodically)
+- **WindFile cleanup**: Every simulator eviction calls `WindFile.cleanup()` to drop numpy arrays before references are cleared.
+- **Aggressive GC**: Trim passes run multiple GC cycles (including generation 2) followed by `malloc_trim(0)` so freed pages return to the OS.
+- **Idle reset**: Workers that stay idle for 180 s trigger `_idle_memory_cleanup()`—clears simulators, resets ensemble mode, runs GC, trims RSS—while leaving `worldelev.npy` mapped.
+- **Ensemble cap**: Cache expansion is capped at 5 minutes of continuous ensemble mode; after that, limits snap back to normal even if calls continue.
+- **Worker recycling**: `max_requests = 800` provides a final safeguard against long-lived leaks.
 
 ## UI Optimizations
 - Elevation fetching debounced (150ms) to prevent rapid-fire requests
@@ -316,15 +296,8 @@ HABSIM uses a multi-layer caching strategy optimized for Railway (max 32GB RAM, 
 - **CPU**: High (32 ThreadPoolExecutor workers + 32 Gunicorn threads, CPU-bound)
 - **Why Faster**: All 25 simulators already in RAM cache across workers (pre-loaded arrays)
 
-### After 60 Seconds (Auto-trim)
-- **RAM**: 
-  - **Within 60-90 seconds**: Background thread detects ensemble mode expiration and trims cache
-  - **Immediate**: Trims to ~16GB (Python's allocator holds onto freed memory)
-  - **After 3-5 minutes**: Gradually reduces to ~3GB (4 workers × 750MB) as OS reclaims memory
-  - **Background thread**: Checks every 30s normally, or every 10s when ensemble expired but cache still large
-  - **Memory Release**: `malloc_trim()` forces Python to release freed memory back to OS (improves memory recovery)
-  - **Note**: Python's memory allocator may hold freed memory for several minutes, but `malloc_trim()` helps
-  - Actual freed memory depends on OS memory pressure and allocator behavior
-- **CPU**: Minimal (idle)
-- **Cost**: Frees ~20GB RAM gradually (from 25GB → 16GB immediately → 3GB after several minutes)
+### After Ensemble Completes
+- **Trim window**: `_periodic_cache_trim()` collapses the cache back to 5 simulators once the 60 s ensemble timer expires (still capped at 5 min total).
+- **Idle cleanup**: If no further requests arrive for ~3 min, `_idle_memory_cleanup()` purges remaining simulators, runs multi-pass GC, and calls `malloc_trim(0)` so RSS returns close to cold-start levels.
+- **Disk cache**: Wind files stay on disk, so the next ensemble rebuilds simulators from local storage instead of redownloading from Supabase.
 - **Maximum Duration**: Even with consecutive ensemble calls, cache will force trim after 5 minutes to prevent memory bloat
