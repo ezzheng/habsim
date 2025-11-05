@@ -106,7 +106,12 @@ def reset():
 def record_activity():
     """Record that the worker handled a request (used for idle cleanup)."""
     global _last_activity_timestamp
+    old_timestamp = _last_activity_timestamp
     _last_activity_timestamp = time.time()
+    # Log only if there was significant idle time (helps debug)
+    idle_before = _last_activity_timestamp - old_timestamp
+    if idle_before > 60:
+        logging.info(f"Activity recorded: reset idle timer (was idle for {idle_before:.1f}s)")
 
 
 def _idle_memory_cleanup(idle_duration):
@@ -335,11 +340,15 @@ def _periodic_cache_trim():
         try:
             now = time.time()
             idle_duration = now - _last_activity_timestamp
-            # Log idle status periodically for debugging (every 60s when idle)
-            if idle_duration > 60 and int(idle_duration) % 60 < 2:  # Log roughly once per minute when idle
-                logging.info(f"Idle check: {idle_duration:.1f}s idle (threshold: {_IDLE_RESET_TIMEOUT}s), cache size: {len(_simulator_cache)}")
+            # Log idle status periodically for debugging (every 30s when idle)
+            if idle_duration > 30 and int(idle_duration) % 30 < 2:  # Log roughly every 30s when idle
+                with _cache_lock:
+                    cache_size = len(_simulator_cache)
+                logging.info(f"Idle check: {idle_duration:.1f}s idle (threshold: {_IDLE_RESET_TIMEOUT}s), cache size: {cache_size}, last_cleanup: {now - _last_idle_cleanup:.1f}s ago")
             if idle_duration >= _IDLE_RESET_TIMEOUT and (now - _last_idle_cleanup) >= _IDLE_CLEAN_COOLDOWN:
-                logging.info(f"Idle threshold reached: {idle_duration:.1f}s without user activity, triggering cleanup")
+                with _cache_lock:
+                    cache_size = len(_simulator_cache)
+                logging.warning(f"Idle threshold reached: {idle_duration:.1f}s without user activity, cache size: {cache_size}, triggering cleanup")
                 _idle_memory_cleanup(idle_duration)
                 _last_idle_cleanup = time.time()
                 consecutive_trim_failures = 0

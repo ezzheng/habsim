@@ -136,6 +136,8 @@ def cache_status():
     import simulate
     import os
     import time
+    from pathlib import Path
+    import gefs
     
     # Get cache info
     with simulate._cache_lock:
@@ -148,6 +150,30 @@ def cache_status():
     
     now = time.time()
     
+    # Check persistent volume usage
+    cache_dir = getattr(gefs, '_CACHE_DIR', None)
+    persistent_volume_mounted = Path("/app/data").exists()
+    cache_dir_path = str(cache_dir) if cache_dir else "unknown"
+    cache_dir_exists = cache_dir.exists() if cache_dir else False
+    
+    # Count cached files on disk
+    disk_cache_files = 0
+    disk_cache_size_mb = 0
+    if cache_dir and cache_dir.exists():
+        try:
+            for file in cache_dir.glob("*.npz"):
+                disk_cache_files += 1
+                disk_cache_size_mb += file.stat().st_size / (1024 * 1024)
+            for file in cache_dir.glob("*.npy"):
+                disk_cache_files += 1
+                disk_cache_size_mb += file.stat().st_size / (1024 * 1024)
+        except Exception as e:
+            pass
+    
+    # Check idle status
+    idle_duration = now - simulate._last_activity_timestamp
+    last_cleanup = now - simulate._last_idle_cleanup if hasattr(simulate, '_last_idle_cleanup') else 0
+    
     status = {
         'worker_pid': os.getpid(),
         'cache': {
@@ -157,12 +183,25 @@ def cache_status():
             'ensemble_limit': simulate.MAX_SIMULATOR_CACHE_ENSEMBLE,
             'cached_models': cached_models
         },
+        'disk_cache': {
+            'directory': cache_dir_path,
+            'directory_exists': cache_dir_exists,
+            'persistent_volume_mounted': persistent_volume_mounted,
+            'files_count': disk_cache_files,
+            'size_mb': round(disk_cache_size_mb, 2)
+        },
         'ensemble_mode': {
             'active': ensemble_active,
             'started': ensemble_started,
             'expires_at': ensemble_until,
             'seconds_until_expiry': max(0, round(ensemble_until - now, 1)) if ensemble_until > 0 else 0,
             'seconds_since_start': round(now - ensemble_started, 1) if ensemble_started > 0 else 0
+        },
+        'idle_cleanup': {
+            'idle_duration_seconds': round(idle_duration, 1),
+            'threshold_seconds': simulate._IDLE_RESET_TIMEOUT,
+            'seconds_until_cleanup': max(0, round(simulate._IDLE_RESET_TIMEOUT - idle_duration, 1)),
+            'last_cleanup_ago_seconds': round(last_cleanup, 1) if last_cleanup > 0 else 0
         },
         'note': 'Check Railway metrics for actual memory usage'
     }
