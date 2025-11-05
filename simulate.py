@@ -28,6 +28,7 @@ _ensemble_mode_until = 0  # Timestamp when ensemble mode expires
 _ensemble_mode_started = 0  # Timestamp when ensemble mode first started (for max duration tracking)
 _cache_lock = threading.Lock()  # Thread-safe access
 elevation_cache = None
+_elevation_lock = threading.Lock()  # Protects elevation_cache access/cleanup
 
 currgefs = "Unavailable"
 _last_refresh_check = 0.0
@@ -64,15 +65,21 @@ def _get_cached_prediction(cache_key):
     return None
 
 def _cache_prediction(cache_key, result):
-    """Cache prediction result with TTL and size limit"""
-    # Evict oldest if cache is full
-    if len(_prediction_cache) >= MAX_CACHE_SIZE:
-        oldest_key = min(_cache_access_times, key=_cache_access_times.get)
-        del _prediction_cache[oldest_key]
-        del _cache_access_times[oldest_key]
-    
-    _prediction_cache[cache_key] = result
-    _cache_access_times[cache_key] = time.time()
+    """Cache prediction result with TTL and size limit.
+    Thread-safe eviction prevents unbounded growth during ensemble bursts."""
+    # CRITICAL: Evict BEFORE checking size to prevent race conditions
+    # Multiple threads could all pass the size check simultaneously during ensemble
+    # This ensures we stay within MAX_CACHE_SIZE even under high concurrency
+    with _cache_lock:
+        # Evict oldest entries until we have room (may need multiple evictions)
+        while len(_prediction_cache) >= MAX_CACHE_SIZE:
+            oldest_key = min(_cache_access_times, key=_cache_access_times.get)
+            del _prediction_cache[oldest_key]
+            del _cache_access_times[oldest_key]
+        
+        # Now safe to insert
+        _prediction_cache[cache_key] = result
+        _cache_access_times[cache_key] = time.time()
 
 def refresh():
     global currgefs
@@ -183,8 +190,9 @@ def _idle_memory_cleanup(idle_duration):
         simulators.clear()
         
         # IMPORTANT: Use global keyword for module-level variables
-        # Clear elevation cache to free more memory
-        elevation_cache = None  # Note: This is a module global, assigned here
+        # Clear elevation cache to free more memory (thread-safe)
+        with _elevation_lock:
+            elevation_cache = None  # Note: This is a module global, assigned here
         
         # Clear prediction cache
         _prediction_cache.clear()
@@ -269,9 +277,15 @@ def _cleanup_old_model_files(old_timestamp: str):
         logging.error(f"Failed to cleanup old model files: {e}", exc_info=True)
 
 def _get_elevation_data():
+    """Get cached elevation data with thread-safe initialization.
+    Prevents race conditions during concurrent access."""
     global elevation_cache
+    # Double-checked locking pattern for performance
     if elevation_cache is None:
-        elevation_cache = load_gefs('worldelev.npy')
+        with _elevation_lock:
+            # Check again inside lock (another thread might have initialized it)
+            if elevation_cache is None:
+                elevation_cache = load_gefs('worldelev.npy')
     return elevation_cache
 
 def set_ensemble_mode(duration_seconds=60):
