@@ -453,7 +453,7 @@ function displayHeatmap(heatmapData) {
         if (heatmapLayer) {
             try {
                 if (heatmapLayer.setMap) {
-                    heatmapLayer.setMap(null);
+            heatmapLayer.setMap(null);
                 }
                 if (heatmapLayer.onRemove) {
                     heatmapLayer.onRemove();
@@ -551,7 +551,7 @@ function displayHeatmap(heatmapData) {
 function clearContours() {
     // Remove all contour polylines and labels
     if (contourLayers && contourLayers.length > 0) {
-        contourLayers.forEach(layer => {
+    contourLayers.forEach(layer => {
             try {
                 // Remove polyline1 from map - use multiple methods to ensure it's removed
                 if (layer.polyline) {
@@ -968,15 +968,18 @@ async function simulate() {
         var lon = document.getElementById('lon').value;
         var alt = document.getElementById('alt').value;
         
-        // Update location marker if coordinates are provided
+        // Update location marker and center map if coordinates are provided
         if (lat && lon && !isNaN(parseFloat(lat)) && !isNaN(parseFloat(lon))) {
             try {
                 var position = new google.maps.LatLng(parseFloat(lat), parseFloat(lon));
                 if (typeof updateClickMarker === 'function') {
                     updateClickMarker(position);
                 }
+                if (typeof map !== 'undefined' && map && typeof map.panTo === 'function') {
+                    map.panTo(position);
+                }
             } catch (e) {
-                console.warn('Could not update location marker:', e);
+                console.warn('Could not update location marker/map center:', e);
             }
         }
         
@@ -1068,7 +1071,7 @@ async function simulate() {
                     }
                     
                     // Ensemble simulation complete (no progress tracking needed)
-                    
+
                     // Process ensemble paths (existing functionality)
                     // Note: payloads array order matches modelIds order from server config
                     if (payloads.length !== modelIds.length) {
