@@ -120,13 +120,8 @@ def whichgefs():
 def cache_status():
     """Debug endpoint to see what's in the simulator cache and memory usage"""
     import simulate
-    import psutil
     import os
-    
-    # Get process memory info
-    process = psutil.Process(os.getpid())
-    memory_info = process.memory_info()
-    memory_mb = memory_info.rss / (1024 * 1024)
+    import time
     
     # Get cache info
     with simulate._cache_lock:
@@ -137,12 +132,10 @@ def cache_status():
         ensemble_started = simulate._ensemble_mode_started
         cached_models = list(simulate._simulator_cache.keys())
     
-    import time
     now = time.time()
     
     status = {
         'worker_pid': os.getpid(),
-        'memory_mb': round(memory_mb, 2),
         'cache': {
             'size': cache_size,
             'limit': cache_limit,
@@ -156,7 +149,8 @@ def cache_status():
             'expires_at': ensemble_until,
             'seconds_until_expiry': max(0, round(ensemble_until - now, 1)) if ensemble_until > 0 else 0,
             'seconds_since_start': round(now - ensemble_started, 1) if ensemble_started > 0 else 0
-        }
+        },
+        'note': 'Check Railway metrics for actual memory usage'
     }
     
     return jsonify(status)
