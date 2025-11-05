@@ -344,13 +344,24 @@ def _periodic_cache_trim():
             if idle_duration > 30 and int(idle_duration) % 30 < 2:  # Log roughly every 30s when idle
                 with _cache_lock:
                     cache_size = len(_simulator_cache)
-                logging.info(f"Idle check: {idle_duration:.1f}s idle (threshold: {_IDLE_RESET_TIMEOUT}s), cache size: {cache_size}, last_cleanup: {now - _last_idle_cleanup:.1f}s ago")
-            if idle_duration >= _IDLE_RESET_TIMEOUT and (now - _last_idle_cleanup) >= _IDLE_CLEAN_COOLDOWN:
+                last_cleanup_ago = (now - _last_idle_cleanup) if _last_idle_cleanup > 0 else 0
+                should_trigger = idle_duration >= _IDLE_RESET_TIMEOUT and (last_cleanup_ago >= _IDLE_CLEAN_COOLDOWN or _last_idle_cleanup == 0)
+                logging.info(f"Idle check: {idle_duration:.1f}s idle (threshold: {_IDLE_RESET_TIMEOUT}s), cache size: {cache_size}, last_cleanup: {last_cleanup_ago:.1f}s ago, should_trigger: {should_trigger}")
+            # Fix: Handle case where cleanup never ran (_last_idle_cleanup = 0)
+            # If cleanup never ran, allow it immediately (0 means "never")
+            time_since_last_cleanup = (now - _last_idle_cleanup) if _last_idle_cleanup > 0 else float('inf')
+            if idle_duration >= _IDLE_RESET_TIMEOUT and time_since_last_cleanup >= _IDLE_CLEAN_COOLDOWN:
                 with _cache_lock:
                     cache_size = len(_simulator_cache)
                 logging.warning(f"Idle threshold reached: {idle_duration:.1f}s without user activity, cache size: {cache_size}, triggering cleanup")
-                _idle_memory_cleanup(idle_duration)
-                _last_idle_cleanup = time.time()
+                try:
+                    _idle_memory_cleanup(idle_duration)
+                    _last_idle_cleanup = time.time()
+                    logging.info(f"Idle cleanup completed successfully, marked timestamp: {_last_idle_cleanup}")
+                except Exception as cleanup_error:
+                    logging.error(f"Idle cleanup failed: {cleanup_error}", exc_info=True)
+                    # Still mark as attempted to prevent repeated failures
+                    _last_idle_cleanup = time.time()
                 consecutive_trim_failures = 0
                 time.sleep(5)
                 continue
@@ -399,7 +410,17 @@ def _periodic_cache_trim():
                 consecutive_trim_failures = 0
                 time.sleep(20)  # Check more frequently (reduced from 30s)
         except Exception as e:
-            logging.warning(f"Cache trim thread error (non-critical): {e}", exc_info=True)
+            logging.error(f"Cache trim thread error: {e}", exc_info=True)
+            # If idle for a very long time and cleanup hasn't run, force it
+            now_error = time.time()
+            idle_duration_error = now_error - _last_activity_timestamp
+            if idle_duration_error > 600 and _last_idle_cleanup == 0:  # 10 minutes idle, cleanup never ran
+                logging.error(f"EMERGENCY: Worker idle for {idle_duration_error:.1f}s but cleanup never ran! Forcing cleanup now.")
+                try:
+                    _idle_memory_cleanup(idle_duration_error)
+                    _last_idle_cleanup = time.time()
+                except Exception as emergency_error:
+                    logging.error(f"Emergency cleanup also failed: {emergency_error}", exc_info=True)
             time.sleep(60)  # Wait longer on error
 
 def _force_aggressive_trim():
