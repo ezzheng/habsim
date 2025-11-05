@@ -540,6 +540,7 @@
                 margin: 0 !important;
                 padding: 0 !important;
                 background: white !important;
+                overflow: hidden !important; /* prevent any inner overflow from showing as bars */
             }
 
             /* Ensure internal Google map containers fill the page and remove gray bars */
@@ -550,9 +551,10 @@
             }
 
             /* Hide Google logos/attribution and controls in print */
-            .gm-style-cc, .gmnoprint, .gm-fullscreen-control, .gm-control-active, .gm-svpc {
-                display: none !important;
-            }
+            .gm-style-cc, .gm-style-cc *,
+            .gmnoprint, .gm-fullscreen-control, .gm-control-active, .gm-svpc,
+            .gm-bundled-control, .gm-bundled-control-on-bottom,
+            .gm-style .gm-style-cc { display: none !important; height: 0 !important; }
             
             /* Show print overlay with parameters */
             #print-overlay {
