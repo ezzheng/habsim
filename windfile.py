@@ -177,9 +177,18 @@ class WindFile:
         with lock:
             # Double-check after acquiring lock (another thread might have extracted it)
             if memmap_path.exists():
-                memmap_data = np.load(memmap_path, mmap_mode='r')
-                if memmap_data is not None:
-                    return memmap_data
+                try:
+                    memmap_data = np.load(memmap_path, mmap_mode='r')
+                    if memmap_data is not None:
+                        return memmap_data
+                except Exception as e:
+                    # Corrupted extraction - delete and re-extract
+                    import logging
+                    logging.warning(f"[MMAP] Cached extraction corrupted: {memmap_path.name}, re-extracting: {e}")
+                    try:
+                        memmap_path.unlink()
+                    except:
+                        pass
             
             if 'data' not in npz:
                 raise KeyError(f"NPZ file {path} is missing 'data' key")
@@ -196,13 +205,13 @@ class WindFile:
             del array
             extract_time = time.time() - extract_start
             logging.info(f"[PERF] Extracted NPZ to .npy: {memmap_path.name}, time={extract_time:.1f}s (one-time cost)")
-        
-        # Now memory-map the extracted file
-        memmap_data = np.load(memmap_path, mmap_mode='r')
-        if memmap_data is None:
-            raise RuntimeError(f"Failed to load memory-mapped data from {memmap_path}")
-        
-        return memmap_data
+            
+            # Now memory-map the extracted file (still inside lock)
+            memmap_data = np.load(memmap_path, mmap_mode='r')
+            if memmap_data is None:
+                raise RuntimeError(f"Failed to load memory-mapped data from {memmap_path}")
+            
+            return memmap_data
 
     def get(self, lat, lon, altitude, time):
         """Optimized wind data retrieval with bounds checking"""
