@@ -893,6 +893,10 @@
                 const titleStr = `HABSIM_${modeStr}_${safeTime}_${lat}_${lon}`.replace(/__+/g,'_');
                 window.__origTitle = window.__origTitle || document.title;
                 document.title = titleStr;
+                try {
+                    const titleEl = document.querySelector('title');
+                    if (titleEl) titleEl.textContent = titleStr;
+                } catch(_) {}
             } catch (e) {}
         }
         
@@ -925,9 +929,15 @@
             }
             if (window.matchMedia) {
                 const mediaQueryList = window.matchMedia('print');
-                mediaQueryList.addListener(function(mql){
-                    if (mql.matches) setTitleBeforePrint(); else restoreTitleAfterPrint();
-                });
+                if (mediaQueryList.addEventListener) {
+                    mediaQueryList.addEventListener('change', function(e){
+                        if (e.matches) setTitleBeforePrint(); else restoreTitleAfterPrint();
+                    });
+                } else if (mediaQueryList.addListener) {
+                    mediaQueryList.addListener(function(mql){
+                        if (mql.matches) setTitleBeforePrint(); else restoreTitleAfterPrint();
+                    });
+                }
             }
             window.addEventListener('beforeprint', setTitleBeforePrint);
             window.addEventListener('afterprint', restoreTitleAfterPrint);
