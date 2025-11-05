@@ -266,9 +266,9 @@ def _trim_cache_to_normal():
                 _ensemble_mode_started = 0
                 logging.info("Ensemble mode exceeded max duration (5 min): forcing cache trim to normal (5 simulators)")
             else:
-                _ensemble_mode_until = 0
+            _ensemble_mode_until = 0
                 _ensemble_mode_started = 0
-                logging.info("Ensemble mode expired: cache limit reset to normal (5 simulators)")
+            logging.info("Ensemble mode expired: cache limit reset to normal (5 simulators)")
         
         # If cache is too large, trim to normal size keeping most recently used
         # Also trim if cache is significantly larger than current limit (memory leak protection)
@@ -531,7 +531,7 @@ def _get_simulator(model):
                     del _simulator_access_times[model]
                 else:
                     # Valid simulator - return it
-                    _simulator_access_times[model] = now
+            _simulator_access_times[model] = now
                     return simulator
             else:
                 # Invalid simulator - remove it
