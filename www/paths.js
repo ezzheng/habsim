@@ -1052,15 +1052,7 @@ async function simulate() {
                         console.log(`New format: ${payloads.length} paths, ${heatmapData.length} heatmap points`);
                     }
                     
-                    // Stop polling once fetch completes (simulation is done)
-                    if (ensembleProgressInterval) {
-                        clearInterval(ensembleProgressInterval);
-                        ensembleProgressInterval = null;
-                    }
-                    // Update to 100% if not already there
-                    if (window.ensembleEnabled) {
-                        updateEnsembleProgress({completed: 441, total: 441, percentage: 100});
-                    }
+                    // Ensemble simulation complete (no progress tracking needed)
                     
                     // Process ensemble paths (existing functionality)
                     // Note: payloads array order matches modelIds order from server config
