@@ -895,133 +895,20 @@ function updateContourVisibility() {
     });
 }
 
-// Progress tracking for ensemble simulations
-let ensembleProgressInterval = null;
-let currentRequestId = null;
-
-function updateEnsembleProgress(progressData) {
-    const ensembleBtn = document.getElementById('ensemble-toggle');
-    if (!ensembleBtn || !window.ensembleEnabled) return;
-    
-    const completed = progressData.completed || 0;
-    const total = progressData.total || 441; // 21 ensemble + 420 Monte Carlo
-    const percentage = progressData.percentage || Math.round((completed / total) * 100);
-    
-    // Show percentage on ensemble button
-    if (completed === 0) {
-        ensembleBtn.textContent = '0%';
-    } else if (completed >= total) {
-        ensembleBtn.textContent = '100%';
-    } else {
-        ensembleBtn.textContent = `${percentage}%`;
-    }
-}
-
-async function pollProgress(requestId) {
-    if (!requestId) return null;
-    
-    try {
-        const url = `${URL_ROOT}/progress?request_id=${requestId}`;
-        const response = await fetch(url);
-        
-        if (response.ok) {
-            const data = await response.json();
-            return data;
-        } else if (response.status === 404) {
-            // Progress not found yet (server hasn't created entry) - this is normal initially
-            // Return null to indicate we should keep polling
-            return null;
-        } else {
-            // Other error status
-            console.warn(`Progress poll failed: ${response.status} ${response.statusText}`);
-            return null;
-        }
-    } catch (error) {
-        // Network error - log but don't fail completely
-        console.warn('Progress poll error:', error);
-        return null;
-    }
-}
-
-function startProgressPolling(requestId) {
-    // Stop any existing polling
-    if (ensembleProgressInterval) {
-        clearInterval(ensembleProgressInterval);
-        ensembleProgressInterval = null;
-    }
-    
-    if (!requestId) {
-        console.warn('startProgressPolling called without requestId');
-        return;
-    }
-    
-    currentRequestId = requestId;
-    let pollCount = 0;
-    let lastCompleted = -1;
-    
-    // Immediately set button text to 0% when polling starts
+// Simple ensemble status indicator - no complex progress tracking
+function showEnsembleRunning() {
     const ensembleBtn = document.getElementById('ensemble-toggle');
     if (ensembleBtn && window.ensembleEnabled) {
-        ensembleBtn.textContent = '0%';
-        console.log(`Progress polling started with request_id: ${requestId}`);
-    } else {
-        console.warn('Progress polling started but ensemble button not found or ensemble not enabled');
+        ensembleBtn.textContent = 'Running...';
+        ensembleBtn.style.pointerEvents = 'none';  // Disable during simulation
     }
-    
-    // Start polling immediately - server creates progress entry right when request arrives
-    // We handle 404s gracefully (progress entry not created yet) and keep polling
-    ensembleProgressInterval = setInterval(async () => {
-        if (!window.__simRunning || !currentRequestId) {
-            if (ensembleProgressInterval) {
-                clearInterval(ensembleProgressInterval);
-                ensembleProgressInterval = null;
-            }
-            return;
-        }
-        
-        const progressData = await pollProgress(currentRequestId);
-        
-        if (progressData && progressData.completed !== undefined) {
-            // Only update if progress changed
-            if (progressData.completed !== lastCompleted) {
-                updateEnsembleProgress(progressData);
-                lastCompleted = progressData.completed;
-                console.log(`Progress update: ${progressData.completed}/${progressData.total} (${progressData.percentage}%)`);
-                
-                // If completed, stop polling
-                if (progressData.completed >= progressData.total) {
-                    console.log('Progress polling completed');
-                    if (ensembleProgressInterval) {
-                        clearInterval(ensembleProgressInterval);
-                        ensembleProgressInterval = null;
-                    }
-                }
-            }
-        } else if (pollCount > 100) {
-            // If we've polled 100 times (30 seconds) without getting progress, stop polling
-            // This prevents infinite polling if the request_id is invalid
-            console.warn(`Progress polling stopped after 100 attempts without valid progress data (request_id: ${currentRequestId})`);
-            if (ensembleProgressInterval) {
-                clearInterval(ensembleProgressInterval);
-                ensembleProgressInterval = null;
-            }
-        }
-        
-        pollCount++;
-    }, 300); // Poll every 300ms
 }
 
-function clearEnsembleProgress() {
-    if (ensembleProgressInterval) {
-        clearInterval(ensembleProgressInterval);
-        ensembleProgressInterval = null;
-    }
-    currentRequestId = null;
-    
+function clearEnsembleRunning() {
     const ensembleBtn = document.getElementById('ensemble-toggle');
     if (ensembleBtn) {
-        // Restore "Ensemble" text when simulation finishes or is cancelled
         ensembleBtn.textContent = 'Ensemble';
+        ensembleBtn.style.pointerEvents = 'auto';  // Re-enable
         // Re-apply the 'on' class if ensemble is still enabled
         if (window.ensembleEnabled) {
             ensembleBtn.classList.add('on');
@@ -1037,7 +924,7 @@ async function simulate() {
     // If a simulation is already running, interpret this call as a cancel request
     if (window.__simRunning && window.__simAbort) {
         try { window.__simAbort.abort(); } catch (e) {}
-        clearEnsembleProgress();
+        clearEnsembleRunning();
         // Note: Ensemble mode on server will still expire after 60 seconds from when it was set
         // This is expected behavior - server doesn't know about client-side cancellation
         return;
@@ -1051,9 +938,9 @@ async function simulate() {
     const spinner = document.getElementById('sim-spinner');
     const originalButtonText = simBtn ? simBtn.textContent : null;
     
-    // Clear ensemble progress display
+    // Show ensemble running status
     if (window.ensembleEnabled) {
-        clearEnsembleProgress();
+        showEnsembleRunning();
     }
     
     if (simBtn) {
@@ -1133,32 +1020,9 @@ async function simulate() {
                     + "&asc=" + asc + "&desc=" + desc;
                 console.log("Using spaceshot endpoint (with Monte Carlo):", spaceshotUrl);
                 
-                // Compute request_id client-side (same hash function as server) to start polling immediately
-                const requestKey = `${time}_${lat}_${lon}_${alt}_${equil}_${eqtime}_${asc}_${desc}`;
-                let hash = 0;
-                for (let i = 0; i < requestKey.length; i++) {
-                    hash = ((hash << 5) - hash) + requestKey.charCodeAt(i);
-                    hash = hash & 0xFFFFFFFF; // Convert to 32-bit integer
-                }
-                const computedRequestId = Math.abs(hash).toString(16).padStart(16, '0').substring(0, 16);
-                
-                // Start polling immediately (before fetch completes) using computed request_id
-                if (window.ensembleEnabled) {
-                    startProgressPolling(computedRequestId);
-                }
-                
                 try {
                     const response = await fetch(spaceshotUrl, { signal: window.__simAbort.signal });
                     const data = await response.json(); // Now returns {paths: [...], heatmap_data: [...], request_id: ...}
-                    
-                    // Update request_id if server provided one (should match our computed one)
-                    if (data.request_id && data.request_id !== computedRequestId) {
-                        console.warn(`Request ID mismatch: computed ${computedRequestId}, server returned ${data.request_id}`);
-                        // Use server's request_id (more reliable)
-                        if (window.ensembleEnabled) {
-                            startProgressPolling(data.request_id);
-                        }
-                    }
                     
                     console.log('Spaceshot response received:', {
                         isArray: Array.isArray(data),
@@ -1284,7 +1148,7 @@ async function simulate() {
         if (waypointsToggle) {showWaypoints()}
     } finally {
         window.__simRunning = false;
-        clearEnsembleProgress(); // Clear progress when simulation completes
+        clearEnsembleRunning(); // Clear running status when simulation completes
         window.__simAbort = null;
         // Blank out elevation to require refetch before next simulation
         try {
