@@ -1,6 +1,7 @@
 import math
 import datetime
 import threading
+import time
 from io import BytesIO
 from pathlib import Path
 from typing import Union
@@ -47,17 +48,7 @@ class WindFile:
                     Default: False (memory-efficient mode)
         """
         normalized_path = _normalize_path(path)
-        
-        # PERFORMANCE FIX: Keep NPZ file open for memory-mapped access
-        # Closing and reopening adds unnecessary overhead
-        if isinstance(normalized_path, Path) and normalized_path.suffix == '.npz' and not preload:
-            # Memory-mapped mode: keep NPZ open
-            self._npz_file = np.load(normalized_path)
-            npz = self._npz_file
-        else:
-            # Pre-load mode or BytesIO: load and close
-            npz = np.load(normalized_path)
-            self._npz_file = None
+        npz = np.load(normalized_path)
 
         try:
             self.time = float(npz['timestamp'][()])
@@ -71,15 +62,12 @@ class WindFile:
                     self.data = np.array(npz['data'], copy=True)
                 else:
                     # Use memory-mapping for memory efficiency (normal mode)
-                    # Keep reference to NPZ data array (already memory-mapped by numpy)
-                    self.data = npz['data']
+                    self.data = self._load_memmap_data(npz, normalized_path)
             else:
                 # BytesIO path - always load into RAM
                 self.data = np.array(npz['data'], copy=True)
         finally:
-            # Only close NPZ if we're not keeping it open for memory-mapping
-            if self._npz_file is None:
-                npz.close()
+            npz.close()
 
         # Validate that data was loaded successfully
         if self.data is None:
@@ -123,14 +111,6 @@ class WindFile:
         This should only be called when the simulator is being evicted from cache
         and no other threads are using it.
         """
-        # Close NPZ file if we kept it open for memory-mapping
-        if hasattr(self, '_npz_file') and self._npz_file is not None:
-            try:
-                self._npz_file.close()
-                self._npz_file = None
-            except:
-                pass
-        
         # Clear main data array (biggest memory consumer)
         # For memory-mapped files, we DON'T delete them - they use minimal RAM
         # The OS kernel will handle page cache eviction naturally
@@ -170,20 +150,57 @@ class WindFile:
     def _load_memmap_data(self, npz: np.lib.npyio.NpzFile, path: Path):
         """Load data using memory-mapping for memory efficiency.
         
-        PERFORMANCE: NPZ files can be memory-mapped directly without extraction.
-        Extracting to a separate .npy file adds 9+ seconds per file.
+        PERFORMANCE: NPZ files are compressed (zip), so accessing npz['data'] requires
+        decompression which takes 6-9 seconds. We extract to an uncompressed .npy file
+        ONCE, then memory-map that file for fast subsequent access.
         """
-        # OPTIMIZED: Memory-map directly from NPZ instead of extracting
-        # NPZ files are just zipped numpy arrays - we can mmap the 'data' array directly
-        if 'data' not in npz:
-            raise KeyError(f"NPZ file {path} is missing 'data' key")
+        memmap_path = Path(f"{path}.data.npy")
         
-        # Access the data array from NPZ with memory mapping
-        # This is much faster than extracting to a separate .npy file
-        memmap_data = npz['data']
+        # Check if extracted .npy file already exists (fast path)
+        if memmap_path.exists():
+            # File already extracted - just memory-map it (instant)
+            import logging
+            logging.debug(f"[MMAP] Using cached extraction: {memmap_path.name}")
+            memmap_data = np.load(memmap_path, mmap_mode='r')
+            if memmap_data is not None:
+                return memmap_data
+            else:
+                # Corrupted extraction file - delete and re-extract
+                logging.warning(f"[MMAP] Cached extraction corrupted: {memmap_path.name}, re-extracting")
+                try:
+                    memmap_path.unlink()
+                except:
+                    pass
         
+        # Need to extract from NPZ (slow, but only happens once per file)
+        lock = _get_memmap_lock(memmap_path)
+        with lock:
+            # Double-check after acquiring lock (another thread might have extracted it)
+            if memmap_path.exists():
+                memmap_data = np.load(memmap_path, mmap_mode='r')
+                if memmap_data is not None:
+                    return memmap_data
+            
+            if 'data' not in npz:
+                raise KeyError(f"NPZ file {path} is missing 'data' key")
+            
+            # Extract data array to uncompressed .npy file for fast memory-mapping
+            import logging
+            extract_start = time.time()
+            array = npz['data']
+            memmap_path.parent.mkdir(parents=True, exist_ok=True)
+            mm = open_memmap(memmap_path, mode='w+', dtype=array.dtype, shape=array.shape)
+            mm[...] = array
+            mm.flush()
+            del mm
+            del array
+            extract_time = time.time() - extract_start
+            logging.info(f"[PERF] Extracted NPZ to .npy: {memmap_path.name}, time={extract_time:.1f}s (one-time cost)")
+        
+        # Now memory-map the extracted file
+        memmap_data = np.load(memmap_path, mmap_mode='r')
         if memmap_data is None:
-            raise RuntimeError(f"Failed to load memory-mapped data from {path}")
+            raise RuntimeError(f"Failed to load memory-mapped data from {memmap_path}")
         
         return memmap_data
 
