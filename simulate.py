@@ -353,7 +353,7 @@ def _periodic_cache_trim():
             if idle_duration >= _IDLE_RESET_TIMEOUT and time_since_last_cleanup >= _IDLE_CLEAN_COOLDOWN:
                 with _cache_lock:
                     cache_size = len(_simulator_cache)
-                logging.warning(f"Idle threshold reached: {idle_duration:.1f}s without user activity, cache size: {cache_size}, triggering cleanup")
+                logging.info(f"Idle threshold reached: {idle_duration:.1f}s without user activity, cache size: {cache_size}, triggering cleanup")
                 try:
                     _idle_memory_cleanup(idle_duration)
                     _last_idle_cleanup = time.time()
