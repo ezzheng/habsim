@@ -91,7 +91,9 @@ This is an offshoot of the prediction server developed for the Stanford Space In
   - Draws `google.maps.Polyline` objects with color-coded paths (21 ensemble paths)
   - **Monte Carlo Heatmap**: Custom canvas overlay showing probability density from 420 landing positions
     - Custom kernel density estimation with configurable smoothing (`'epanechnikov'` default, shape-preserving)
-    - Color gradient: Cyan (low) → Green → Yellow → Orange → Red (high density)
+    - Color gradient: Green (low) → Yellow → Orange → Red (high density, inner)
+    - Probability contours at cumulative mass 30/50/70/90% (higher % encloses larger area)
+    - Waypoints/labels remain hoverable (heatmap below interactive pane; contour polygons non-clickable)
     - Clears automatically when paths are cleared (map click or new simulation)
   - Waypoint circles with click handlers showing altitude/time info windows
   - Debounced elevation fetching (150ms) to prevent rapid-fire requests

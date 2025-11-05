@@ -33,7 +33,9 @@ The ensemble endpoint (`/sim/spaceshot`) includes Monte Carlo simulation to quan
   - `'none'` - Raw density grid, no smoothing, maximum shape preservation
   - `'uniform'` - Uniform kernel, rectangular shape
   - `'gaussian'` - Gaussian kernel, smooth but circular (similar to Google Maps default)
-- **Color Gradient**: Cyan (transparent/low) → Green → Yellow → Orange → Red (solid/high)
+- **Color Gradient**: Green (low) → Yellow → Orange → Red (high, inner)
+- **Contours**: Cumulative mass thresholds at 30/50/70/90% (higher % encloses larger area)
+- **Interactivity**: Heatmap is placed below interactive overlay panes; contour polygons/labels are non-clickable so waypoint hovers work through the heatmap
 - **Properties**: 
   - `opacity: 0.6` - overlay opacity (allows seeing map/ensemble paths underneath)
   - `gridResolution: 100` - density grid resolution (higher = smoother but slower)

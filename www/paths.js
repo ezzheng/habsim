@@ -506,18 +506,18 @@ function displayHeatmap(heatmapData) {
         // Create custom heatmap overlay
         // Options: 'none' (raw), 'epanechnikov' (recommended), 'uniform', 'gaussian'
         heatmapLayer = new CustomHeatmapOverlay(heatmapPoints, {
-            opacity: 0.65,
+            opacity: 0.7,
             smoothingType: 'epanechnikov',  // Change to 'none' for raw density, 'gaussian' for smooth circular
             smoothingBandwidth: null,        // null = auto-calculate (5% of data range)
             gridResolution: 100,             // Higher = smoother but slower
+            // Higher density (inner) → red; lower density (outer) → green
             gradient: [
-                {stop: 0.00, color: 'rgba(0, 255, 255, 0)'},      // Fully transparent
-                {stop: 0.15, color: 'rgba(0, 200, 255, 0.35)'},   // Light cyan
-                {stop: 0.30, color: 'rgba(0, 180, 0, 0.55)'},     // Green
-                {stop: 0.50, color: 'rgba(255, 215, 0, 0.70)'},   // Gold
-                {stop: 0.70, color: 'rgba(255, 140, 0, 0.85)'},   // Darker orange
-                {stop: 0.85, color: 'rgba(220, 0, 0, 0.95)'},     // Deep red
-                {stop: 1.00, color: 'rgba(140, 0, 0, 1)'}         // Very deep red
+                {stop: 0.00, color: 'rgba(0, 255, 0, 0.00)'},   // transparent
+                {stop: 0.20, color: 'rgba(0, 170, 0, 0.40)'},   // green
+                {stop: 0.40, color: 'rgba(200, 200, 0, 0.65)'}, // yellow
+                {stop: 0.65, color: 'rgba(255, 140, 0, 0.85)'}, // orange
+                {stop: 0.85, color: 'rgba(220, 0, 0, 0.95)'},   // red
+                {stop: 1.00, color: 'rgba(140, 0, 0, 1.00)'}    // deep red
             ]
         });
         
@@ -780,7 +780,7 @@ function displayContours(heatmapData) {
                     map: map,
                     icon: {
                         path: google.maps.SymbolPath.CIRCLE,
-                        scale: 10,
+                        scale: 14,                 // larger circle to avoid clipping
                         fillColor: 'white',
                         fillOpacity: 0.95,
                         strokeColor: color,
@@ -790,7 +790,7 @@ function displayContours(heatmapData) {
                     label: {
                         text: `${Math.round(threshold * 100)}%`,
                         color: color,
-                        fontSize: '11px',
+                        fontSize: '10px',          // slightly smaller text
                         fontWeight: 'bold'
                     },
                     clickable: false,
