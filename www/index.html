@@ -620,7 +620,6 @@
                 <button id="ensemble-toggle" type="button" class="waypoint-toggle">Ensemble</button>
                 <button id="waypoint-toggle" type="button" class="waypoint-toggle on">Waypoints</button>
                 <button id="collapse-toggle" class="btn-ghost" title="Show/Hide parameters">Data Panel</button>
-                <button id="print-btn" class="btn-ghost" title="Print simulation" onclick="printSimulation()">📄 Print</button>
             </div>
             <div class="topbar-actions">
                 <div id="sim-spinner" class="spinner" aria-hidden="true"></div>
@@ -806,8 +805,9 @@
             window.ensembleEnabled = false;
         });
         
-        // Print simulation to PDF
-        function printSimulation() {
+        // Auto-populate print overlay whenever simulation parameters change
+        // This ensures Cmd+P / Ctrl+P always prints current simulation
+        function updatePrintOverlay() {
             const printParams = document.getElementById('print-params');
             const printTimestamp = document.getElementById('print-timestamp');
             
@@ -838,10 +838,11 @@
             // Add timestamp
             const now = new Date();
             printTimestamp.textContent = `Exported: ${now.toLocaleString()}`;
-            
-            // Trigger print dialog
-            window.print();
         }
+        
+        // Update print overlay after simulations complete
+        // This is called from paths.js after rendering
+        window.updatePrintOverlay = updatePrintOverlay;
     </script>
 <!-- Vercel Web Analytics (no framework) -->
 <script>

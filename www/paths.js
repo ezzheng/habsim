@@ -1157,5 +1157,11 @@ async function simulate() {
             simBtn.classList.remove('loading');
             if (originalButtonText !== null) simBtn.textContent = originalButtonText;
         }
+        
+        // Update print overlay with current simulation parameters
+        // This ensures Cmd+P/Ctrl+P always has the latest data
+        if (typeof window.updatePrintOverlay === 'function') {
+            window.updatePrintOverlay();
+        }
     }
 }
