@@ -543,28 +543,21 @@
                 overflow: hidden !important; /* prevent any inner overflow from showing as bars */
             }
 
-            /* Ensure internal Google map containers fill the page and remove gray bars */
+            /* Ensure internal Google map containers fill the page */
             .gm-style, .gm-style > div {
-                position: absolute !important;
-                top: 0 !important; left: 0 !important; right: 0 !important; bottom: 0 !important;
-                height: auto !important; width: auto !important;
+                height: 100% !important;
+                width: 100% !important;
                 background: white !important;
-                overflow: hidden !important;
             }
-            .gm-style canvas, .gm-style img { max-width: none !important; }
 
             /* Hide Google logos/attribution and controls in print */
             .gm-style-cc, .gm-style-cc *,
             .gmnoprint, .gm-fullscreen-control, .gm-control-active, .gm-svpc,
             .gm-bundled-control, .gm-bundled-control-on-bottom,
-            .gm-style .gm-style-cc,
-            .gm-style .gm-control-active,
-            .gm-style .gm-bundled-control-on-bottom,
-            .gm-style [style*="bottom: 0px"],
-            .gm-style [style*="bottom:0px"],
-            .gm-style [style*="bottom: 1px"],
-            .gm-style [style*="bottom:1px"] {
-                display: none !important; height: 0 !important; overflow: hidden !important;
+            .gm-style .gm-style-cc {
+                display: none !important;
+                height: 0 !important;
+                overflow: hidden !important;
             }
             
             /* Show print overlay with parameters */
