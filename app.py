@@ -78,7 +78,18 @@ def _prewarm_cache():
         
         app.logger.info(f"Cache pre-warming complete! Model 0 ready. Ensemble runs will build simulators from file cache on-demand.")
         
+        # Pre-download worldelev.npy file before elevation lookup
+        # This ensures the 451MB file is cached before users click on the map
+        try:
+            import gefs
+            app.logger.info("Pre-downloading worldelev.npy (451MB) to avoid on-demand download failures...")
+            worldelev_path = gefs.load_gefs('worldelev.npy')
+            app.logger.info(f"worldelev.npy pre-downloaded successfully: {worldelev_path}")
+        except Exception as e:
+            app.logger.warning(f"Failed to pre-download worldelev.npy (non-critical, will download on-demand): {e}")
+        
         # Pre-warm elevation memmap used by /elev endpoint
+        # This loads the file into memory-mapped mode
         try:
             _ = elev.getElevation(0, 0)
             app.logger.info("Elevation pre-warmed successfully")

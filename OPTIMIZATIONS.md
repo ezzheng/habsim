@@ -67,23 +67,15 @@ One background thread runs on startup to optimize performance:
 
 **Pre-warming Process:**
 1. Waits 2 seconds for app initialization
-2. Fetches model configuration from `downloader.py` (respects `DOWNLOAD_CONTROL` and `NUM_PERTURBED_MEMBERS`)
-   - Current config: 21 models (Model 0 + Models 1-20)
-3. Pre-warms **only model 0** (cost-optimized for single requests)
-   - Downloads weather data file from Supabase if not cached: `{timestamp}_00.npz` (~308 MB)
-   - Creates `WindFile` object
-   - Creates `Simulator` object (combines WindFile + elevation data)
-   - Stores simulator in cache: `_simulator_cache[0] = Simulator(...)`
-4. Loads elevation data singleton via `elev.getElevation(0, 0)`
-   - Loads with memory-mapping (`mmap_mode='r'`); shared across all simulators and workers
+2. Pre-warms model 0 simulator (fast single requests)
+3. Pre-downloads `worldelev.npy` (451MB) to avoid on-demand download failures
+4. Loads elevation data into memory-mapped mode
 
-**File Downloading (On-Demand):**
-- Files are NOT pre-downloaded on startup (reduces Supabase egress costs)
-- Files download on-demand when ensemble runs are requested
-- Files are cached on disk after first download (~7.7GB total, no RAM cost)
-- Subsequent ensemble runs use cached files (fast, no additional egress)
-- **Model Change Cleanup**: When GEFS models update every 6 hours, old cached files are automatically deleted to prevent accumulation (e.g., when `2025110318` replaces `2025110312`, all `2025110312_*.npz` files are removed from cache)
-- Only re-downloads if files are evicted from cache or model timestamp changes
+**File Downloading:**
+- Weather files download on-demand when ensemble runs are requested (cost-optimized)
+- `worldelev.npy` pre-downloaded at startup (always available, never evicted)
+- Files cached on disk after download (~7.7GB total weather files + 451MB elevation)
+- Automatic cleanup of old model files when GEFS models update every 6 hours
 
 **Memory Impact:**
 - **Disk**: ~7.7 GB (21 weather files × 308 MB + 1 elevation file × 430 MB)
@@ -134,10 +126,10 @@ HABSIM uses a multi-layer caching strategy optimized for Railway (max 32GB RAM, 
 
 **Location**: Disk (`/app/data/gefs` on Railway, `/opt/render/project/src/data/gefs` on Render, or `/tmp/habsim-gefs/` as fallback)  
 **Storage**: `.npz` files (compressed NumPy arrays) and `worldelev.npy` (elevation data)  
-**Capacity**: 25 `.npz` files (~7.7GB) + `worldelev.npy` (always kept)  
-**Eviction**: LRU based on file access time (`st_atime`); never evicts `worldelev.npy` (required elevation data)  
-**Thread Safety**: `_CACHE_LOCK` protects all operations  
-**Model Change Cleanup**: Automatically deletes old model files when `whichgefs` changes (prevents accumulation of stale files from previous 6-hour model updates)
+**Capacity**: 25 `.npz` files (~7.7GB) + `worldelev.npy` (451MB, always kept, pre-downloaded at startup)  
+**Eviction**: LRU based on file access time; `worldelev.npy` never evicted (exempt from cleanup)  
+**Thread Safety**: `_CACHE_LOCK` protects all operations; per-file locking prevents concurrent downloads  
+**Download Robustness**: 20-minute timeout for large files, progress logging, stall detection, per-file locking
 
 **Memory Usage**:  
 - 308MB per `.npz` file
@@ -246,29 +238,19 @@ HABSIM uses a multi-layer caching strategy optimized for Railway (max 32GB RAM, 
 - Better accuracy than Euler method with minimal performance cost
 - Original Euler implementation preserved in comments for reference
 
-### Memory Leak Fixes
-- **ElevationFile memory-mapping**: `ElevationFile` in `habsim/classes.py` uses `mmap_mode='r'` instead of loading full 430MB array into RAM
-  - Previously: Each simulator held 430MB in RAM (4 workers = 1.7GB just for elevation)
-  - After fix: Memory-mapped access, OS manages page cache (minimal direct RAM usage)
-  - Note: `elev.py` was already memory-mapped, but `ElevationFile` was creating a duplicate full load
-- **Explicit simulator cleanup**: Old simulators are explicitly deleted and garbage collected when cache evicts them
-  - **Pre-loaded array cleanup**: Pre-loaded numpy arrays (100-200MB each) are explicitly cleared before simulator deletion
-  - Only pre-loaded arrays are cleared (not memory-mapped arrays which use little RAM)
-  - Multiple GC passes (3x) ensure large numpy arrays are fully reclaimed
-  - **OS Memory Release**: `malloc_trim()` is called after cache trimming to force Python to release freed memory back to the OS (Linux only)
-- **Background cache trimming thread**: `_periodic_cache_trim()` runs in each worker process
-  - Normal interval: checks every 30 seconds
-  - Aggressive mode: checks every 10 seconds when ensemble mode expires but cache is still large
-  - Ensures idle workers trim their cache when ensemble mode expires (prevents 20-25GB memory usage from lingering)
-  - Without this, workers that don't receive requests never trim their cache
-  - Each worker maintains its own independent cache, so all workers need periodic trimming
-  - **Maximum Duration Enforcement**: Forces cache trim after 5 minutes of ensemble mode, even if ensemble calls are still being made
-  - **Safety Check**: Trims cache if it exceeds MAX_SIMULATOR_CACHE_ENSEMBLE (25 simulators) as a memory leak protection
-- **Worker recycling**: `max_requests = 800` (restarts workers periodically to prevent memory leaks)
+### Memory Management
+- **WindFile cleanup**: Explicit cleanup method deletes all numpy arrays (data, levels, interpolation arrays) when simulators are evicted
+- **Explicit object deletion**: Simulators and WindFile objects are explicitly deleted and garbage collected
+- **Multiple GC passes**: 3x GC passes + `malloc_trim()` to force OS memory release
+- **Background cache trimming**: `_periodic_cache_trim()` runs every 30s (5s when ensemble expired but cache large)
+  - Ensures idle workers trim cache when ensemble mode expires
+  - Maximum duration cap: Forces trim after 5 minutes even with consecutive calls
+  - Auto-trims from 3.75GB → 750MB per worker after 60 seconds
+- **Worker recycling**: `max_requests = 800` (restarts workers periodically)
 
 ## UI Optimizations
-- Elevation fetching debounced (150ms) to prevent rapid-fire requests on map clicks
-- Server status polling (5s intervals) for live updates
+- Elevation fetching debounced (150ms) to prevent rapid-fire requests
+- Centralized visualization clearing (`clearAllVisualizations()`) ensures heatmap clears when paths clear
 - Model configuration fetched once on page load, cached in `window.availableModels`
 - Ensemble runs use `/sim/spaceshot` endpoint for parallel execution
 

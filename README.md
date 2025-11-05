@@ -18,8 +18,8 @@ This is an offshoot of the prediction server developed for the Stanford Space In
 - **`app.py`** - Flask (Python web framework) WSGI (Web Server Gateway Interface) application serving REST API and static files
   - Routes: `/sim/singlezpb` (ZPB prediction), `/sim/spaceshot` (ensemble + Monte Carlo), `/sim/elev` (elevation), `/sim/models` (model configuration), `/sim/progress` (progress tracking)
   - Background thread pre-warms cache on startup:
-    - `_prewarm_cache()`: Pre-loads model 0 simulator in RAM (fast single requests)
-    - Files download on-demand when needed (cost-optimized to reduce Supabase egress)
+    - `_prewarm_cache()`: Pre-loads model 0 simulator in RAM and pre-downloads `worldelev.npy` (451MB elevation file)
+    - Weather files download on-demand when needed (cost-optimized to reduce Supabase egress)
   - `ThreadPoolExecutor` (concurrent execution) parallelizes ensemble requests (max_workers=32)
   - **Ensemble + Monte Carlo**: `/sim/spaceshot` runs both 21 ensemble paths AND 420 Monte Carlo simulations (20 perturbations × 21 models) for heatmap visualization
     - **Monte Carlo Process**: Generates 20 parameter perturbations (random variations in launch conditions), runs each through all 21 weather models, collects 420 landing positions
@@ -59,11 +59,11 @@ This is an offshoot of the prediction server developed for the Stanford Space In
 ### Data Pipeline
 - **`gefs.py`** - GEFS file downloader with LRU cache and Supabase integration
   - Downloads from Supabase Storage via REST API
-  - LRU eviction policy (Least Recently Used): max 25 files (~7.7GB) for 21-model ensemble runs
-  - Files cached in `/app/data/gefs` on Railway (persistent volume) or `/opt/render/project/src/data/gefs` on Render (persistent directory) with access-time tracking
+  - LRU eviction policy: max 25 weather files (~7.7GB), `worldelev.npy` (451MB) always kept
+  - Files cached on disk with access-time tracking
   - Automatic cleanup before new downloads when limit exceeded
-  - Upload/delete functions for automated data management (`upload_gefs()`, `delete_gefs()`)
-  - Robust download validation: checks file size, validates NPZ structure
+  - Robust download with per-file locking, longer timeouts (20 min for large files), progress logging, stall detection
+  - Pre-downloads `worldelev.npy` at startup to avoid on-demand download failures
 
 - **`elev.py`** - Elevation data loader
   - Loads preprocessed `worldelev.npy` (global 0.008° resolution array)
@@ -101,16 +101,10 @@ This is an offshoot of the prediction server developed for the Stanford Space In
   - Fetches model configuration from `/sim/models` endpoint on page load
   - Dynamically uses server-configured model IDs for ensemble runs
   - Draws `google.maps.Polyline` objects with color-coded paths (21 ensemble paths)
-  - **Monte Carlo Heatmap**: Displays probability density heatmap using custom canvas overlay (`CustomHeatmapOverlay`)
-    - **Data Source**: 420 landing positions from Monte Carlo simulations (20 perturbations × 21 models)
-    - **Visualization**: Custom kernel density estimation with controllable smoothing (preserves actual data shape)
-    - **Smoothing Options**: `'epanechnikov'` (default, shape-preserving), `'none'` (raw density), `'uniform'`, `'gaussian'`
-    - **Color Gradient**: Cyan (transparent/low density) → Green → Yellow → Orange → Red (solid/high density)
-    - **High-Density Zones**: Red areas indicate where many simulations landed (high probability landing zones)
-    - **Properties**: `opacity: 0.6` (allows seeing map underneath), `gridResolution: 100` (density grid resolution)
-    - **Advantage**: Avoids Google Maps' forced circular Gaussian smoothing, preserving actual data distribution shape
-    - **Overlay**: Heatmap overlays on ensemble paths for comprehensive visualization showing both individual trajectories and probability density
-  - **Progress Tracking**: Real-time progress bar in ensemble button showing X/441 completed simulations
+  - **Monte Carlo Heatmap**: Custom canvas overlay showing probability density from 420 landing positions
+    - Custom kernel density estimation with configurable smoothing (`'epanechnikov'` default, shape-preserving)
+    - Color gradient: Cyan (low) → Green → Yellow → Orange → Red (high density)
+    - Clears automatically when paths are cleared (map click or new simulation)
   - Waypoint circles with click handlers showing altitude/time info windows
   - Debounced elevation fetching (150ms) to prevent rapid-fire requests
 

@@ -169,8 +169,22 @@ def _cleanup_old_cache_files():
         for suffix in _CACHEABLE_SUFFIXES:
             cached_files.extend(_CACHE_DIR.glob(f"*{suffix}"))
         
-        # Never evict worldelev.npy - it's required and large
+        # Never evict worldelev.npy - it's required and large (451MB)
+        # This file is loaded on-demand when users click on the map, so it must stay cached
+        worldelev_file = None
+        for f in cached_files:
+            if f.name == 'worldelev.npy':
+                worldelev_file = f
+                break
         cached_files = [f for f in cached_files if f.name != 'worldelev.npy']
+        
+        # If worldelev.npy exists, ensure it's not too old (touch it to update access time)
+        # This prevents it from being considered for eviction even if cleanup logic changes
+        if worldelev_file and worldelev_file.exists():
+            try:
+                worldelev_file.touch()
+            except:
+                pass
         
         # If under limit, no cleanup needed
         if len(cached_files) < _MAX_CACHED_FILES:
@@ -192,6 +206,30 @@ def _cleanup_old_cache_files():
 
 def _ensure_cached(file_name: str) -> Path:
     cache_path = _CACHE_DIR / file_name
+    
+    # Special handling for worldelev.npy - always check if it exists and is valid
+    # This file is critical for elevation lookups when users click on the map
+    if file_name == 'worldelev.npy':
+        if cache_path.exists():
+            # Verify file is not corrupted (check size)
+            try:
+                file_size = cache_path.stat().st_size
+                expected_size = 451008128  # Expected size for worldelev.npy
+                if file_size == expected_size:
+                    cache_path.touch()  # Update access time
+                    logging.debug(f"File cache HIT: {file_name} (no Supabase egress)")
+                    return cache_path
+                else:
+                    # File exists but is wrong size - delete it and re-download
+                    logging.warning(f"{file_name} exists but is corrupted (expected {expected_size} bytes, got {file_size}). Re-downloading...")
+                    cache_path.unlink()
+            except Exception as e:
+                logging.warning(f"Error checking {file_name}: {e}. Re-downloading...")
+                try:
+                    cache_path.unlink()
+                except:
+                    pass
+    
     if cache_path.exists():
         # Update access time to mark as recently used
         cache_path.touch()
@@ -209,17 +247,53 @@ def _ensure_cached(file_name: str) -> Path:
         # Clean up old files before downloading new one
         _cleanup_old_cache_files()
 
+        # For large files, prevent concurrent downloads of the same file
+        # This avoids connection pool exhaustion and partial download conflicts
+        is_large_file = file_name == 'worldelev.npy' or file_name.endswith('.npy')
+        file_lock = None
+        if is_large_file:
+            # Use a separate lock per file to allow concurrent downloads of different files
+            # but prevent concurrent downloads of the same file
+            file_lock_key = f"download_{file_name}"
+            if not hasattr(_ensure_cached, '_file_locks'):
+                _ensure_cached._file_locks = {}
+            if file_lock_key not in _ensure_cached._file_locks:
+                _ensure_cached._file_locks[file_lock_key] = threading.Lock()
+            
+            file_lock = _ensure_cached._file_locks[file_lock_key]
+            
+            # Try to acquire lock non-blocking first
+            if not file_lock.acquire(blocking=False):
+                # Another thread is downloading - wait and check if it completed
+                logging.debug(f"Another thread is downloading {file_name}, waiting for completion...")
+                for _ in range(50):  # Wait up to 5 seconds (50 * 0.1s)
+                    time.sleep(0.1)
+                    if cache_path.exists():
+                        cache_path.touch()
+                        logging.debug(f"File {file_name} was downloaded by another thread (cache HIT)")
+                        return cache_path
+                # If still not available, wait for lock (blocking)
+                file_lock.acquire(blocking=True)
+            
+            # Double-check file wasn't created while waiting for lock
+            if cache_path.exists():
+                if file_lock:
+                    file_lock.release()
+                cache_path.touch()
+                return cache_path
+        
         # Log download attempt (this will use Supabase egress)
         logging.info(f"File cache MISS: {file_name} - downloading from Supabase (will use egress)")
         
         # Use longer timeout for large files like worldelev.npy (451MB)
-        # Calculate timeout: 3s connect + (file_size / 1MB/s) + 60s buffer
-        # For worldelev.npy: 3 + (451/1) + 60 = ~514 seconds (~8.5 minutes)
+        # Calculate timeout: 10s connect + (file_size / 0.5MB/s minimum) + 120s buffer
+        # For worldelev.npy: 10 + (451/0.5) + 120 = ~1022 seconds (~17 minutes)
         # For smaller files: use default timeout
         is_large_file = file_name == 'worldelev.npy' or file_name.endswith('.npy')
         if is_large_file:
-            # Use longer timeout for large files (10 min read timeout)
-            download_timeout = (10, 600)  # 10s connect, 600s (10 min) read
+            # Use much longer timeout for large files (20 min read timeout)
+            # This accounts for slow connections and network congestion
+            download_timeout = (10, 1200)  # 10s connect, 1200s (20 min) read
         else:
             download_timeout = _DEFAULT_TIMEOUT
         
@@ -259,12 +333,29 @@ def _ensure_cached(file_name: str) -> Path:
                     expected_size = int(expected_size)
                 
                 bytes_written = 0
+                last_chunk_time = time.time()
                 try:
                     with open(tmp_path, 'wb') as fh:
                         for chunk in _iter_content(resp):
+                            current_time = time.time()
+                            
+                            # Check for connection timeout (no data for 60 seconds)
+                            if is_large_file and (current_time - last_chunk_time) > 60:
+                                raise IOError(f"Download stalled: no data received for 60 seconds")
+                            
                             if chunk:
                                 fh.write(chunk)
                                 bytes_written += len(chunk)
+                                last_chunk_time = current_time
+                                
+                                # For large files, log progress every 50MB
+                                if is_large_file and bytes_written % (50 * 1024 * 1024) < _CHUNK_SIZE:
+                                    mb_written = bytes_written / (1024 * 1024)
+                                    if expected_size:
+                                        mb_total = expected_size / (1024 * 1024)
+                                        logging.info(f"Downloading {file_name}: {mb_written:.1f}MB / {mb_total:.1f}MB ({100 * bytes_written / expected_size:.1f}%)")
+                                    else:
+                                        logging.info(f"Downloading {file_name}: {mb_written:.1f}MB")
                 except Exception as write_error:
                     # If file was created but write failed, clean it up
                     if tmp_path.exists():
@@ -299,6 +390,8 @@ def _ensure_cached(file_name: str) -> Path:
                         raise IOError(f"Downloaded file {file_name} is corrupted (invalid NPZ): {e}")
                 
                 # Success - break out of retry loop
+                if file_lock:
+                    file_lock.release()
                 break
             except IOError as e:
                 # Clean up incomplete download
@@ -315,6 +408,8 @@ def _ensure_cached(file_name: str) -> Path:
                     time.sleep(wait_time)
                 else:
                     # Last attempt failed
+                    if file_lock:
+                        file_lock.release()
                     raise
             except Exception as e:
                 # Clean up incomplete download
@@ -329,6 +424,8 @@ def _ensure_cached(file_name: str) -> Path:
                     logging.warning(f"Download attempt {attempt + 1}/{max_retries} failed for {file_name}: {e}. Retrying in {wait_time}s...")
                     time.sleep(wait_time)
                 else:
+                    if file_lock:
+                        file_lock.release()
                     raise
         
         # If we get here, download succeeded (tmp_path exists from successful attempt)
