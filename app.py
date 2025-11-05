@@ -187,7 +187,9 @@ def cache_status():
     
     # Check idle status
     idle_duration = now - simulate._last_activity_timestamp
-    last_cleanup = now - simulate._last_idle_cleanup if hasattr(simulate, '_last_idle_cleanup') else 0
+    # Handle case where cleanup hasn't run yet (_last_idle_cleanup is 0)
+    last_idle_cleanup = getattr(simulate, '_last_idle_cleanup', 0)
+    last_cleanup = now - last_idle_cleanup if last_idle_cleanup > 0 else 0
     
     status = {
         'worker_pid': os.getpid(),
@@ -216,7 +218,8 @@ def cache_status():
             'idle_duration_seconds': round(idle_duration, 1),
             'threshold_seconds': simulate._IDLE_RESET_TIMEOUT,
             'seconds_until_cleanup': max(0, round(simulate._IDLE_RESET_TIMEOUT - idle_duration, 1)),
-            'last_cleanup_ago_seconds': round(last_cleanup, 1) if last_cleanup > 0 else 0
+            'last_cleanup_ago_seconds': round(last_cleanup, 1) if last_cleanup > 0 else None,
+            'cleanup_has_run': last_idle_cleanup > 0
         },
         'note': 'Check Railway metrics for actual memory usage'
     }
