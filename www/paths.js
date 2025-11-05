@@ -235,7 +235,12 @@ class CustomHeatmapOverlay extends google.maps.OverlayView {
         
         // Add canvas to panes
         const panes = this.getPanes();
-        panes.overlayLayer.appendChild(this.canvas);
+        // Place heatmap below interactive overlays so waypoints remain hoverable
+        if (panes.overlayImage) {
+            panes.overlayImage.appendChild(this.canvas);
+        } else {
+            panes.overlayLayer.appendChild(this.canvas);
+        }
     }
     
     onRemove() {
@@ -676,12 +681,27 @@ function displayContours(heatmapData) {
         const gridSize = 50;  // 50x50 grid for density calculation
         const densityGrid = createDensityGrid(points, bounds, gridSize);
         
-        // Extract contours at probability thresholds
-        const thresholds = [0.1, 0.3, 0.5, 0.7, 0.9];  // 10%, 30%, 50%, 70%, 90%
-        const maxDensity = Math.max(...densityGrid.flat());
-        
+        // Extract contours at cumulative probability thresholds
+        // Compute density cutoff values so that area ABOVE cutoff contains target mass
+        const thresholds = [0.5, 0.7, 0.9];  // 50%, 70%, 90% (outer ring encloses more area)
+        const flat = densityGrid.flat();
+        const totalMass = flat.reduce((a, b) => a + b, 0);
+        const sortedDesc = [...flat].sort((a, b) => b - a);
+
+        function cutoffForMass(targetMassFraction) {
+            const target = totalMass * targetMassFraction;
+            let acc = 0;
+            for (let i = 0; i < sortedDesc.length; i++) {
+                acc += sortedDesc[i];
+                if (acc >= target) {
+                    return sortedDesc[i];
+                }
+            }
+            return 0;
+        }
+
         thresholds.forEach((threshold, index) => {
-            const densityValue = threshold * maxDensity;
+            const densityValue = cutoffForMass(threshold);
             const contours = extractContours(densityGrid, densityValue, bounds, gridSize);
             
             // Draw each contour
