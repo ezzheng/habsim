@@ -133,8 +133,18 @@ def open_gefs(file_name):
     return io.StringIO(resp.content.decode("utf-8"))
 
 def load_gefs(file_name):
+    """Load GEFS file from cache or download from Supabase.
+    Returns path to cached file for memory-mapped access."""
+    load_start = time.time()
+    
     if _should_cache(file_name):
-        return str(_ensure_cached(file_name))
+        result = str(_ensure_cached(file_name))
+        load_time = time.time() - load_start
+        if load_time > 5.0:
+            logging.warning(f"[PERF] load_gefs() slow: {file_name}, time={load_time:.2f}s")
+        elif load_time > 0.1:
+            logging.debug(f"[PERF] load_gefs(): {file_name}, time={load_time:.3f}s")
+        return result
 
     resp = _SESSION.get(
         _object_url(f"{_BUCKET}/{file_name}"),
