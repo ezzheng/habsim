@@ -34,8 +34,8 @@ _last_refresh_check = 0.0
 _cache_trim_thread_started = False
 _in_use_models = set()
 _in_use_lock = threading.Lock()
-_IDLE_RESET_TIMEOUT = 180.0  # seconds of no requests before forcing deep cleanup
-_IDLE_CLEAN_COOLDOWN = 180.0  # minimum delay between idle cleanups
+_IDLE_RESET_TIMEOUT = 120.0  # seconds of no requests before forcing deep cleanup (reduced from 180)
+_IDLE_CLEAN_COOLDOWN = 120.0  # minimum delay between idle cleanups (reduced from 180)
 _last_activity_timestamp = time.time()
 _last_idle_cleanup = 0.0
 _idle_cleanup_lock = threading.Lock()
@@ -125,7 +125,7 @@ def record_activity():
 
 def _idle_memory_cleanup(idle_duration):
     """Deep cleanup when the worker has been idle for a while."""
-    global _current_max_cache, _ensemble_mode_until, _ensemble_mode_started, elevation_cache
+    global _current_max_cache, _ensemble_mode_until, _ensemble_mode_started, elevation_cache, currgefs
     if not _idle_cleanup_lock.acquire(blocking=False):
         return
     try:
@@ -137,6 +137,7 @@ def _idle_memory_cleanup(idle_duration):
             _current_max_cache = MAX_SIMULATOR_CACHE_NORMAL
             _ensemble_mode_until = 0
             _ensemble_mode_started = 0
+        
         # Clean up simulator resources outside the cache lock
         evicted = 0
         for simulator in simulators:
@@ -162,11 +163,22 @@ def _idle_memory_cleanup(idle_duration):
             except Exception as cleanup_error:
                 logging.debug(f"Idle cleanup: simulator cleanup error: {cleanup_error}", exc_info=True)
         simulators.clear()
+        
+        # Clear elevation cache to free more memory
+        elevation_cache = None
+        
+        # Clear prediction cache
+        _prediction_cache.clear()
+        _cache_access_times.clear()
+        
+        # Reset currgefs to force re-check on next request
+        currgefs = ""
 
-        # Multiple GC passes to ensure numpy arrays are freed
-        for _ in range(5):
+        # Multiple aggressive GC passes to ensure numpy arrays are freed
+        for _ in range(10):  # Increased from 5 to 10
             gc.collect()
             gc.collect(generation=2)
+        
         # Force memory release back to OS when available
         try:
             import ctypes
@@ -176,7 +188,7 @@ def _idle_memory_cleanup(idle_duration):
         except Exception as trim_error:
             logging.debug(f"Idle cleanup: malloc_trim not available: {trim_error}")
 
-        logging.info(f"Idle cleanup complete: released {evicted} simulator(s); cache reset to baseline")
+        logging.info(f"Idle cleanup complete: released {evicted} simulator(s); cache and elevation reset to baseline")
     finally:
         _idle_cleanup_lock.release()
 
@@ -216,9 +228,9 @@ def _cleanup_old_model_files(old_timestamp: str):
             for old_file in old_files:
                 try:
                     if old_file.exists():
-                        old_file.unlink()
+                    old_file.unlink()
                         deleted_count += 1
-                        logging.debug(f"Removed old model file: {old_file.name}")
+                    logging.debug(f"Removed old model file: {old_file.name}")
                 except Exception as e:
                     logging.warning(f"Failed to remove old model file {old_file.name}: {e}")
             
@@ -295,9 +307,9 @@ def _trim_cache_to_normal():
                 _ensemble_mode_started = 0
                 logging.info("Ensemble mode exceeded max duration (5 min): forcing cache trim to normal (5 simulators)")
             else:
-                _ensemble_mode_until = 0
+            _ensemble_mode_until = 0
                 _ensemble_mode_started = 0
-                logging.info("Ensemble mode expired: cache limit reset to normal (5 simulators)")
+            logging.info("Ensemble mode expired: cache limit reset to normal (5 simulators)")
         
         # If cache is too large, trim to normal size keeping most recently used
         # Also trim if cache is significantly larger than current limit (memory leak protection)
@@ -560,7 +572,7 @@ def _get_simulator(model):
                     del _simulator_access_times[model]
                 else:
                     # Valid simulator - return it
-                    _simulator_access_times[model] = now
+            _simulator_access_times[model] = now
                     return simulator
             else:
                 # Invalid simulator - remove it
@@ -601,8 +613,14 @@ def _get_simulator(model):
     # Load new simulator (outside lock to avoid blocking other threads)
     # Use memory-mapped access to keep memory low and avoid large preloads
     preload_arrays = False
-    wind_file = WindFile(load_gefs(f'{currgefs}_{str(model).zfill(2)}.npz'), preload=preload_arrays)
-    simulator = Simulator(wind_file, _get_elevation_data())
+    
+    try:
+        wind_file_path = load_gefs(f'{currgefs}_{str(model).zfill(2)}.npz')
+        wind_file = WindFile(wind_file_path, preload=preload_arrays)
+        simulator = Simulator(wind_file, _get_elevation_data())
+    except Exception as e:
+        logging.error(f"Failed to load simulator for model {model}: {e}", exc_info=True)
+        raise
     
     # Cache it (re-acquire lock)
     with _cache_lock:

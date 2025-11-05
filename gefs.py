@@ -195,7 +195,7 @@ def _cleanup_old_cache_files():
         
         # Check file count limit
         if len(cached_files) >= _MAX_CACHED_FILES:
-            files_to_remove = len(cached_files) - _MAX_CACHED_FILES + 1  # +1 to make room for new file
+        files_to_remove = len(cached_files) - _MAX_CACHED_FILES + 1  # +1 to make room for new file
         
         # Check size limit (20GB max for NPZ files)
         # If we're over 18GB, start removing old files to make room
@@ -222,11 +222,11 @@ def _cleanup_old_cache_files():
             for i in range(min(files_to_remove, len(cached_files))):
                 try:
                     file_size = cached_files[i].stat().st_size
-                    cached_files[i].unlink()
+                cached_files[i].unlink()
                     removed_count += 1
                     removed_size += file_size
-                except Exception:
-                    pass  # File might have been removed by another thread
+            except Exception:
+                pass  # File might have been removed by another thread
             
             if removed_count > 0:
                 logging.info(f"Cache cleanup: removed {removed_count} files ({removed_size/(1024**3):.2f}GB), "

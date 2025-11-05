@@ -326,7 +326,7 @@ def singlezpb(timestamp, lat, lon, alt, equil, eqtime, asc, desc, model):
         app.logger.warning(f"Model file not found: {e}")
         raise  # Re-raise to be handled by route handler
     except Exception as e:
-        app.logger.exception("singlezpb failed")
+        app.logger.error(f"singlezpb failed for model {model}: {str(e)}", exc_info=True)
         if str(e) == "alt out of range":
             return "alt error"
         return "error"
