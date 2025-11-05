@@ -709,44 +709,50 @@ function displayContours(heatmapData) {
                     zIndex: 1000 + index
                 });
                 
-                // Calculate proper centroid using polygon area weighting
-                // This gives better label placement for irregular shapes
-                let area = 0;
-                let centroidLat = 0;
-                let centroidLon = 0;
+                // Place labels along the contour at different positions to avoid overlap
+                // For concentric contours, stagger the label positions
+                // Use different angles for each threshold: 0°, 45°, 90°, 135°, 180°
+                const labelAngles = [90, 45, 0, 315, 270]; // Top, top-right, right, bottom-right, bottom
+                const angleIndex = index % labelAngles.length;
+                const targetAngle = labelAngles[angleIndex];
                 
-                for (let i = 0; i < path.length - 1; i++) {
-                    const lat1 = path[i].lat();
-                    const lon1 = path[i].lng();
-                    const lat2 = path[i + 1].lat();
-                    const lon2 = path[i + 1].lng();
+                // Find the point on the contour closest to the target angle from centroid
+                let centroidLat = 0, centroidLon = 0;
+                for (const point of path) {
+                    centroidLat += point.lat();
+                    centroidLon += point.lng();
+                }
+                centroidLat /= path.length;
+                centroidLon /= path.length;
+                
+                // Find the point on the path closest to the target angle
+                let bestPoint = path[0];
+                let minAngleDiff = Infinity;
+                
+                for (const point of path) {
+                    const angleDeg = Math.atan2(
+                        point.lat() - centroidLat,
+                        point.lng() - centroidLon
+                    ) * 180 / Math.PI;
                     
-                    const cross = lon1 * lat2 - lon2 * lat1;
-                    area += cross;
-                    centroidLat += (lat1 + lat2) * cross;
-                    centroidLon += (lon1 + lon2) * cross;
-                }
-                
-                area /= 2;
-                if (area !== 0) {
-                    centroidLat /= (6 * area);
-                    centroidLon /= (6 * area);
-                } else {
-                    // Fallback to simple average if area calculation fails
-                    let latSum = 0, lonSum = 0;
-                    for (const point of path) {
-                        latSum += point.lat();
-                        lonSum += point.lng();
+                    // Normalize angle to 0-360
+                    let normalizedAngle = (angleDeg + 360) % 360;
+                    
+                    // Calculate difference to target angle
+                    let diff = Math.abs(normalizedAngle - targetAngle);
+                    if (diff > 180) diff = 360 - diff;
+                    
+                    if (diff < minAngleDiff) {
+                        minAngleDiff = diff;
+                        bestPoint = point;
                     }
-                    centroidLat = latSum / path.length;
-                    centroidLon = lonSum / path.length;
                 }
                 
-                const centroid = new google.maps.LatLng(centroidLat, centroidLon);
+                const labelPosition = bestPoint;
                 
-                // Create label marker with white background
+                // Create label marker with white background positioned on the contour ring
                 const label = new google.maps.Marker({
-                    position: centroid,
+                    position: labelPosition,
                     map: map,
                     icon: {
                         path: google.maps.SymbolPath.CIRCLE,
