@@ -197,12 +197,13 @@ def _cleanup_old_cache_files():
         if len(cached_files) >= _MAX_CACHED_FILES:
             files_to_remove = len(cached_files) - _MAX_CACHED_FILES + 1  # +1 to make room for new file
         
-        # Check size limit (20GB max for NPZ files)
-        # If we're over 18GB, start removing old files to make room
-        MAX_NPZ_SIZE_GB = 18  # Leave 2GB buffer from the 20GB limit
+        # Check size limit: Allow more headroom for concurrent old/new GEFS cycles
+        # During GEFS change: old 21 files (~6.5GB) + new 21 files (~6.5GB) = ~13GB temporarily
+        # Trigger at 21GB to avoid deleting freshly downloaded files
+        MAX_NPZ_SIZE_GB = 21  # Trigger cleanup at 21GB
         if total_size_gb > MAX_NPZ_SIZE_GB:
-            # Remove files until we're under 15GB (aggressive cleanup)
-            TARGET_SIZE_GB = 15
+            # Remove files until we're under 20GB (leaves room for growth)
+            TARGET_SIZE_GB = 20
             current_size = total_size_gb
             for i, f in enumerate(cached_files):
                 if current_size <= TARGET_SIZE_GB:

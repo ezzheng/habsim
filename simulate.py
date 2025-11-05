@@ -96,16 +96,34 @@ def refresh():
 
 def reset():
     """Clear simulator cache when GEFS model changes.
-    Note: This does NOT cleanup WindFile objects immediately - they stay cached briefly
-    to allow in-flight simulations to complete. The periodic trim will clean them up."""
+    Respects in-use models to prevent breaking active simulations."""
     global _simulator_cache, _simulator_access_times, elevation_cache, _ensemble_mode_until, _ensemble_mode_started
+    
+    # Check if any models are currently in use
+    models_in_use = set()
+    with _in_use_lock:
+        models_in_use = _in_use_models.copy()
+    
     with _cache_lock:
-        # Simply clear the cache dictionaries - don't cleanup WindFiles yet
-        # The files will naturally be evicted/cleaned up by LRU cache when new models load
-        _simulator_cache.clear()
-        _simulator_access_times.clear()
+        # Clear access times for models not in use
+        models_to_clear = set(_simulator_cache.keys()) - models_in_use
+        
+        for model_id in models_to_clear:
+            if model_id in _simulator_cache:
+                del _simulator_cache[model_id]
+            if model_id in _simulator_access_times:
+                del _simulator_access_times[model_id]
+        
+        # Reset ensemble mode
         _ensemble_mode_until = 0
         _ensemble_mode_started = 0
+        
+        if models_in_use:
+            logging.info(f"GEFS cycle changed: cleared cache except {len(models_in_use)} in-use model(s)")
+        else:
+            logging.info(f"GEFS cycle changed: cleared all cached simulators")
+    
+    # Clear elevation cache (will be reloaded on next use)
     elevation_cache = None
     
     # Light garbage collection
@@ -164,15 +182,16 @@ def _idle_memory_cleanup(idle_duration):
                 logging.debug(f"Idle cleanup: simulator cleanup error: {cleanup_error}", exc_info=True)
         simulators.clear()
         
+        # IMPORTANT: Use global keyword for module-level variables
         # Clear elevation cache to free more memory
-        elevation_cache = None
+        elevation_cache = None  # Note: This is a module global, assigned here
         
         # Clear prediction cache
         _prediction_cache.clear()
         _cache_access_times.clear()
         
-        # Reset currgefs to force re-check on next request
-        currgefs = ""
+        # Reset currgefs to force re-check on next request (module global)
+        currgefs = ""  # Note: This is a module global, assigned here
 
         # Multiple aggressive GC passes to ensure numpy arrays are freed
         for _ in range(10):  # Increased from 5 to 10
