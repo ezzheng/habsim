@@ -31,6 +31,47 @@ function makepaths(btype, allpaths, isControl = false){
 
 
 }
+// Centralized function to clear all visualizations (paths, heatmap, contours)
+function clearAllVisualizations() {
+    // Clear waypoints
+    clearWaypoints();
+    
+    // Clear all paths
+    for (let path in currpaths) {
+        if (currpaths[path] && currpaths[path].setMap) {
+            currpaths[path].setMap(null);
+        }
+    }
+    currpaths = new Array();
+    
+    // Clear heatmap
+    if (heatmapLayer) {
+        try {
+            if (heatmapLayer.setMap) {
+                heatmapLayer.setMap(null);
+            }
+            if (heatmapLayer.onRemove) {
+                heatmapLayer.onRemove();
+            }
+            // Also remove any event listeners
+            if (heatmapLayer._boundsListener) {
+                google.maps.event.removeListener(heatmapLayer._boundsListener);
+            }
+        } catch (e) {
+            console.warn('Error clearing heatmap:', e);
+        }
+        heatmapLayer = null;
+    }
+    
+    // Clear contours
+    clearContours();
+    
+    // Clear raw path cache
+    rawpathcache = new Array();
+    
+    console.log("Cleared all visualizations (paths, heatmap, contours)");
+}
+
 function clearWaypoints() {
     //Loop through all the markers and remove
     for (var i = 0; i < circleslist.length; i++) {
@@ -791,161 +832,9 @@ function updateContourVisibility() {
     });
 }
 
-// Progress tracking for ensemble simulations
-let ensembleProgressInterval = null;
-let ensembleStartTime = null;
-let currentRequestId = null;
-
-function updateEnsembleProgress(progressData) {
-    const ensembleBtn = document.getElementById('ensemble-toggle');
-    if (!ensembleBtn || !window.ensembleEnabled) return;
-    
-    const completed = progressData.completed || 0;
-    const total = progressData.total || 441; // 21 ensemble + 420 Monte Carlo
-    const percentage = progressData.percentage || Math.round((completed / total) * 100);
-    
-    // Show percentage instead of count for better progress indication
-    // Percentage updates more smoothly as simulations complete
-    if (completed === 0) {
-        ensembleBtn.textContent = '0%';
-    } else if (completed >= total) {
-        ensembleBtn.textContent = '100%';
-    } else {
-        ensembleBtn.textContent = `${percentage}%`;
-    }
-}
-
-// Track if we've received first progress update (to detect when server is ready)
-let hasReceivedProgress = false;
-let progressEventSource = null;
-
-function startProgressStream(requestId) {
-    // Close existing stream if any
-    if (progressEventSource) {
-        progressEventSource.close();
-        progressEventSource = null;
-    }
-    
-    if (!requestId) return;
-    
-    // Use Server-Sent Events for real-time progress updates
-    const eventSourceUrl = `${URL_ROOT}/progress-stream?request_id=${requestId}`;
-    progressEventSource = new EventSource(eventSourceUrl);
-    
-    progressEventSource.onmessage = function(event) {
-        try {
-            const data = JSON.parse(event.data);
-            
-            if (data.error) {
-                console.warn('Progress stream error:', data.error);
-                if (progressEventSource) {
-                    progressEventSource.close();
-                    progressEventSource = null;
-                }
-                return;
-            }
-            
-            // We got valid progress data
-            if (!hasReceivedProgress) {
-                hasReceivedProgress = true;
-            }
-            
-            updateEnsembleProgress(data);
-            
-            // If completed, close stream
-            if (data.completed >= data.total) {
-                if (progressEventSource) {
-                    progressEventSource.close();
-                    progressEventSource = null;
-                }
-            }
-        } catch (error) {
-            console.error('Error parsing progress data:', error);
-        }
-    };
-    
-    progressEventSource.onerror = function(error) {
-        console.warn('Progress stream error:', error);
-        // Stream will automatically reconnect on error
-        // But if it's a 404 or similar, we should fall back to polling
-        if (progressEventSource && progressEventSource.readyState === EventSource.CLOSED) {
-            console.log('Progress stream closed, falling back to polling');
-            progressEventSource = null;
-            // Fall back to polling
-            startProgressPolling(requestId);
-        }
-    };
-}
-
-async function pollProgress(requestId) {
-    if (!requestId) return null;
-    
-    try {
-        const response = await fetch(`${URL_ROOT}/progress?request_id=${requestId}`);
-        if (response.ok) {
-            const data = await response.json();
-            return data;
-        }
-    } catch (error) {
-        console.warn('Progress polling failed:', error);
-    }
-    return null;
-}
-
-function startProgressPolling(requestId) {
-    // Fallback polling method if SSE doesn't work
-    let pollInterval = 200;
-    hasReceivedProgress = false;
-    
-    const pollProgressRecursive = async () => {
-        if (!requestId || !window.__simRunning) {
-            if (ensembleProgressInterval) {
-                clearTimeout(ensembleProgressInterval);
-                ensembleProgressInterval = null;
-            }
-            return;
-        }
-        
-        const progressData = await pollProgress(requestId);
-        
-        if (progressData) {
-            if (!hasReceivedProgress) {
-                hasReceivedProgress = true;
-                pollInterval = 500;
-            }
-            
-            updateEnsembleProgress(progressData);
-            
-            if (progressData.completed >= progressData.total) {
-                if (ensembleProgressInterval) {
-                    clearTimeout(ensembleProgressInterval);
-                    ensembleProgressInterval = null;
-                }
-                return;
-            }
-        } else if (hasReceivedProgress) {
-            pollInterval = 1000;
-        }
-        
-        ensembleProgressInterval = setTimeout(pollProgressRecursive, pollInterval);
-    };
-    
-    ensembleProgressInterval = setTimeout(pollProgressRecursive, 100);
-}
-
+// Progress tracking removed - feature was unreliable
+// Ensemble button will simply show "Ensemble" text when enabled
 function clearEnsembleProgress() {
-    if (ensembleProgressInterval) {
-        clearTimeout(ensembleProgressInterval);
-        ensembleProgressInterval = null;
-    }
-    if (progressEventSource) {
-        progressEventSource.close();
-        progressEventSource = null;
-    }
-    ensembleStartTime = null;
-    currentRequestId = null;
-    hasReceivedProgress = false;
-    
     const ensembleBtn = document.getElementById('ensemble-toggle');
     if (ensembleBtn) {
         // Restore "Ensemble" text when simulation finishes or is cancelled
@@ -960,30 +849,7 @@ function clearEnsembleProgress() {
 // Self explanatory
 async function simulate() {
     // Clear previous simulation results immediately (paths, heatmap, and contours)
-    clearWaypoints();
-    for (path in currpaths) {currpaths[path].setMap(null);}
-    currpaths = new Array();
-    // Clear heatmap - ensure it's removed before starting new simulation
-    if (heatmapLayer) {
-        try {
-            if (heatmapLayer.setMap) {
-                heatmapLayer.setMap(null);
-            }
-            if (heatmapLayer.onRemove) {
-                heatmapLayer.onRemove();
-            }
-            // Also remove any event listeners
-            if (heatmapLayer._boundsListener) {
-                google.maps.event.removeListener(heatmapLayer._boundsListener);
-            }
-        } catch (e) {
-            console.warn('Error clearing heatmap:', e);
-        }
-        heatmapLayer = null;
-    }
-    clearContours();  // Clear contour lines and labels
-    rawpathcache = new Array();
-    console.log("Clearing previous simulation");
+    clearAllVisualizations();
     
     // If a simulation is already running, interpret this call as a cancel request
     if (window.__simRunning && window.__simAbort) {
@@ -1002,13 +868,9 @@ async function simulate() {
     const spinner = document.getElementById('sim-spinner');
     const originalButtonText = simBtn ? simBtn.textContent : null;
     
-    // Start progress tracking for ensemble mode
+    // Clear ensemble progress display
     if (window.ensembleEnabled) {
         clearEnsembleProgress();
-        ensembleStartTime = Date.now();
-        // Progress will be updated when we get request_id from response
-        // For now, show initial state
-        updateEnsembleProgress({completed: 0, total: 441, percentage: 0});
     }
     
     if (simBtn) {
@@ -1088,39 +950,9 @@ async function simulate() {
                     + "&asc=" + asc + "&desc=" + desc;
                 console.log("Using spaceshot endpoint (with Monte Carlo):", spaceshotUrl);
                 
-                // Start polling progress BEFORE fetch (so we can track progress during the long-running request)
-                if (window.ensembleEnabled) {
-                    // Compute request_id from parameters (same as server's hash function)
-                    const requestKey = `${time}_${lat}_${lon}_${alt}_${equil}_${eqtime}_${asc}_${desc}`;
-                    
-                    // Simple hash function (matches server-side implementation)
-                    let hash = 0;
-                    for (let i = 0; i < requestKey.length; i++) {
-                        hash = ((hash << 5) - hash) + requestKey.charCodeAt(i);
-                        hash = hash & 0xFFFFFFFF; // Convert to 32-bit integer
-                    }
-                    currentRequestId = Math.abs(hash).toString(16).padStart(16, '0').substring(0, 16);
-                    hasReceivedProgress = false;
-                    
-                    // Start Server-Sent Events stream for real-time progress updates
-                    // Falls back to polling if SSE is not supported or fails
-                    try {
-                        if (typeof EventSource !== 'undefined') {
-                            startProgressStream(currentRequestId);
-                        } else {
-                            // Fallback to polling if EventSource not available
-                            console.log('EventSource not available, using polling');
-                            startProgressPolling(currentRequestId);
-                        }
-                    } catch (error) {
-                        console.warn('Failed to start progress stream, using polling:', error);
-                        startProgressPolling(currentRequestId);
-                    }
-                }
-                
                 try {
                     const response = await fetch(spaceshotUrl, { signal: window.__simAbort.signal });
-                    const data = await response.json(); // Now returns {paths: [...], heatmap_data: [...], request_id: ...}
+                    const data = await response.json(); // Now returns {paths: [...], heatmap_data: [...]}
                     
                     console.log('Spaceshot response received:', {
                         isArray: Array.isArray(data),
@@ -1132,31 +964,19 @@ async function simulate() {
                     });
                     
                     // Handle new response format (backward compatible)
-                    let payloads, heatmapData, requestId;
+                    let payloads, heatmapData;
                     if (Array.isArray(data)) {
                         // Legacy format: just array of paths
                         payloads = data;
                         heatmapData = [];
-                        requestId = null;
                         console.log('Using legacy array format (no heatmap data)');
                     } else {
                         // New format: object with paths and heatmap_data
                         payloads = data.paths || [];
                         heatmapData = data.heatmap_data || [];
-                        requestId = data.request_id || null;
                         console.log(`New format: ${payloads.length} paths, ${heatmapData.length} heatmap points`);
-                        // Update request_id if server provided one (should match our computed one)
-                        if (requestId) {
-                            currentRequestId = requestId;
-                        }
                     }
                     
-                    // Stop polling once fetch completes (simulation is done)
-                    if (ensembleProgressInterval) {
-                        clearInterval(ensembleProgressInterval);
-                        ensembleProgressInterval = null;
-                    }
-
                     // Process ensemble paths (existing functionality)
                     // Note: payloads array order matches modelIds order from server config
                     if (payloads.length !== modelIds.length) {

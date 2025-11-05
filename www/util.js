@@ -40,32 +40,28 @@ function displayCoordinates(pnt) {
     document.getElementById("lat").value = lat;
     document.getElementById("lon").value = lng;
     updateClickMarker(new google.maps.LatLng(parseFloat(lat), parseFloat(lng)));
-    // Clear previous paths immediately when new location is clicked
-    clearWaypoints();
-    for (path in currpaths) {currpaths[path].setMap(null);}
-    currpaths = new Array();
-    rawpathcache = new Array();
-    // Clear heatmap and contours when new location is clicked
-    if (heatmapLayer) {
-        try {
-            if (heatmapLayer.setMap) {
-                heatmapLayer.setMap(null);
+    // Clear all visualizations when new location is clicked
+    if (typeof clearAllVisualizations === 'function') {
+        clearAllVisualizations();
+    } else {
+        // Fallback if function not available (shouldn't happen)
+        clearWaypoints();
+        for (path in currpaths) {currpaths[path].setMap(null);}
+        currpaths = new Array();
+        rawpathcache = new Array();
+        if (heatmapLayer) {
+            try {
+                if (heatmapLayer.setMap) {
+                    heatmapLayer.setMap(null);
+                }
+            } catch (e) {
+                console.warn('Error clearing heatmap:', e);
             }
-            if (heatmapLayer.onRemove) {
-                heatmapLayer.onRemove();
-            }
-            // Also remove any event listeners
-            if (heatmapLayer._boundsListener) {
-                google.maps.event.removeListener(heatmapLayer._boundsListener);
-            }
-        } catch (e) {
-            console.warn('Error clearing heatmap:', e);
+            heatmapLayer = null;
         }
-        heatmapLayer = null;
-    }
-    // Clear contours if the function exists (defined in paths.js)
-    if (typeof clearContours === 'function') {
-        clearContours();
+        if (typeof clearContours === 'function') {
+            clearContours();
+        }
     }
     // If a simulation is in progress, cancel it on new click
     if (window.__simRunning && window.__simAbort) {
