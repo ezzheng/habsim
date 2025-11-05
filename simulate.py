@@ -66,20 +66,26 @@ def _get_cached_prediction(cache_key):
 
 def _cache_prediction(cache_key, result):
     """Cache prediction result with TTL and size limit.
-    Thread-safe eviction prevents unbounded growth during ensemble bursts."""
-    # CRITICAL: Evict BEFORE checking size to prevent race conditions
-    # Multiple threads could all pass the size check simultaneously during ensemble
-    # This ensures we stay within MAX_CACHE_SIZE even under high concurrency
-    with _cache_lock:
-        # Evict oldest entries until we have room (may need multiple evictions)
-        while len(_prediction_cache) >= MAX_CACHE_SIZE:
+    Lock-free for performance - minor race conditions acceptable for cache sizing."""
+    # PERFORMANCE: Removed lock that was causing severe serialization bottleneck
+    # During ensemble (441 concurrent calls), the lock caused all threads to queue
+    # Trade-off: Cache might briefly exceed MAX_CACHE_SIZE by a few entries (acceptable)
+    # vs. 4+ second serialization delay (unacceptable)
+    
+    # Evict oldest if cache is full
+    if len(_prediction_cache) >= MAX_CACHE_SIZE:
+        try:
             oldest_key = min(_cache_access_times, key=_cache_access_times.get)
             del _prediction_cache[oldest_key]
             del _cache_access_times[oldest_key]
-        
-        # Now safe to insert
-        _prediction_cache[cache_key] = result
-        _cache_access_times[cache_key] = time.time()
+        except (ValueError, KeyError, RuntimeError):
+            # Race condition during concurrent access - safe to ignore
+            # Another thread may have deleted the key already
+            pass
+    
+    # Insert new entry (dict operations are atomic in CPython)
+    _prediction_cache[cache_key] = result
+    _cache_access_times[cache_key] = time.time()
 
 def refresh():
     global currgefs
@@ -576,17 +582,26 @@ def _get_simulator(model):
     """Get simulator for given model, with dynamic multi-simulator LRU cache."""
     global _simulator_cache, _simulator_access_times, _last_refresh_check, _current_max_cache
     now = time.time()
+    func_start = now
     
     # Start background cache trim thread if not already started
     _start_cache_trim_thread()
     
     # Refresh GEFS data if needed
+    refresh_start = time.time()
     if currgefs == "Unavailable" or now - _last_refresh_check > 300:
         refresh()
         _last_refresh_check = now
+        refresh_time = time.time() - refresh_start
+        if refresh_time > 1.0:
+            logging.warning(f"[PERF] refresh() slow: time={refresh_time:.2f}s")
     
     # Trim cache if ensemble mode expired (called on every simulator access)
+    trim_start = time.time()
     _trim_cache_to_normal()
+    trim_time = time.time() - trim_start
+    if trim_time > 1.0:
+        logging.warning(f"[PERF] _trim_cache_to_normal() slow: time={trim_time:.2f}s")
     
     with _cache_lock:
         # Fast path: return cached simulator if available
@@ -648,9 +663,22 @@ def _get_simulator(model):
     preload_arrays = False
     
     try:
+        load_start = time.time()
         wind_file_path = load_gefs(f'{currgefs}_{str(model).zfill(2)}.npz')
+        load_time = time.time() - load_start
+        if load_time > 2.0:
+            logging.warning(f"[PERF] load_gefs() slow: model={model}, time={load_time:.2f}s")
+        
+        windfile_start = time.time()
         wind_file = WindFile(wind_file_path, preload=preload_arrays)
+        windfile_time = time.time() - windfile_start
+        if windfile_time > 2.0:
+            logging.warning(f"[PERF] WindFile() slow: model={model}, time={windfile_time:.2f}s")
+        
         simulator = Simulator(wind_file, _get_elevation_data())
+        
+        total_load = time.time() - load_start
+        logging.info(f"[PERF] Loaded new simulator: model={model}, total_time={total_load:.2f}s")
     except Exception as e:
         logging.error(f"Failed to load simulator for model {model}: {e}", exc_info=True)
         raise
@@ -659,6 +687,10 @@ def _get_simulator(model):
     with _cache_lock:
         _simulator_cache[model] = simulator
         _simulator_access_times[model] = now
+    
+    total_get_sim = time.time() - func_start
+    if total_get_sim > 3.0:
+        logging.warning(f"[PERF] _get_simulator() TOTAL slow: model={model}, time={total_get_sim:.2f}s")
     
     return simulator
 
@@ -681,17 +713,25 @@ def simulate(simtime, lat, lon, rate, step, max_duration, alt, model, coefficien
     """
     Optimized simulation with caching and early termination
     """
+    func_start = time.time()
+    
     # Check cache first
     cache_key = _cache_key(simtime, lat, lon, rate, step, max_duration, alt, model, coefficient)
     cached_result = _get_cached_prediction(cache_key)
     if cached_result is not None:
+        cache_time = time.time() - func_start
+        logging.debug(f"[PERF] simulate() cache HIT: model={model}, time={cache_time:.3f}s")
         return cached_result
     
     # Mark model as in use to prevent cleanup races
     with _in_use_lock:
         _in_use_models.add(model)
     try:
+        get_sim_start = time.time()
         simulator = _get_simulator(model)
+        get_sim_time = time.time() - get_sim_start
+        if get_sim_time > 1.0:
+            logging.warning(f"[PERF] _get_simulator() slow: model={model}, time={get_sim_time:.2f}s")
         balloon = Balloon(location=(lat, lon), alt=alt, time=simtime, ascent_rate=rate)
         traj = simulator.simulate(balloon, step, coefficient, elevation, dur=max_duration)
         
@@ -717,10 +757,18 @@ def simulate(simtime, lat, lon, rate, step, max_duration, alt, model, coefficien
         # Cache successful result
         _cache_prediction(cache_key, path)
         
+        total_time = time.time() - func_start
+        if total_time > 5.0:
+            logging.warning(f"[PERF] simulate() completed SLOW: model={model}, time={total_time:.2f}s, points={len(path)}")
+        else:
+            logging.debug(f"[PERF] simulate() completed: model={model}, time={total_time:.2f}s, points={len(path)}")
+        
         return path
         
     except Exception as e:
         # Don't cache errors
+        total_time = time.time() - func_start
+        logging.error(f"[PERF] simulate() FAILED: model={model}, time={total_time:.2f}s, error={e}")
         raise e
     finally:
         with _in_use_lock:

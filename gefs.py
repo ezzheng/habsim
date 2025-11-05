@@ -251,51 +251,58 @@ def _cleanup_old_cache_files():
 def _ensure_cached(file_name: str) -> Path:
     cache_path = _CACHE_DIR / file_name
     
-    # Mark file as being downloaded to prevent cleanup during download
-    # This is CRITICAL for multi-worker safety: prevents worker A from deleting
-    # a file that worker B is actively downloading
-    with _downloading_lock:
-        _downloading_files.add(file_name)
-        # Special handling for worldelev.npy - always check if it exists and is valid
-        # This file is critical for elevation lookups when users click on the map
-        if file_name == 'worldelev.npy':
-            if cache_path.exists():
-                # Verify file is not corrupted (check size)
-                try:
-                    file_size = cache_path.stat().st_size
-                    expected_size = 451008128  # Expected size for worldelev.npy
-                    if file_size == expected_size:
-                        cache_path.touch()  # Update access time
-                        logging.debug(f"File cache HIT: {file_name} (no Supabase egress)")
-                        return cache_path
-                    else:
-                        # File exists but is wrong size - delete it and re-download
-                        logging.warning(f"{file_name} exists but is corrupted (expected {expected_size} bytes, got {file_size}). Re-downloading...")
-                        cache_path.unlink()
-                except Exception as e:
-                    logging.warning(f"Error checking {file_name}: {e}. Re-downloading...")
-                    try:
-                        cache_path.unlink()
-                    except:
-                        pass
-        
+    # Fast path: Check if file exists BEFORE any locking
+    # This is the common case and should be as fast as possible
+    # Special handling for worldelev.npy - always check if it exists and is valid
+    # This file is critical for elevation lookups when users click on the map
+    if file_name == 'worldelev.npy':
         if cache_path.exists():
-            # Update access time to mark as recently used
+            # Verify file is not corrupted (check size)
+            try:
+                file_size = cache_path.stat().st_size
+                expected_size = 451008128  # Expected size for worldelev.npy
+                if file_size == expected_size:
+                    cache_path.touch()  # Update access time
+                    logging.debug(f"File cache HIT: {file_name} (no Supabase egress)")
+                    return cache_path
+                else:
+                    # File exists but is wrong size - delete it and re-download
+                    logging.warning(f"{file_name} exists but is corrupted (expected {expected_size} bytes, got {file_size}). Re-downloading...")
+                    cache_path.unlink()
+            except Exception as e:
+                logging.warning(f"Error checking {file_name}: {e}. Re-downloading...")
+                try:
+                    cache_path.unlink()
+                except:
+                    pass
+    
+    if cache_path.exists():
+        # Update access time to mark as recently used
+        cache_path.touch()
+        logging.debug(f"[CACHE] HIT: {file_name} (no Supabase egress)")
+        return cache_path
+
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with _CACHE_LOCK:
+        if cache_path.exists():
             cache_path.touch()
-            logging.debug(f"File cache HIT: {file_name} (no Supabase egress)")
+            logging.debug(f"[CACHE] HIT (double-check): {file_name}")
             return cache_path
 
-        cache_path.parent.mkdir(parents=True, exist_ok=True)
-
-        with _CACHE_LOCK:
-            if cache_path.exists():
-                cache_path.touch()
-                logging.debug(f"File cache HIT: {file_name} (no Supabase egress)")
-                return cache_path
-
-            # Clean up old files before downloading new one
-            _cleanup_old_cache_files()
-
+        # Clean up old files before downloading new one
+        cleanup_start = time.time()
+        _cleanup_old_cache_files()
+        cleanup_time = time.time() - cleanup_start
+        if cleanup_time > 1.0:
+            logging.warning(f"[PERF] _cleanup_old_cache_files() slow: time={cleanup_time:.2f}s")
+    
+    # CRITICAL: Mark file as downloading ONLY after cache miss confirmed
+    # This prevents false positives where cache hits would leave files in the set
+    with _downloading_lock:
+        _downloading_files.add(file_name)
+    
+    try:
         # For large files, prevent concurrent downloads of the same file ACROSS PROCESSES
         # This avoids connection pool exhaustion and partial download conflicts
         # Use file-based locking (fcntl) which works across Gunicorn worker processes
@@ -353,7 +360,8 @@ def _ensure_cached(file_name: str) -> Path:
                 lock_fd = None
 
         # Log download attempt (this will use Supabase egress)
-        logging.info(f"File cache MISS: {file_name} - downloading from Supabase (will use egress)")
+        download_start = time.time()
+        logging.info(f"[CACHE] MISS: {file_name} - downloading from Supabase (will use egress)")
         
         # Use longer timeout for large files
         # NPZ wind files are ~300MB, worldelev.npy is 451MB
@@ -520,7 +528,8 @@ def _ensure_cached(file_name: str) -> Path:
             if not cache_path.exists() or cache_path.stat().st_size == 0:
                 raise IOError(f"Downloaded file {file_name} is missing or empty after rename")
             
-            logging.info(f"Cached {file_name} to disk: {cache_path} (future reads will use zero egress)")
+            download_time = time.time() - download_start
+            logging.info(f"Cached {file_name} to disk in {download_time:.1f}s: {cache_path} (future reads will use zero egress)")
             
             # Release the file lock after successful download and rename
             if lock_fd:
@@ -561,17 +570,16 @@ def _ensure_cached(file_name: str) -> Path:
                     pass
             raise
 
-    # Final check that file exists
-    if not cache_path.exists():
-        raise FileNotFoundError(f"Cached file {file_name} not found at {cache_path}")
-    
-    # CRITICAL: Remove from downloading set on success
-    # On error, the set will still contain the file name, which is acceptable
-    # as it prevents premature cleanup of partially downloaded files
-    with _downloading_lock:
-        _downloading_files.discard(file_name)
-    
-    return cache_path
+        # Final check that file exists
+        if not cache_path.exists():
+            raise FileNotFoundError(f"Cached file {file_name} not found at {cache_path}")
+        
+        return cache_path
+    finally:
+        # CRITICAL: Always remove from downloading set, even on error
+        # This ensures the set doesn't grow unbounded with failed download attempts
+        with _downloading_lock:
+            _downloading_files.discard(file_name)
 
 
 def _iter_content(resp: requests.Response) -> Iterator[bytes]:
