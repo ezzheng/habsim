@@ -506,18 +506,18 @@ function displayHeatmap(heatmapData) {
         // Create custom heatmap overlay
         // Options: 'none' (raw), 'epanechnikov' (recommended), 'uniform', 'gaussian'
         heatmapLayer = new CustomHeatmapOverlay(heatmapPoints, {
-            opacity: 0.7,
+            opacity: 0.72,
             smoothingType: 'epanechnikov',  // Change to 'none' for raw density, 'gaussian' for smooth circular
             smoothingBandwidth: null,        // null = auto-calculate (5% of data range)
             gridResolution: 100,             // Higher = smoother but slower
             // Lower density (outer) → green; higher density (inner) → red
             gradient: [
-                {stop: 0.00, color: 'rgba(0, 255, 0, 0.00)'},   // fully transparent at zero density
-                {stop: 0.15, color: 'rgba(0, 180, 0, 0.35)'},   // green (outer)
-                {stop: 0.35, color: 'rgba(200, 200, 0, 0.60)'}, // yellow
-                {stop: 0.60, color: 'rgba(255, 140, 0, 0.80)'}, // orange
-                {stop: 0.80, color: 'rgba(220, 0, 0, 0.95)'},   // red (inner)
-                {stop: 1.00, color: 'rgba(160, 0, 0, 1.00)'}    // deep red (peak)
+                {stop: 0.00, color: 'rgba(0, 255, 0, 0.00)'},      // fully transparent at zero density
+                {stop: 0.15, color: 'rgba(34, 102, 0, 0.30)'},     // darker green (less blend with map)
+                {stop: 0.35, color: 'rgba(204, 170, 0, 0.58)'},    // richer yellow
+                {stop: 0.60, color: 'rgba(230, 100, 0, 0.82)'},    // stronger orange
+                {stop: 0.80, color: 'rgba(200, 0, 0, 0.96)'},      // vivid red (inner)
+                {stop: 1.00, color: 'rgba(150, 0, 0, 1.00)'}       // deep red peak
             ]
         });
         
@@ -928,15 +928,15 @@ function crossProduct(o, a, b) {
 function getContourColor(threshold) {
     // Exact mapping requested: 30% red, 50% orange, 70% yellow, 90% green
     const t = Math.round(threshold * 100);
-    if (t === 30) return '#CC0000';  // red
-    if (t === 50) return '#CC6600';  // orange
-    if (t === 70) return '#CCAA00';  // yellow
-    if (t === 90) return '#00AA00';  // green
+    if (t === 30) return '#C40000';  // slightly deeper red
+    if (t === 50) return '#C25A00';  // stronger orange
+    if (t === 70) return '#C0A000';  // richer yellow
+    if (t === 90) return '#1F6A00';  // darker green for better contrast
     // Fallback gradient if non-standard threshold
-    if (threshold >= 0.7) return '#CCAA00';
-    if (threshold >= 0.5) return '#CC6600';
-    if (threshold >= 0.3) return '#CC0000';
-    return '#00AA00';
+    if (threshold >= 0.7) return '#C0A000';
+    if (threshold >= 0.5) return '#C25A00';
+    if (threshold >= 0.3) return '#C40000';
+    return '#1F6A00';
 }
 
 function updateContourVisibility() {
