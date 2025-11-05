@@ -264,6 +264,7 @@
             transform: translateY(-12px);
             opacity: 0;
             pointer-events: none;
+            display: none; /* remove layout gap when collapsed */
         }
         .param-grid {
             display: grid;
@@ -549,7 +550,7 @@
             /* Show print overlay with parameters */
             #print-overlay {
                 display: block !important;
-                position: absolute;
+                position: fixed; /* anchor to viewport to avoid shifts */
                 top: 0;
                 left: 0;
                 background: white;
@@ -611,6 +612,7 @@
                 padding: 0 !important;
                 background: white !important;
             }
+            body { padding-top: 0 !important; }
             
             /* Ensure print overlay is truly at top-left of the map */
             #print-overlay {

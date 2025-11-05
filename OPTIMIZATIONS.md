@@ -70,6 +70,7 @@ One background thread runs on startup to optimize performance:
 1. Waits 2 seconds for app initialization
 2. Builds the model 0 simulator (fast single requests)
 3. Touches `worldelev.npy` (451 MB) so the elevation grid is memory-mapped before first use
+4. Reuses on-disk GEFS cache from persistent volume when mounted
 
 **File Downloading:**
 - Weather files download on-demand when ensemble runs are requested (cost-optimized)
@@ -109,12 +110,13 @@ HABSIM uses a multi-layer caching strategy optimized for Railway (max 32GB RAM, 
 
 ### 2. GEFS File Cache (`gefs.py`) - **Disk Cache**
 
-**Location**: `/app/data/gefs` on Railway (or `/tmp/habsim-gefs/` fallback if persistent volume not mounted)
+**Location**: `/app/data/gefs` on Railway persistent volume (or `/tmp/habsim-gefs/` fallback if PV not mounted)
 **Storage**: 21 `.npz` wind files + `worldelev.npy`
 **Capacity**: 25 `.npz` files (~7.7 GB) + `worldelev.npy` (451 MB, never evicted)
 **Eviction**: LRU by file access time (`worldelev.npy` exempt)
 **Thread safety**: `_CACHE_LOCK` plus inter-process file locks stop duplicate downloads
 **Reliability**: Extended timeouts (30 min read), stall detection, resumable downloads, corruption checks, download progress logging
+**Persistent Volume Benefits**: Lower Supabase egress, faster warmups, shared cache across workers and restarts. Mount at `/app/data` to enable.
 
 **Memory Usage**:  
 - 308MB per `.npz` file
