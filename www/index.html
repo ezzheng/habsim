@@ -245,38 +245,23 @@
         .toggle {
             border: solid 1px #a2a2a2;
         }
-        /* Parameter panel - smooth and robust animation using max-height + padding + opacity */
+        /* Parameter panel - no animation to avoid layout artifacts */
         #param-panel {
             padding: 20px 24px 24px 24px;
             background: var(--bg);
-            max-height: 80vh; /* expanded state */
+            max-height: 80vh;
             overflow-y: auto;
             overflow-x: hidden;
             width: 100%;
             box-sizing: border-box;
             -webkit-overflow-scrolling: touch;
-            will-change: max-height, padding, opacity;
             opacity: 1;
-            transition:
-                max-height 260ms cubic-bezier(0.2, 0.8, 0.2, 1),
-                padding 220ms cubic-bezier(0.2, 0.8, 0.2, 1),
-                opacity 180ms ease-out,
-                background-color 180ms ease-out;
         }
         #param-panel.collapsed {
-            max-height: 0;         /* collapse height */
-            padding-top: 0;        /* collapse padding to avoid leftover area */
-            padding-bottom: 0;
-            opacity: 0;            /* fade out */
-            overflow: hidden;      /* avoid content spill */
-            background: transparent; /* avoid gray/white residual strip */
-            pointer-events: none;  /* non-interactive when closed */
+            display: none;  /* instant hide to prevent any residual area */
+            pointer-events: none;
         }
-        @media (prefers-reduced-motion: reduce) {
-            #param-panel {
-                transition: none;
-            }
-        }
+        /* No motion block unnecessary now */
         .param-grid {
             display: grid;
             grid-template-columns: 1fr auto 1fr;
@@ -920,7 +905,7 @@
                 } catch(e) {}
             }
             function restoreTitleAfterPrint(){
-                if (window.__origTitle) document.title = window.__origTitle;
+                // Keep the generated title so PDF filenames remain consistent even after print
                 const panel = document.getElementById('param-panel');
                 if (panel && window.__wasCollapsed !== undefined) {
                     if (!window.__wasCollapsed) panel.classList.remove('collapsed');
@@ -941,6 +926,21 @@
             }
             window.addEventListener('beforeprint', setTitleBeforePrint);
             window.addEventListener('afterprint', restoreTitleAfterPrint);
+        })();
+
+        // Keep the document title updated whenever key inputs change (improves PDF filename reliability)
+        (function(){
+            const fields = ['yr','mo','day','hr','mn','lat','lon'];
+            function refreshTitleFromInputs(){
+                try { updatePrintOverlay(); } catch(e) {}
+            }
+            fields.forEach(id => {
+                const el = document.getElementById(id);
+                if (el) {
+                    el.addEventListener('change', refreshTitleFromInputs);
+                    el.addEventListener('input', refreshTitleFromInputs);
+                }
+            });
         })();
     </script>
 <!-- Vercel Web Analytics (no framework) -->
