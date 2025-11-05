@@ -111,28 +111,40 @@ class WindFile:
         and no other threads are using it.
         """
         # Clear main data array (biggest memory consumer)
+        # For memory-mapped files, we DON'T delete them - they use minimal RAM
+        # The OS kernel will handle page cache eviction naturally
         if hasattr(self, 'data') and self.data is not None:
             if isinstance(self.data, np.ndarray):
-                # Delete both pre-loaded AND memory-mapped arrays
-                # Memory-mapped arrays need to be explicitly deleted to release the mapping
-                # Otherwise they linger in memory even after GEFS changes
-                try:
-                    # For memory-mapped arrays, this releases the mmap
-                    del self.data
-                except:
-                    pass
-                self.data = None
+                # Only clear pre-loaded arrays (which consume significant RAM)
+                # Memory-mapped arrays have a 'filename' attribute, pre-loaded don't
+                if not hasattr(self.data, 'filename'):
+                    # Pre-loaded array - delete it to free memory
+                    try:
+                        del self.data
+                        self.data = None
+                    except:
+                        pass
+                # For memory-mapped arrays, leave them alone - OS handles eviction
         
         # Clear other numpy arrays (these are smaller but still consume memory)
         if hasattr(self, 'levels') and isinstance(self.levels, np.ndarray):
-            del self.levels
-            self.levels = None
+            try:
+                del self.levels
+                self.levels = None
+            except:
+                pass
         if hasattr(self, '_interp_levels') and isinstance(self._interp_levels, np.ndarray):
-            del self._interp_levels
-            self._interp_levels = None
+            try:
+                del self._interp_levels
+                self._interp_levels = None
+            except:
+                pass
         if hasattr(self, '_interp_indices') and isinstance(self._interp_indices, np.ndarray):
-            del self._interp_indices
-            self._interp_indices = None
+            try:
+                del self._interp_indices
+                self._interp_indices = None
+            except:
+                pass
 
     def _load_memmap_data(self, npz: np.lib.npyio.NpzFile, path: Path):
         memmap_path = Path(f"{path}.data.npy")

@@ -95,41 +95,21 @@ def refresh():
     return False
 
 def reset():
+    """Clear simulator cache when GEFS model changes.
+    Note: This does NOT cleanup WindFile objects immediately - they stay cached briefly
+    to allow in-flight simulations to complete. The periodic trim will clean them up."""
     global _simulator_cache, _simulator_access_times, elevation_cache, _ensemble_mode_until, _ensemble_mode_started
     with _cache_lock:
-        # Properly cleanup all WindFile objects before clearing cache
-        # This is critical when GEFS changes to prevent old memory-mapped files from lingering
-        for model_id, simulator in list(_simulator_cache.items()):
-            if simulator and hasattr(simulator, 'wind_file') and simulator.wind_file:
-                wind_file = simulator.wind_file
-                # Use cleanup method to free memory
-                if hasattr(wind_file, 'cleanup'):
-                    wind_file.cleanup()
-                # Delete the WindFile reference
-                del wind_file
-                simulator.wind_file = None
-            # Delete the simulator reference
-            if simulator:
-                del simulator
-        
-        # Now clear the dictionaries
+        # Simply clear the cache dictionaries - don't cleanup WindFiles yet
+        # The files will naturally be evicted/cleaned up by LRU cache when new models load
         _simulator_cache.clear()
         _simulator_access_times.clear()
         _ensemble_mode_until = 0
         _ensemble_mode_started = 0
     elevation_cache = None
     
-    # Force garbage collection to reclaim memory
-    for _ in range(3):
-        gc.collect()
-    
-    # Try to release memory back to OS
-    try:
-        import ctypes
-        libc = ctypes.CDLL("libc.so.6")
-        libc.malloc_trim(0)
-    except:
-        pass
+    # Light garbage collection
+    gc.collect()
 
 
 def record_activity():
