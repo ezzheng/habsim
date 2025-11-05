@@ -45,10 +45,10 @@ function displayCoordinates(pnt) {
         clearAllVisualizations();
     } else {
         // Fallback if function not available (shouldn't happen)
-        clearWaypoints();
-        for (path in currpaths) {currpaths[path].setMap(null);}
-        currpaths = new Array();
-        rawpathcache = new Array();
+    clearWaypoints();
+    for (path in currpaths) {currpaths[path].setMap(null);}
+    currpaths = new Array();
+    rawpathcache = new Array();
         if (heatmapLayer) {
             try {
                 if (heatmapLayer.setMap) {

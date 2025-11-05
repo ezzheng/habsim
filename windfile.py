@@ -224,7 +224,7 @@ class WindFile:
         # Double-check data is still available (race condition protection)
         if self.data is None:
             raise RuntimeError("WindFile data became None during interpolation - possible race condition with cleanup")
-        
+
         # Extract data cube (memory-mapped in normal mode, full array in ensemble mode)
         cube = self.data[lat_i:lat_i+2, lon_i:lon_i+2, level_i:level_i+2, time_i:time_i+2, :]
        

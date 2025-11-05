@@ -299,7 +299,7 @@ def _ensure_cached(file_name: str) -> Path:
                     except:
                         pass
                 lock_fd = None
-        
+
         # Log download attempt (this will use Supabase egress)
         logging.info(f"File cache MISS: {file_name} - downloading from Supabase (will use egress)")
         

@@ -640,11 +640,11 @@ def spaceshot():
                 def cleanup_progress():
                     import time
                     time.sleep(30)  # Wait 30 seconds
-                    with _progress_lock:
-                        if request_id in _progress_tracking:
-                            del _progress_tracking[request_id]
-                            app.logger.debug(f"Cleaned up progress tracking for {request_id}")
-                
+        with _progress_lock:
+            if request_id in _progress_tracking:
+                del _progress_tracking[request_id]
+                app.logger.debug(f"Cleaned up progress tracking for {request_id}")
+                # Schedule cleanup in background thread
                 cleanup_thread = threading.Thread(target=cleanup_progress, daemon=True)
                 cleanup_thread.start()
     
