@@ -245,26 +245,37 @@
         .toggle {
             border: solid 1px #a2a2a2;
         }
-        /* Parameter panel - modern animation using transform/opacity (no height jank) */
+        /* Parameter panel - smooth and robust animation using max-height + padding + opacity */
         #param-panel {
             padding: 20px 24px 24px 24px;
             background: var(--bg);
-            max-height: 80vh;
+            max-height: 80vh; /* expanded state */
             overflow-y: auto;
             overflow-x: hidden;
             width: 100%;
             box-sizing: border-box;
             -webkit-overflow-scrolling: touch;
-            will-change: transform, opacity;
-            transform: translateY(0);
+            will-change: max-height, padding, opacity;
             opacity: 1;
-            transition: transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1), opacity 180ms ease-out;
+            transition:
+                max-height 260ms cubic-bezier(0.2, 0.8, 0.2, 1),
+                padding 220ms cubic-bezier(0.2, 0.8, 0.2, 1),
+                opacity 180ms ease-out,
+                background-color 180ms ease-out;
         }
         #param-panel.collapsed {
-            transform: translateY(-12px);
-            opacity: 0;
-            pointer-events: none;
-            display: none; /* remove layout gap when collapsed */
+            max-height: 0;         /* collapse height */
+            padding-top: 0;        /* collapse padding to avoid leftover area */
+            padding-bottom: 0;
+            opacity: 0;            /* fade out */
+            overflow: hidden;      /* avoid content spill */
+            background: transparent; /* avoid gray/white residual strip */
+            pointer-events: none;  /* non-interactive when closed */
+        }
+        @media (prefers-reduced-motion: reduce) {
+            #param-panel {
+                transition: none;
+            }
         }
         .param-grid {
             display: grid;
