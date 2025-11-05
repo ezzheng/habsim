@@ -700,8 +700,9 @@ function displayContours(heatmapData) {
             }
             return 0;
         }
-
-        thresholds.forEach((threshold, index) => {
+        
+        // Draw from outermost (90%) to innermost (30%) so inner colors are visible
+        thresholds.slice().reverse().forEach((threshold, indexFromOuter) => {
             const densityValue = cutoffForMass(threshold);
             const contours = extractContours(densityGrid, densityValue, bounds, gridSize);
             
@@ -727,17 +728,18 @@ function displayContours(heatmapData) {
                     strokeOpacity: 0.9,
                     strokeWeight: 2.5,
                     fillColor: color,
-                    fillOpacity: 0.05,  // Very subtle fill to show enclosed area
+                    // Shade to create bands: outer 90% green, then 70% yellow, 50% orange, 30% red (inner)
+                    fillOpacity: 0.18,
                     map: map,
                     clickable: false,
-                    zIndex: 10 + index
+                    zIndex: 10 + (3 - indexFromOuter)
                 });
                 
                 // Place labels along the contour at different positions to avoid overlap
                 // For concentric contours, stagger the label positions
                 // Use different angles for each threshold: 0°, 45°, 90°, 135°, 180°
                 const labelAngles = [90, 45, 0, 315, 270]; // Top, top-right, right, bottom-right, bottom
-                const angleIndex = index % labelAngles.length;
+                const angleIndex = indexFromOuter % labelAngles.length;
                 const targetAngle = labelAngles[angleIndex];
                 
                 // Find the point on the contour closest to the target angle from centroid
@@ -794,7 +796,7 @@ function displayContours(heatmapData) {
                         fontWeight: 'bold'
                     },
                     clickable: false,
-                    zIndex: 20 + index
+                    zIndex: 20 + (3 - indexFromOuter)
                 });
                 
                 contourLayers.push({ 
@@ -924,11 +926,17 @@ function crossProduct(o, a, b) {
 }
 
 function getContourColor(threshold) {
-    // Inner (higher %) → red; outer (lower %) → green
-    if (threshold >= 0.7) return '#CC0000';      // red (inner)
-    if (threshold >= 0.5) return '#CC6600';      // orange
-    if (threshold >= 0.3) return '#CCAA00';      // yellow
-    return '#00AA00';                             // green (outermost)
+    // Exact mapping requested: 30% red, 50% orange, 70% yellow, 90% green
+    const t = Math.round(threshold * 100);
+    if (t === 30) return '#CC0000';  // red
+    if (t === 50) return '#CC6600';  // orange
+    if (t === 70) return '#CCAA00';  // yellow
+    if (t === 90) return '#00AA00';  // green
+    // Fallback gradient if non-standard threshold
+    if (threshold >= 0.7) return '#CCAA00';
+    if (threshold >= 0.5) return '#CC6600';
+    if (threshold >= 0.3) return '#CC0000';
+    return '#00AA00';
 }
 
 function updateContourVisibility() {
