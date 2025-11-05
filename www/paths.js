@@ -548,13 +548,88 @@ function displayHeatmap(heatmapData) {
 
 function clearContours() {
     // Remove all contour polylines and labels
-    contourLayers.forEach(layer => {
-        if (layer.polyline) layer.polyline.setMap(null);
-        if (layer.polyline2) layer.polyline2.setMap(null);
-        if (layer.label) layer.label.setMap(null);
-    });
+    if (contourLayers && contourLayers.length > 0) {
+        contourLayers.forEach(layer => {
+            try {
+                // Remove polyline1 from map - use multiple methods to ensure it's removed
+                if (layer.polyline) {
+                    try {
+                        // Method 1: Remove from map
+                        if (layer.polyline.setMap) {
+                            layer.polyline.setMap(null);
+                        }
+                        // Method 2: Clear path to remove all points
+                        if (typeof layer.polyline.setPath === 'function') {
+                            layer.polyline.setPath([]);
+                        }
+                        // Method 3: Set visibility to false
+                        if (typeof layer.polyline.setVisible === 'function') {
+                            layer.polyline.setVisible(false);
+                        }
+                        // Method 4: Set opacity to 0
+                        if (typeof layer.polyline.setOptions === 'function') {
+                            layer.polyline.setOptions({ strokeOpacity: 0, visible: false });
+                        }
+                    } catch (e) {
+                        console.warn('Error removing polyline:', e);
+                    }
+                }
+                
+                // Remove polyline2 from map - use multiple methods to ensure it's removed
+                if (layer.polyline2) {
+                    try {
+                        // Method 1: Remove from map
+                        if (layer.polyline2.setMap) {
+                            layer.polyline2.setMap(null);
+                        }
+                        // Method 2: Clear path to remove all points
+                        if (typeof layer.polyline2.setPath === 'function') {
+                            layer.polyline2.setPath([]);
+                        }
+                        // Method 3: Set visibility to false
+                        if (typeof layer.polyline2.setVisible === 'function') {
+                            layer.polyline2.setVisible(false);
+                        }
+                        // Method 4: Set opacity to 0
+                        if (typeof layer.polyline2.setOptions === 'function') {
+                            layer.polyline2.setOptions({ strokeOpacity: 0, visible: false });
+                        }
+                    } catch (e) {
+                        console.warn('Error removing polyline2:', e);
+                    }
+                }
+                
+                // Remove label from map
+                if (layer.label) {
+                    if (layer.label.setMap) {
+                        layer.label.setMap(null);
+                    }
+                    // Try to delete the object
+                    try {
+                        delete layer.label;
+                    } catch (e) {}
+                }
+            } catch (e) {
+                console.warn('Error clearing contour layer:', e);
+            }
+        });
+    }
+    
+    // Clear arrays immediately
     contourLayers = [];
     contourLabels = [];
+    
+    // Also remove zoom listener that was added for contours
+    if (map && map._contourZoomListener && google && google.maps && google.maps.event) {
+        try {
+            google.maps.event.removeListener(map._contourZoomListener);
+            map._contourZoomListener = null;
+        } catch (e) {
+            // Ignore errors if listener doesn't exist
+        }
+    }
+    
+    console.log("Cleared all contours");
 }
 
 function displayContours(heatmapData) {
@@ -611,19 +686,9 @@ function displayContours(heatmapData) {
             contours.forEach(contour => {
                 if (contour.length < 3) return;  // Need at least 3 points for a polygon
                 
-                // Create contour polyline
+                // Create contour path and split into two segments for label gap
                 const path = contour.map(p => new google.maps.LatLng(p.lat, p.lon));
                 const color = getContourColor(threshold);
-                
-                const polyline = new google.maps.Polyline({
-                    path: path,
-                    geodesic: true,
-                    strokeColor: color,
-                    strokeOpacity: 0.8,
-                    strokeWeight: 2,
-                    map: map,
-                    zIndex: 1000 + index  // Higher z-index for higher probability
-                });
                 
                 // Add label at midpoint of contour, breaking the line around it
                 const midIndex = Math.floor(path.length / 2);
@@ -641,25 +706,33 @@ function displayContours(heatmapData) {
                 const path2 = path.slice(gapEnd);
                 
                 // Create two polylines instead of one (with gap for label)
-                const polyline1 = path1.length > 1 ? new google.maps.Polyline({
-                    path: path1,
-                    geodesic: true,
-                    strokeColor: color,
-                    strokeOpacity: 0.8,
-                    strokeWeight: 2,
-                    map: map,
-                    zIndex: 1000 + index
-                }) : null;
+                // Only create if path has enough points
+                let polyline1 = null;
+                let polyline2 = null;
                 
-                const polyline2 = path2.length > 1 ? new google.maps.Polyline({
-                    path: path2,
-                    geodesic: true,
-                    strokeColor: color,
-                    strokeOpacity: 0.8,
-                    strokeWeight: 2,
-                    map: map,
-                    zIndex: 1000 + index
-                }) : null;
+                if (path1.length > 1) {
+                    polyline1 = new google.maps.Polyline({
+                        path: path1,
+                        geodesic: true,
+                        strokeColor: color,
+                        strokeOpacity: 0.8,
+                        strokeWeight: 2,
+                        map: map,
+                        zIndex: 1000 + index
+                    });
+                }
+                
+                if (path2.length > 1) {
+                    polyline2 = new google.maps.Polyline({
+                        path: path2,
+                        geodesic: true,
+                        strokeColor: color,
+                        strokeOpacity: 0.8,
+                        strokeWeight: 2,
+                        map: map,
+                        zIndex: 1000 + index
+                    });
+                }
                 
                 // Create label marker with background for better visibility
                 const label = new google.maps.Marker({
@@ -693,8 +766,12 @@ function displayContours(heatmapData) {
         });
         
         // Add zoom listener to hide/show contours based on zoom level
+        // Store listener reference so we can remove it later
+        if (map._contourZoomListener) {
+            google.maps.event.removeListener(map._contourZoomListener);
+        }
+        map._contourZoomListener = google.maps.event.addListener(map, 'zoom_changed', updateContourVisibility);
         updateContourVisibility();
-        google.maps.event.addListener(map, 'zoom_changed', updateContourVisibility);
         
         console.log(`Created ${contourLayers.length} contour layers`);
     } catch (error) {
@@ -832,9 +909,102 @@ function updateContourVisibility() {
     });
 }
 
-// Progress tracking removed - feature was unreliable
-// Ensemble button will simply show "Ensemble" text when enabled
+// Progress tracking for ensemble simulations
+let ensembleProgressInterval = null;
+let currentRequestId = null;
+
+function updateEnsembleProgress(progressData) {
+    const ensembleBtn = document.getElementById('ensemble-toggle');
+    if (!ensembleBtn || !window.ensembleEnabled) return;
+    
+    const completed = progressData.completed || 0;
+    const total = progressData.total || 441; // 21 ensemble + 420 Monte Carlo
+    const percentage = progressData.percentage || Math.round((completed / total) * 100);
+    
+    // Show percentage on ensemble button
+    if (completed === 0) {
+        ensembleBtn.textContent = '0%';
+    } else if (completed >= total) {
+        ensembleBtn.textContent = '100%';
+    } else {
+        ensembleBtn.textContent = `${percentage}%`;
+    }
+}
+
+async function pollProgress(requestId) {
+    if (!requestId) return null;
+    
+    try {
+        const response = await fetch(`${URL_ROOT}/progress?request_id=${requestId}`);
+        if (response.ok) {
+            const data = await response.json();
+            return data;
+        }
+    } catch (error) {
+        // Silently fail - progress tracking is optional
+    }
+    return null;
+}
+
+function startProgressPolling(requestId) {
+    // Stop any existing polling
+    if (ensembleProgressInterval) {
+        clearInterval(ensembleProgressInterval);
+        ensembleProgressInterval = null;
+    }
+    
+    if (!requestId) return;
+    
+    currentRequestId = requestId;
+    let pollCount = 0;
+    let lastCompleted = -1;
+    
+    // Poll every 300ms for responsive updates
+    ensembleProgressInterval = setInterval(async () => {
+        if (!window.__simRunning || !currentRequestId) {
+            if (ensembleProgressInterval) {
+                clearInterval(ensembleProgressInterval);
+                ensembleProgressInterval = null;
+            }
+            return;
+        }
+        
+        const progressData = await pollProgress(currentRequestId);
+        
+        if (progressData && progressData.completed !== undefined) {
+            // Only update if progress changed
+            if (progressData.completed !== lastCompleted) {
+                updateEnsembleProgress(progressData);
+                lastCompleted = progressData.completed;
+                
+                // If completed, stop polling
+                if (progressData.completed >= progressData.total) {
+                    if (ensembleProgressInterval) {
+                        clearInterval(ensembleProgressInterval);
+                        ensembleProgressInterval = null;
+                    }
+                }
+            }
+        } else if (pollCount > 100) {
+            // If we've polled 100 times (30 seconds) without getting progress, stop polling
+            // This prevents infinite polling if the request_id is invalid
+            if (ensembleProgressInterval) {
+                clearInterval(ensembleProgressInterval);
+                ensembleProgressInterval = null;
+            }
+        }
+        
+        pollCount++;
+    }, 300); // Poll every 300ms
+}
+
 function clearEnsembleProgress() {
+    if (ensembleProgressInterval) {
+        clearInterval(ensembleProgressInterval);
+        ensembleProgressInterval = null;
+    }
+    currentRequestId = null;
+    
     const ensembleBtn = document.getElementById('ensemble-toggle');
     if (ensembleBtn) {
         // Restore "Ensemble" text when simulation finishes or is cancelled
@@ -950,9 +1120,32 @@ async function simulate() {
                     + "&asc=" + asc + "&desc=" + desc;
                 console.log("Using spaceshot endpoint (with Monte Carlo):", spaceshotUrl);
                 
+                // Compute request_id client-side (same hash function as server) to start polling immediately
+                const requestKey = `${time}_${lat}_${lon}_${alt}_${equil}_${eqtime}_${asc}_${desc}`;
+                let hash = 0;
+                for (let i = 0; i < requestKey.length; i++) {
+                    hash = ((hash << 5) - hash) + requestKey.charCodeAt(i);
+                    hash = hash & 0xFFFFFFFF; // Convert to 32-bit integer
+                }
+                const computedRequestId = Math.abs(hash).toString(16).padStart(16, '0').substring(0, 16);
+                
+                // Start polling immediately (before fetch completes) using computed request_id
+                if (window.ensembleEnabled) {
+                    startProgressPolling(computedRequestId);
+                }
+                
                 try {
                     const response = await fetch(spaceshotUrl, { signal: window.__simAbort.signal });
-                    const data = await response.json(); // Now returns {paths: [...], heatmap_data: [...]}
+                    const data = await response.json(); // Now returns {paths: [...], heatmap_data: [...], request_id: ...}
+                    
+                    // Update request_id if server provided one (should match our computed one)
+                    if (data.request_id && data.request_id !== computedRequestId) {
+                        console.warn(`Request ID mismatch: computed ${computedRequestId}, server returned ${data.request_id}`);
+                        // Use server's request_id (more reliable)
+                        if (window.ensembleEnabled) {
+                            startProgressPolling(data.request_id);
+                        }
+                    }
                     
                     console.log('Spaceshot response received:', {
                         isArray: Array.isArray(data),
@@ -975,6 +1168,16 @@ async function simulate() {
                         payloads = data.paths || [];
                         heatmapData = data.heatmap_data || [];
                         console.log(`New format: ${payloads.length} paths, ${heatmapData.length} heatmap points`);
+                    }
+                    
+                    // Stop polling once fetch completes (simulation is done)
+                    if (ensembleProgressInterval) {
+                        clearInterval(ensembleProgressInterval);
+                        ensembleProgressInterval = null;
+                    }
+                    // Update to 100% if not already there
+                    if (window.ensembleEnabled) {
+                        updateEnsembleProgress({completed: 441, total: 441, percentage: 100});
                     }
                     
                     // Process ensemble paths (existing functionality)
