@@ -245,7 +245,7 @@
         .toggle {
             border: solid 1px #a2a2a2;
         }
-        /* Parameter panel - no animation to avoid layout artifacts */
+        /* Parameter panel - smooth, minimal-jank animation */
         #param-panel {
             padding: 20px 24px 24px 24px;
             background: var(--bg);
@@ -255,10 +255,21 @@
             width: 100%;
             box-sizing: border-box;
             -webkit-overflow-scrolling: touch;
+            will-change: max-height, padding, opacity;
             opacity: 1;
+            transition:
+                max-height 220ms cubic-bezier(0.2, 0.8, 0.2, 1),
+                padding 180ms cubic-bezier(0.2, 0.8, 0.2, 1),
+                opacity 160ms ease-out,
+                background-color 160ms ease-out;
         }
         #param-panel.collapsed {
-            display: none;  /* instant hide to prevent any residual area */
+            max-height: 0;
+            padding-top: 0;
+            padding-bottom: 0;
+            opacity: 0;
+            overflow: hidden;
+            background: transparent;
             pointer-events: none;
         }
         /* No motion block unnecessary now */
@@ -893,24 +904,12 @@
         (function(){
             function setTitleBeforePrint(){
                 try {
-                    // Force data panel to behave as retracted for print
-                    const panel = document.getElementById('param-panel');
-                    if (panel) {
-                        if (!('__wasCollapsed' in window)) window.__wasCollapsed = panel.classList.contains('collapsed');
-                        panel.classList.add('collapsed');
-                    }
+                    // No more JS collapsing – print CSS hides the panel entirely
                     updatePrintOverlay();
-                    // Small delay to ensure title is applied before print dialog
-                    setTimeout(() => {}, 0);
                 } catch(e) {}
             }
             function restoreTitleAfterPrint(){
-                // Keep the generated title so PDF filenames remain consistent even after print
-                const panel = document.getElementById('param-panel');
-                if (panel && window.__wasCollapsed !== undefined) {
-                    if (!window.__wasCollapsed) panel.classList.remove('collapsed');
-                    window.__wasCollapsed = undefined;
-                }
+                // Keep the generated title for filename consistency
             }
             if (window.matchMedia) {
                 const mediaQueryList = window.matchMedia('print');
