@@ -520,10 +520,23 @@ def spaceshot():
         landing_positions = []
     finally:
         simulate._trim_cache_to_normal()
-        # Clean up progress tracking after completion
+        # Mark progress as completed and schedule cleanup after 30 seconds
+        # This allows clients to poll one last time to see 100% completion
+        # before the progress entry is deleted
         with _progress_lock:
             if request_id in _progress_tracking:
-                del _progress_tracking[request_id]
+                _progress_tracking[request_id]['completed'] = _progress_tracking[request_id]['total']
+                # Schedule cleanup in background thread
+                def cleanup_progress():
+                    import time
+                    time.sleep(30)  # Wait 30 seconds
+                    with _progress_lock:
+                        if request_id in _progress_tracking:
+                            del _progress_tracking[request_id]
+                            app.logger.debug(f"Cleaned up progress tracking for {request_id}")
+                
+                cleanup_thread = threading.Thread(target=cleanup_progress, daemon=True)
+                cleanup_thread.start()
     
     # ========================================================================
     # RESPONSE FORMAT
