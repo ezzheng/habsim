@@ -591,6 +591,19 @@
                 size: landscape;
                 margin: 0;
             }
+            
+            /* Reset any body/html margins that might offset the overlay */
+            html, body {
+                margin: 0 !important;
+                padding: 0 !important;
+            }
+            
+            /* Ensure print overlay is truly at top-left of the map */
+            #print-overlay {
+                margin: 0 !important;
+                margin-top: 0 !important;
+                margin-left: 0 !important;
+            }
         }
         
         /* Hide print overlay by default */
