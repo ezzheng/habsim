@@ -116,6 +116,51 @@ def whichgefs():
     f.close()
     return s
 
+@app.route('/sim/cache-status')
+def cache_status():
+    """Debug endpoint to see what's in the simulator cache and memory usage"""
+    import simulate
+    import psutil
+    import os
+    
+    # Get process memory info
+    process = psutil.Process(os.getpid())
+    memory_info = process.memory_info()
+    memory_mb = memory_info.rss / (1024 * 1024)
+    
+    # Get cache info
+    with simulate._cache_lock:
+        cache_size = len(simulate._simulator_cache)
+        cache_limit = simulate._current_max_cache
+        ensemble_active = simulate._is_ensemble_mode()
+        ensemble_until = simulate._ensemble_mode_until
+        ensemble_started = simulate._ensemble_mode_started
+        cached_models = list(simulate._simulator_cache.keys())
+    
+    import time
+    now = time.time()
+    
+    status = {
+        'worker_pid': os.getpid(),
+        'memory_mb': round(memory_mb, 2),
+        'cache': {
+            'size': cache_size,
+            'limit': cache_limit,
+            'normal_limit': simulate.MAX_SIMULATOR_CACHE_NORMAL,
+            'ensemble_limit': simulate.MAX_SIMULATOR_CACHE_ENSEMBLE,
+            'cached_models': cached_models
+        },
+        'ensemble_mode': {
+            'active': ensemble_active,
+            'started': ensemble_started,
+            'expires_at': ensemble_until,
+            'seconds_until_expiry': max(0, round(ensemble_until - now, 1)) if ensemble_until > 0 else 0,
+            'seconds_since_start': round(now - ensemble_started, 1) if ensemble_started > 0 else 0
+        }
+    }
+    
+    return jsonify(status)
+
 @app.route('/sim/status')
 def status():
     try:
