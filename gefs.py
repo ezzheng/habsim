@@ -247,40 +247,61 @@ def _ensure_cached(file_name: str) -> Path:
         # Clean up old files before downloading new one
         _cleanup_old_cache_files()
 
-        # For large files, prevent concurrent downloads of the same file
+        # For large files, prevent concurrent downloads of the same file ACROSS PROCESSES
         # This avoids connection pool exhaustion and partial download conflicts
+        # Use file-based locking (fcntl) which works across Gunicorn worker processes
         is_large_file = file_name == 'worldelev.npy' or file_name.endswith('.npy')
-        file_lock = None
+        lock_file = None
+        lock_fd = None
         if is_large_file:
-            # Use a separate lock per file to allow concurrent downloads of different files
-            # but prevent concurrent downloads of the same file
-            file_lock_key = f"download_{file_name}"
-            if not hasattr(_ensure_cached, '_file_locks'):
-                _ensure_cached._file_locks = {}
-            if file_lock_key not in _ensure_cached._file_locks:
-                _ensure_cached._file_locks[file_lock_key] = threading.Lock()
-            
-            file_lock = _ensure_cached._file_locks[file_lock_key]
-            
-            # Try to acquire lock non-blocking first
-            if not file_lock.acquire(blocking=False):
-                # Another thread is downloading - wait and check if it completed
-                logging.debug(f"Another thread is downloading {file_name}, waiting for completion...")
-                for _ in range(50):  # Wait up to 5 seconds (50 * 0.1s)
-                    time.sleep(0.1)
-                    if cache_path.exists():
-                        cache_path.touch()
-                        logging.debug(f"File {file_name} was downloaded by another thread (cache HIT)")
-                        return cache_path
-                # If still not available, wait for lock (blocking)
-                file_lock.acquire(blocking=True)
-            
-            # Double-check file wasn't created while waiting for lock
-            if cache_path.exists():
-                if file_lock:
-                    file_lock.release()
-                cache_path.touch()
-                return cache_path
+            # Create a lock file for inter-process coordination
+            lock_file = _CACHE_DIR / f".{file_name}.lock"
+            try:
+                # Open lock file (create if doesn't exist)
+                lock_fd = open(lock_file, 'a')
+                
+                # Try to acquire exclusive lock (non-blocking)
+                import fcntl
+                try:
+                    fcntl.flock(lock_fd.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    logging.debug(f"Acquired download lock for {file_name}")
+                except BlockingIOError:
+                    # Another process is downloading - wait and check if it completed
+                    logging.info(f"Another process is downloading {file_name}, waiting for completion...")
+                    
+                    # Wait up to 5 minutes for the download to complete
+                    for i in range(300):  # 300 * 1s = 5 minutes
+                        time.sleep(1)
+                        if cache_path.exists() and cache_path.stat().st_size > 0:
+                            # File was downloaded by another process
+                            lock_fd.close()
+                            cache_path.touch()
+                            logging.info(f"File {file_name} was downloaded by another process (cache HIT)")
+                            return cache_path
+                        
+                        # Log progress every 30 seconds
+                        if i % 30 == 0 and i > 0:
+                            logging.info(f"Still waiting for {file_name} download ({i}s elapsed)...")
+                    
+                    # After 5 minutes, acquire lock (blocking) to download ourselves
+                    logging.warning(f"Timeout waiting for {file_name} download, acquiring lock...")
+                    fcntl.flock(lock_fd.fileno(), fcntl.LOCK_EX)
+                
+                # Double-check file wasn't created while waiting for lock
+                if cache_path.exists() and cache_path.stat().st_size > 0:
+                    fcntl.flock(lock_fd.fileno(), fcntl.LOCK_UN)
+                    lock_fd.close()
+                    cache_path.touch()
+                    logging.debug(f"File {file_name} exists after acquiring lock (cache HIT)")
+                    return cache_path
+            except Exception as e:
+                logging.warning(f"File locking error for {file_name} (non-critical): {e}")
+                if lock_fd:
+                    try:
+                        lock_fd.close()
+                    except:
+                        pass
+                lock_fd = None
         
         # Log download attempt (this will use Supabase egress)
         logging.info(f"File cache MISS: {file_name} - downloading from Supabase (will use egress)")
@@ -390,8 +411,6 @@ def _ensure_cached(file_name: str) -> Path:
                         raise IOError(f"Downloaded file {file_name} is corrupted (invalid NPZ): {e}")
                 
                 # Success - break out of retry loop
-                if file_lock:
-                    file_lock.release()
                 break
             except IOError as e:
                 # Clean up incomplete download
@@ -407,9 +426,14 @@ def _ensure_cached(file_name: str) -> Path:
                     logging.warning(f"Download attempt {attempt + 1}/{max_retries} failed for {file_name}: {e}. Retrying in {wait_time}s...")
                     time.sleep(wait_time)
                 else:
-                    # Last attempt failed
-                    if file_lock:
-                        file_lock.release()
+                    # Last attempt failed - release lock and clean up
+                    if lock_fd:
+                        try:
+                            import fcntl
+                            fcntl.flock(lock_fd.fileno(), fcntl.LOCK_UN)
+                            lock_fd.close()
+                        except:
+                            pass
                     raise
             except Exception as e:
                 # Clean up incomplete download
@@ -424,8 +448,14 @@ def _ensure_cached(file_name: str) -> Path:
                     logging.warning(f"Download attempt {attempt + 1}/{max_retries} failed for {file_name}: {e}. Retrying in {wait_time}s...")
                     time.sleep(wait_time)
                 else:
-                    if file_lock:
-                        file_lock.release()
+                    # Last attempt failed - release lock and clean up
+                    if lock_fd:
+                        try:
+                            import fcntl
+                            fcntl.flock(lock_fd.fileno(), fcntl.LOCK_UN)
+                            lock_fd.close()
+                        except:
+                            pass
                     raise
         
         # If we get here, download succeeded (tmp_path exists from successful attempt)
@@ -441,8 +471,25 @@ def _ensure_cached(file_name: str) -> Path:
                 raise IOError(f"Downloaded file {file_name} is missing or empty after rename")
             
             logging.info(f"Cached {file_name} to disk: {cache_path} (future reads will use zero egress)")
+            
+            # Release the file lock after successful download and rename
+            if lock_fd:
+                try:
+                    import fcntl
+                    fcntl.flock(lock_fd.fileno(), fcntl.LOCK_UN)
+                    lock_fd.close()
+                    logging.debug(f"Released download lock for {file_name}")
+                except Exception as lock_error:
+                    logging.warning(f"Error releasing lock for {file_name}: {lock_error}")
         except Exception as e:
-            # Clean up partial download
+            # Clean up partial download and release lock
+            if lock_fd:
+                try:
+                    import fcntl
+                    fcntl.flock(lock_fd.fileno(), fcntl.LOCK_UN)
+                    lock_fd.close()
+                except:
+                    pass
             if tmp_path.exists():
                 try:
                     tmp_path.unlink()
