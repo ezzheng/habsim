@@ -4,6 +4,7 @@ from flask_compress import Compress
 import threading
 from functools import wraps
 import random
+import time
 
 app = Flask(__name__)
 CORS(app)
@@ -36,10 +37,24 @@ def _record_worker_activity():
     """Mark the worker as active so idle cleanup waits until the user is gone.
     Excludes status/health endpoints that poll continuously."""
     # Don't reset idle timer for status/health endpoints that poll frequently
-    excluded_paths = ['/sim/status', '/sim/models', '/sim/cache-status']
-    if request.path not in excluded_paths:
+    excluded_paths = ['/sim/status', '/sim/models', '/sim/cache-status', '/', '/favicon.ico']
+    path = request.path
+    # Also exclude static file requests (CSS, JS, images) and Railway health checks
+    if (path.startswith('/static/') or 
+        path.endswith(('.css', '.js', '.png', '.jpg', '.ico')) or
+        path == '/health' or  # Common health check path
+        request.headers.get('User-Agent', '').startswith('Railway')):  # Railway health checks
+        return
+    if path not in excluded_paths:
         try:
+            # Get idle time BEFORE recording (more accurate)
+            idle_before = 0
+            if hasattr(simulate, '_last_activity_timestamp'):
+                idle_before = time.time() - simulate._last_activity_timestamp
             simulate.record_activity()
+            # Log which endpoint triggered activity (helps debug)
+            if idle_before > 30:  # Only log if was idle for meaningful time
+                app.logger.info(f"Activity recorded from {path} (was idle for {idle_before:.1f}s)")
         except Exception:
             # Non-critical; if simulate isn't ready yet we just skip recording.
             pass
