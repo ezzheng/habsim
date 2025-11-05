@@ -100,7 +100,8 @@ function showWaypoints() {
                             map: map,
                             center: position,
                             radius: 300,
-                            clickable: true
+                            clickable: true,
+                            zIndex: 1000  // Higher z-index so waypoints appear above heatmap
                         });
                         circleslist.push(circle);
                         // multiplied by 1000 so that the argument is in milliseconds, not seconds.
@@ -230,6 +231,7 @@ class CustomHeatmapOverlay extends google.maps.OverlayView {
         this.canvas.style.position = 'absolute';
         this.canvas.style.opacity = this.opacity;
         this.canvas.style.pointerEvents = 'none';
+        this.canvas.style.zIndex = '1';  // Lower z-index so waypoints appear above
         
         // Add canvas to panes
         const panes = this.getPanes();
@@ -965,6 +967,19 @@ async function simulate() {
         var lat = document.getElementById('lat').value;
         var lon = document.getElementById('lon').value;
         var alt = document.getElementById('alt').value;
+        
+        // Update location marker if coordinates are provided
+        if (lat && lon && !isNaN(parseFloat(lat)) && !isNaN(parseFloat(lon))) {
+            try {
+                var position = new google.maps.LatLng(parseFloat(lat), parseFloat(lon));
+                if (typeof updateClickMarker === 'function') {
+                    updateClickMarker(position);
+                }
+            } catch (e) {
+                console.warn('Could not update location marker:', e);
+            }
+        }
+        
         var url = "";
         allValues.push(time,alt);
         var equil, eqtime, asc, desc; // Declare variables for use in spaceshot URL
@@ -1146,11 +1161,8 @@ async function simulate() {
     } finally {
         window.__simRunning = false;
         window.__simAbort = null;
-        // Blank out elevation to require refetch before next simulation
-        try {
-            var altInput = document.getElementById('alt');
-            if (altInput) altInput.value = '';
-        } catch (e) {}
+        // Keep elevation field value - only clear if parameters change
+        // (Removed automatic clearing - elevation persists until user changes location)
         if (spinner) { spinner.classList.remove('active'); }
         if (simBtn) {
             simBtn.disabled = false;
