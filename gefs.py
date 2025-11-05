@@ -159,7 +159,8 @@ def _should_cache(file_name: str) -> bool:
 
 
 def _cleanup_old_cache_files():
-    """Remove least recently used cache files if we exceed the limit"""
+    """Remove least recently used cache files if we exceed file count OR size limits.
+    This prevents disk bloat especially after GEFS cycle changes."""
     try:
         # Get all cached files with their access times
         cached_files = []
@@ -183,22 +184,56 @@ def _cleanup_old_cache_files():
             except:
                 pass
         
-        # If under limit, no cleanup needed
-        if len(cached_files) < _MAX_CACHED_FILES:
-            return
+        # Calculate total cache size (excluding worldelev.npy)
+        total_size_gb = sum(f.stat().st_size for f in cached_files) / (1024**3)
         
-        # Sort by access time (oldest first)
+        # Sort by access time (oldest first) for LRU eviction
         cached_files.sort(key=lambda f: f.stat().st_atime)
         
-        # Remove oldest files until we're under the limit
-        files_to_remove = len(cached_files) - _MAX_CACHED_FILES + 1  # +1 to make room for new file
-        for i in range(files_to_remove):
-            try:
-                cached_files[i].unlink()
-            except Exception:
-                pass  # File might have been removed by another thread
-    except Exception:
-        pass  # Don't fail if cleanup fails
+        # Determine how many files to remove based on both count and size limits
+        files_to_remove = 0
+        
+        # Check file count limit
+        if len(cached_files) >= _MAX_CACHED_FILES:
+            files_to_remove = len(cached_files) - _MAX_CACHED_FILES + 1  # +1 to make room for new file
+        
+        # Check size limit (20GB max for NPZ files)
+        # If we're over 18GB, start removing old files to make room
+        MAX_NPZ_SIZE_GB = 18  # Leave 2GB buffer from the 20GB limit
+        if total_size_gb > MAX_NPZ_SIZE_GB:
+            # Remove files until we're under 15GB (aggressive cleanup)
+            TARGET_SIZE_GB = 15
+            current_size = total_size_gb
+            for i, f in enumerate(cached_files):
+                if current_size <= TARGET_SIZE_GB:
+                    break
+                try:
+                    file_size_gb = f.stat().st_size / (1024**3)
+                    current_size -= file_size_gb
+                    files_to_remove = max(files_to_remove, i + 1)
+                except:
+                    pass
+        
+        # Remove the determined number of oldest files
+        if files_to_remove > 0:
+            import logging
+            removed_count = 0
+            removed_size = 0
+            for i in range(min(files_to_remove, len(cached_files))):
+                try:
+                    file_size = cached_files[i].stat().st_size
+                    cached_files[i].unlink()
+                    removed_count += 1
+                    removed_size += file_size
+                except Exception:
+                    pass  # File might have been removed by another thread
+            
+            if removed_count > 0:
+                logging.info(f"Cache cleanup: removed {removed_count} files ({removed_size/(1024**3):.2f}GB), "
+                           f"cache now {(total_size_gb - removed_size/(1024**3)):.2f}GB")
+    except Exception as e:
+        import logging
+        logging.debug(f"Cache cleanup error (non-critical): {e}")
 
 
 def _ensure_cached(file_name: str) -> Path:

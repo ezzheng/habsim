@@ -111,17 +111,17 @@ class WindFile:
         and no other threads are using it.
         """
         # Clear main data array (biggest memory consumer)
-        # Only clear pre-loaded arrays (memory-mapped arrays use little RAM and are safer to leave)
         if hasattr(self, 'data') and self.data is not None:
             if isinstance(self.data, np.ndarray):
-                # For pre-loaded arrays, delete them to free memory
-                # Memory-mapped arrays have a 'filename' attribute, pre-loaded arrays don't
-                if not hasattr(self.data, 'filename'):
-                    # Pre-loaded array - delete it
+                # Delete both pre-loaded AND memory-mapped arrays
+                # Memory-mapped arrays need to be explicitly deleted to release the mapping
+                # Otherwise they linger in memory even after GEFS changes
+                try:
+                    # For memory-mapped arrays, this releases the mmap
                     del self.data
-                    self.data = None
-                # For memory-mapped arrays, we don't delete them (they use little RAM)
-                # The OS will handle page cache cleanup
+                except:
+                    pass
+                self.data = None
         
         # Clear other numpy arrays (these are smaller but still consume memory)
         if hasattr(self, 'levels') and isinstance(self.levels, np.ndarray):

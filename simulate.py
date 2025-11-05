@@ -97,12 +97,39 @@ def refresh():
 def reset():
     global _simulator_cache, _simulator_access_times, elevation_cache, _ensemble_mode_until, _ensemble_mode_started
     with _cache_lock:
+        # Properly cleanup all WindFile objects before clearing cache
+        # This is critical when GEFS changes to prevent old memory-mapped files from lingering
+        for model_id, simulator in list(_simulator_cache.items()):
+            if simulator and hasattr(simulator, 'wind_file') and simulator.wind_file:
+                wind_file = simulator.wind_file
+                # Use cleanup method to free memory
+                if hasattr(wind_file, 'cleanup'):
+                    wind_file.cleanup()
+                # Delete the WindFile reference
+                del wind_file
+                simulator.wind_file = None
+            # Delete the simulator reference
+            if simulator:
+                del simulator
+        
+        # Now clear the dictionaries
         _simulator_cache.clear()
         _simulator_access_times.clear()
         _ensemble_mode_until = 0
         _ensemble_mode_started = 0
     elevation_cache = None
-    gc.collect()
+    
+    # Force garbage collection to reclaim memory
+    for _ in range(3):
+        gc.collect()
+    
+    # Try to release memory back to OS
+    try:
+        import ctypes
+        libc = ctypes.CDLL("libc.so.6")
+        libc.malloc_trim(0)
+    except:
+        pass
 
 
 def record_activity():
@@ -174,39 +201,61 @@ def _idle_memory_cleanup(idle_duration):
         _idle_cleanup_lock.release()
 
 def _cleanup_old_model_files(old_timestamp: str):
-    """Clean up disk cache files from old model timestamp when model changes"""
+    """Clean up disk cache files from old model timestamp when model changes.
+    This is critical to prevent disk bloat when GEFS cycles change every 6 hours."""
     try:
         from pathlib import Path
         import logging
-        import gefs
         
-        # Access cache directory through gefs module
-        # Try to get it from the module, fallback to default if not accessible
-        cache_dir = getattr(gefs, '_CACHE_DIR', None)
-        if cache_dir is None:
-            # Fallback to default path detection (same logic as gefs.py)
-            if Path("/app/data").exists():
-                cache_dir = Path("/app/data/gefs")
-            else:
-                import tempfile
-                cache_dir = Path(tempfile.gettempdir()) / "habsim-gefs"
+        # Import gefs module to access its cache directory
+        from gefs import _CACHE_DIR
         
-        # Get all files matching old model timestamp pattern (e.g., 2025110306_*.npz)
+        if not _CACHE_DIR or not _CACHE_DIR.exists():
+            logging.warning(f"Cache directory not found, cannot cleanup old model files")
+            return
+        
+        # Remove the trailing newline if present (currgefs sometimes has \n)
+        old_timestamp = old_timestamp.strip()
+        
+        # Get all NPZ files matching old model timestamp pattern
+        # Pattern: YYYYMMDDHH_NN.npz (e.g., 2025110306_00.npz)
         old_model_pattern = f"{old_timestamp}_*.npz"
-        old_files = list(cache_dir.glob(old_model_pattern))
+        old_files = list(_CACHE_DIR.glob(old_model_pattern))
+        
+        # Also check for files without model number (e.g., whichgefs)
+        other_patterns = [f"{old_timestamp}.npz", f"{old_timestamp}"]
+        for pattern in other_patterns:
+            matching = list(_CACHE_DIR.glob(pattern))
+            old_files.extend(matching)
         
         if old_files:
-            logging.info(f"Cleaning up {len(old_files)} old model files from previous timestamp: {old_timestamp}")
+            total_size = sum(f.stat().st_size for f in old_files if f.exists()) / (1024**3)  # GB
+            logging.info(f"Cleaning up {len(old_files)} old model files ({total_size:.2f}GB) from timestamp: {old_timestamp}")
+            
+            deleted_count = 0
             for old_file in old_files:
                 try:
-                    old_file.unlink()
-                    logging.debug(f"Removed old model file: {old_file.name}")
+                    if old_file.exists():
+                        old_file.unlink()
+                        deleted_count += 1
+                        logging.debug(f"Removed old model file: {old_file.name}")
                 except Exception as e:
                     logging.warning(f"Failed to remove old model file {old_file.name}: {e}")
+            
+            logging.info(f"Successfully deleted {deleted_count}/{len(old_files)} old model files")
         else:
-            logging.debug(f"No old model files found for timestamp: {old_timestamp}")
+            logging.info(f"No old model files found for timestamp: {old_timestamp}")
+            
+        # After deleting old files, also trigger the LRU cleanup to ensure we're under limits
+        # This helps when the cache has accumulated files over time
+        try:
+            from gefs import _cleanup_old_cache_files
+            _cleanup_old_cache_files()
+        except:
+            pass
+            
     except Exception as e:
-        logging.warning(f"Failed to cleanup old model files (non-critical): {e}")
+        logging.error(f"Failed to cleanup old model files: {e}", exc_info=True)
 
 def _get_elevation_data():
     global elevation_cache
