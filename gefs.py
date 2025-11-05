@@ -306,20 +306,20 @@ def _ensure_cached(file_name: str) -> Path:
         # Log download attempt (this will use Supabase egress)
         logging.info(f"File cache MISS: {file_name} - downloading from Supabase (will use egress)")
         
-        # Use longer timeout for large files like worldelev.npy (451MB)
-        # Calculate timeout: 10s connect + (file_size / 0.5MB/s minimum) + 120s buffer
-        # For worldelev.npy: 10 + (451/0.5) + 120 = ~1022 seconds (~17 minutes)
-        # For smaller files: use default timeout
-        is_large_file = file_name == 'worldelev.npy' or file_name.endswith('.npy')
+        # Use longer timeout for large files
+        # NPZ wind files are ~300MB, worldelev.npy is 451MB
+        # Calculate timeout: 10s connect + generous read timeout
+        is_large_file = file_name == 'worldelev.npy' or file_name.endswith('.npz') or file_name.endswith('.npy')
         if is_large_file:
-            # Use much longer timeout for large files (20 min read timeout)
-            # This accounts for slow connections and network congestion
-            download_timeout = (10, 1200)  # 10s connect, 1200s (20 min) read
+            # Use much longer timeout for large files (30 min read timeout)
+            # Increased from 20 to 30 minutes to handle Railway-Supabase network issues
+            download_timeout = (15, 1800)  # 15s connect, 1800s (30 min) read
         else:
             download_timeout = _DEFAULT_TIMEOUT
         
-        # Retry logic for large file downloads (up to 3 attempts)
-        max_retries = 3 if is_large_file else 1
+        # Retry logic for large file downloads (up to 5 attempts for NPZ files)
+        # NPZ wind files often have network interruptions due to size (~300MB)
+        max_retries = 5 if file_name.endswith('.npz') else (3 if is_large_file else 1)
         last_error = None
         
         for attempt in range(max_retries):
@@ -360,9 +360,10 @@ def _ensure_cached(file_name: str) -> Path:
                         for chunk in _iter_content(resp):
                             current_time = time.time()
                             
-                            # Check for connection timeout (no data for 60 seconds)
-                            if is_large_file and (current_time - last_chunk_time) > 60:
-                                raise IOError(f"Download stalled: no data received for 60 seconds")
+                            # Check for connection timeout (no data for 120 seconds)
+                            # Increased from 60s to 120s to tolerate Railway-Supabase network slowness
+                            if is_large_file and (current_time - last_chunk_time) > 120:
+                                raise IOError(f"Download stalled: no data received for 120 seconds")
                             
                             if chunk:
                                 fh.write(chunk)
