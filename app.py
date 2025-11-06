@@ -431,11 +431,11 @@ def spaceshot():
     # 4. Return landing positions for heatmap visualization
     #
     # Perturbation ranges (designed for high-altitude balloon launches):
-    # - Latitude/Longitude: ±0.1° (≈ ±11km) - accounts for launch site uncertainty
+    # - Latitude/Longitude: ±0.001° (≈ ±111m) - accounts for launch site uncertainty
     # - Altitude: ±50m - launch altitude variation
     # - Equilibrium altitude: ±200m - burst altitude uncertainty
-    # - Equilibrium time: ±10% - timing variation in reaching equilibrium
-    # - Ascent/Descent rate: ±0.1 m/s - rate measurement uncertainty
+    # - Equilibrium time: ±0.5 hours - timing variation at equilibrium (absolute, works even when base = 0)
+    # - Ascent/Descent rate: ±0.5 m/s - rate measurement uncertainty
     #
     # Note: Using uniform random distribution for perturbations. If landing positions
     # appear circular/concentric, it's likely due to Google Maps heatmap smoothing
@@ -448,13 +448,15 @@ def spaceshot():
     for i in range(num_perturbations):
         # Generate random perturbations within reasonable bounds
         # Using uniform distribution - each parameter varies independently
-        pert_lat = base_lat + random.uniform(-0.1, 0.1)  # ±0.1° ≈ ±11km
-        pert_lon = (base_lon + random.uniform(-0.1, 0.1)) % 360  # Wrap longitude to [0, 360)
+        pert_lat = base_lat + random.uniform(-0.001, 0.001)  # ±0.001° ≈ ±111m
+        pert_lon = (base_lon + random.uniform(-0.001, 0.001)) % 360  # Wrap longitude to [0, 360)
         pert_alt = max(0, base_alt + random.uniform(-50, 50))  # ±50m, min 0
         pert_equil = max(pert_alt, base_equil + random.uniform(-200, 200))  # ±200m, must be >= alt
-        pert_eqtime = max(0, base_eqtime * random.uniform(0.9, 1.1))  # ±10%, min 0
-        pert_asc = max(0.1, base_asc + random.uniform(-0.1, 0.1))  # ±0.1 m/s, min 0.1
-        pert_desc = max(0.1, base_desc + random.uniform(-0.1, 0.1))  # ±0.1 m/s, min 0.1
+        # Use absolute perturbation for eqtime: ±0.5 hours (works even when base_eqtime = 0)
+        # For non-zero base_eqtime, this provides ±0.5h variation; for Standard mode (0), adds small coasting time variations
+        pert_eqtime = max(0, base_eqtime + random.uniform(-0.5, 0.5))  # ±0.5 hours, min 0
+        pert_asc = max(0.1, base_asc + random.uniform(-0.5, 0.5))  # ±0.5 m/s, min 0.1
+        pert_desc = max(0.1, base_desc + random.uniform(-0.5, 0.5))  # ±0.5 m/s, min 0.1
         
         perturbations.append({
             'perturbation_id': i,
@@ -739,158 +741,6 @@ def progress_stream():
         'Cache-Control': 'no-cache',
         'X-Accel-Buffering': 'no'  # Disable nginx buffering
     })
-
-@app.route('/sim/montecarlo')
-@cache_for(600)  # Cache for 10 minutes
-def montecarlo():
-    """
-    Monte Carlo simulation: Run 20 perturbations of input parameters across all 21 ensemble models.
-    Returns final landing positions for heatmap visualization.
-    
-    NOTE: This endpoint is legacy/unused - Monte Carlo is now included in /sim/spaceshot.
-    This endpoint does NOT extend ensemble mode to prevent memory bloat from unexpected calls.
-    
-    Total simulations: 20 perturbations × 21 models = 420 simulations
-    
-    Performance: ~5-15 minutes (vs ~30-60 seconds for normal ensemble)
-    - 20× more simulations than normal ensemble (420 vs 21)
-    - Uses same 32-worker parallelization
-    - Gunicorn timeout is 900s (15 minutes) to safely accommodate Monte Carlo runs
-    
-    Perturbation ranges (realistic for high-altitude balloon uncertainty):
-    - lat/lon: ±0.1° (~11km) - launch position uncertainty
-    - alt: ±50m - launch altitude uncertainty
-    - equil: ±200m - equilibrium altitude variation
-    - eqtime: ±10% - equilibrium time variation
-    - asc: ±0.1 m/s - ascent rate uncertainty
-    - desc: ±0.1 m/s - descent rate uncertainty
-    """
-    app.logger.info("Monte Carlo simulation started: /sim/montecarlo endpoint called (legacy endpoint)")
-    import time
-    start_time = time.time()
-    args = request.args
-    
-    # Base parameters
-    timestamp = datetime.utcfromtimestamp(float(args['timestamp'])).replace(tzinfo=timezone.utc)
-    base_lat, base_lon = float(args['lat']), float(args['lon'])
-    base_alt = float(args['alt'])
-    base_equil = float(args['equil'])
-    base_eqtime = float(args['eqtime'])
-    base_asc, base_desc = float(args['asc']), float(args['desc'])
-    
-    # Optional: number of perturbations (default 20)
-    num_perturbations = int(args.get('num_perturbations', 20))
-    
-    # NOTE: Do NOT extend ensemble mode here - this is a legacy endpoint
-    # Ensemble mode should only be extended by /sim/spaceshot which is called
-    # explicitly when user clicks simulate with ensemble enabled
-    # This prevents memory bloat from unexpected calls to this endpoint
-    
-    # Build model list based on configuration
-    model_ids = []
-    if downloader.DOWNLOAD_CONTROL:
-        model_ids.append(0)
-    model_ids.extend(range(1, 1 + downloader.NUM_PERTURBED_MEMBERS))
-    
-    app.logger.info(f"Monte Carlo: {num_perturbations} perturbations × {len(model_ids)} models = {num_perturbations * len(model_ids)} total simulations")
-    
-    # Generate perturbations
-    perturbations = []
-    for i in range(num_perturbations):
-        # Perturbation ranges (realistic for high-altitude balloon simulation)
-        pert_lat = base_lat + random.uniform(-0.1, 0.1)  # ±0.1° ≈ ±11km
-        pert_lon = (base_lon + random.uniform(-0.1, 0.1)) % 360  # Wrap longitude
-        pert_alt = max(0, base_alt + random.uniform(-50, 50))  # ±50m, min 0
-        pert_equil = max(pert_alt, base_equil + random.uniform(-200, 200))  # ±200m, must be >= alt
-        pert_eqtime = max(0, base_eqtime * random.uniform(0.9, 1.1))  # ±10%, min 0
-        pert_asc = max(0.1, base_asc + random.uniform(-0.1, 0.1))  # ±0.1 m/s, min 0.1
-        pert_desc = max(0.1, base_desc + random.uniform(-0.1, 0.1))  # ±0.1 m/s, min 0.1
-        
-        perturbations.append({
-            'perturbation_id': i,
-            'lat': pert_lat,
-            'lon': pert_lon,
-            'alt': pert_alt,
-            'equil': pert_equil,
-            'eqtime': pert_eqtime,
-            'asc': pert_asc,
-            'desc': pert_desc
-        })
-    
-    # Parallel execution: Run all perturbations × all models
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-    landing_positions = []  # List of {lat, lon, perturbation_id, model_id}
-    
-    def run_montecarlo_simulation(pert, model):
-        """Run a single Monte Carlo simulation and return landing position"""
-        try:
-            result = singlezpb(timestamp, pert['lat'], pert['lon'], pert['alt'], 
-                              pert['equil'], pert['eqtime'], pert['asc'], pert['desc'], model)
-            
-            # Extract final landing position from fall trajectory
-            if result == "error" or result == "alt error":
-                return None
-            
-            rise, coast, fall = result
-            if len(fall) > 0:
-                # Extract final lat/lon from fall trajectory (last point)
-                __, final_lat, final_lon, __, __, __, __, __ = fall[-1]
-                return {
-                    'lat': float(final_lat),
-                    'lon': float(final_lon),
-                    'perturbation_id': pert['perturbation_id'],
-                    'model_id': model,
-                    'success': True
-                }
-            else:
-                return None
-        except Exception as e:
-            app.logger.warning(f"Monte Carlo simulation failed: pert={pert['perturbation_id']}, model={model}, error={e}")
-            return None
-    
-    try:
-        # Submit all tasks (420 total: 20 perturbations × 21 models)
-        with ThreadPoolExecutor(max_workers=32) as executor:
-            futures = []
-            for pert in perturbations:
-                for model in model_ids:
-                    future = executor.submit(run_montecarlo_simulation, pert, model)
-                    futures.append(future)
-            
-            # Collect results as they complete
-            completed_count = 0
-            for future in as_completed(futures):
-                result = future.result()
-                if result is not None:
-                    landing_positions.append(result)
-                completed_count += 1
-                if completed_count % 50 == 0:
-                    app.logger.info(f"Monte Carlo progress: {completed_count}/{len(futures)} simulations completed")
-        
-        # Summary
-        elapsed = time.time() - start_time
-        success_count = len(landing_positions)
-        total_expected = num_perturbations * len(model_ids)
-        app.logger.info(f"Monte Carlo complete: {success_count}/{total_expected} successful in {elapsed:.1f} seconds")
-        
-        return jsonify({
-            'landing_positions': landing_positions,
-            'summary': {
-                'total_simulations': total_expected,
-                'successful': success_count,
-                'failed': total_expected - success_count,
-                'duration_seconds': round(elapsed, 2),
-                'num_perturbations': num_perturbations,
-                'num_models': len(model_ids)
-            }
-        })
-        
-    except Exception as e:
-        app.logger.exception(f"Monte Carlo simulation failed: {e}")
-        return make_response(jsonify({"error": str(e)}), 500)
-    finally:
-        # Trim cache back to normal size after Monte Carlo run completes
-        simulate._trim_cache_to_normal()
 
 '''
 Given a lat and lon, returns the elevation as a string
