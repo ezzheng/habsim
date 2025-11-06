@@ -47,6 +47,7 @@ _COMMON_HEADERS = {
     "apikey": _KEY,
 }
 
+# Main session for large file downloads (simulations)
 _SESSION = requests.Session()
 _RETRY = Retry(
     total=3,
@@ -57,6 +58,19 @@ _RETRY = Retry(
 _ADAPTER = HTTPAdapter(max_retries=_RETRY, pool_connections=8, pool_maxsize=32)
 _SESSION.mount("https://", _ADAPTER)
 _SESSION.mount("http://", _ADAPTER)
+
+# Separate session for status checks (small files like whichgefs)
+# This ensures status checks never wait behind large file downloads
+_STATUS_SESSION = requests.Session()
+_STATUS_RETRY = Retry(
+    total=2,  # Fewer retries for status checks (faster failure)
+    backoff_factor=0.3,
+    status_forcelist=(500, 502, 503, 504),
+    allowed_methods=("GET", "POST"),
+)
+_STATUS_ADAPTER = HTTPAdapter(max_retries=_STATUS_RETRY, pool_connections=2, pool_maxsize=4)
+_STATUS_SESSION.mount("https://", _STATUS_ADAPTER)
+_STATUS_SESSION.mount("http://", _STATUS_ADAPTER)
 
 _DEFAULT_TIMEOUT = (3, 60)
 _CACHEABLE_SUFFIXES = (".npz", ".npy")
@@ -105,6 +119,7 @@ def listdir_gefs():
 
 def open_gefs(file_name):
     # Cache whichgefs locally to reduce connection pool pressure (status checks every 5 seconds)
+    # Use separate status session to avoid blocking on large file downloads
     if file_name == 'whichgefs':
         now = time.time()
         with _whichgefs_lock:
@@ -113,8 +128,9 @@ def open_gefs(file_name):
                 now - _whichgefs_cache["timestamp"] < _whichgefs_cache["ttl"]):
                 return io.StringIO(_whichgefs_cache["value"])
             
-            # Cache miss or expired - download from Supabase
-            resp = _SESSION.get(
+            # Cache miss or expired - download from Supabase using status session
+            # Status session has its own connection pool (4 connections) separate from main pool
+            resp = _STATUS_SESSION.get(
                 _object_url(f"{_BUCKET}/{file_name}"),
                 headers=_COMMON_HEADERS,
                 timeout=_DEFAULT_TIMEOUT,
@@ -128,7 +144,7 @@ def open_gefs(file_name):
             
             return io.StringIO(content)
     
-    # Non-whichgefs files: download directly (no caching needed)
+    # Non-whichgefs files: download directly using main session (no caching needed)
     resp = _SESSION.get(
         _object_url(f"{_BUCKET}/{file_name}"),
         headers=_COMMON_HEADERS,

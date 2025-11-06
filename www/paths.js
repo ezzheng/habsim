@@ -516,8 +516,9 @@ function displayHeatmap(heatmapData) {
             smoothingBandwidth: null,        // null = auto-calculate (5% of data range)
             gridResolution: 100,             // Higher = smoother but slower
             // Lower density (outer) → green; higher density (inner) → red
+            // Start with visible opacity (0.15) so heatmap is visible even at low density
             gradient: [
-                {stop: 0.00, color: 'rgba(0, 255, 0, 0.00)'},      // fully transparent at zero density
+                {stop: 0.00, color: 'rgba(0, 255, 0, 0.15)'},      // slightly visible green at zero density
                 {stop: 0.15, color: 'rgba(34, 102, 0, 0.30)'},     // darker green (less blend with map)
                 {stop: 0.35, color: 'rgba(204, 170, 0, 0.58)'},    // richer yellow
                 {stop: 0.60, color: 'rgba(230, 100, 0, 0.82)'},    // stronger orange
@@ -527,6 +528,14 @@ function displayHeatmap(heatmapData) {
         });
         
         heatmapLayer.setMap(map);
+        
+        // Explicitly draw heatmap immediately (Google Maps may not call draw() immediately)
+        // Use setTimeout to ensure projection is ready
+        setTimeout(() => {
+            if (heatmapLayer) {
+                heatmapLayer.draw();
+            }
+        }, 100);
         
         // Redraw on zoom/pan to update heatmap - store listener for cleanup
         heatmapLayer._boundsListener = google.maps.event.addListener(map, 'bounds_changed', () => {
