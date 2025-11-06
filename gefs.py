@@ -122,18 +122,48 @@ def open_gefs(file_name):
     # Use separate status session to avoid blocking on large file downloads
     if file_name == 'whichgefs':
         now = time.time()
-        with _whichgefs_lock:
-            # Check if cached value is still valid (60 second TTL)
+        
+        # Fast path: check cache without lock (read-only)
+        if (_whichgefs_cache["value"] is not None and 
+            now - _whichgefs_cache["timestamp"] < _whichgefs_cache["ttl"]):
+            return io.StringIO(_whichgefs_cache["value"])
+        
+        # Cache miss or expired - need to download
+        # Try to acquire lock, but if it's already being downloaded, return stale cache
+        # This prevents status requests from blocking behind each other
+        if not _whichgefs_lock.acquire(blocking=False):
+            # Lock held by another thread downloading - return stale cache if available
+            if _whichgefs_cache["value"] is not None:
+                logging.debug("whichgefs cache expired but download in progress, returning stale cache")
+                return io.StringIO(_whichgefs_cache["value"])
+            # No stale cache available - wait briefly for lock (max 1 second)
+            if _whichgefs_lock.acquire(blocking=True, timeout=1.0):
+                try:
+                    # Double-check cache (might have been updated while waiting)
+                    if (_whichgefs_cache["value"] is not None and 
+                        now - _whichgefs_cache["timestamp"] < _whichgefs_cache["ttl"]):
+                        return io.StringIO(_whichgefs_cache["value"])
+                finally:
+                    _whichgefs_lock.release()
+            # If still can't get lock or cache still stale, return stale cache or fail gracefully
+            if _whichgefs_cache["value"] is not None:
+                return io.StringIO(_whichgefs_cache["value"])
+            # Last resort: return empty string (will show as "Unavailable")
+            return io.StringIO("")
+        
+        try:
+            # Double-check cache after acquiring lock (another thread might have updated it)
             if (_whichgefs_cache["value"] is not None and 
                 now - _whichgefs_cache["timestamp"] < _whichgefs_cache["ttl"]):
                 return io.StringIO(_whichgefs_cache["value"])
             
             # Cache miss or expired - download from Supabase using status session
             # Status session has its own connection pool (4 connections) separate from main pool
+            # Use shorter timeout for status requests (10s instead of 60s)
             resp = _STATUS_SESSION.get(
                 _object_url(f"{_BUCKET}/{file_name}"),
                 headers=_COMMON_HEADERS,
-                timeout=_DEFAULT_TIMEOUT,
+                timeout=(3, 10),  # 3s connect, 10s read (shorter for faster failure)
             )
             resp.raise_for_status()
             content = resp.content.decode("utf-8")
@@ -143,6 +173,8 @@ def open_gefs(file_name):
             _whichgefs_cache["timestamp"] = now
             
             return io.StringIO(content)
+        finally:
+            _whichgefs_lock.release()
     
     # Non-whichgefs files: download directly using main session (no caching needed)
     resp = _SESSION.get(
