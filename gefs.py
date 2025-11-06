@@ -346,10 +346,23 @@ def _ensure_cached(file_name: str) -> Path:
                     pass
     
     if cache_path.exists():
-        # Update access time to mark as recently used
-        cache_path.touch()
-        logging.debug(f"[CACHE] HIT: {file_name} (no Supabase egress)")
-        return cache_path
+        # Validate NPZ integrity on cache hit; delete and re-download if corrupted
+        try:
+            if file_name.endswith('.npz'):
+                import numpy as np
+                with np.load(cache_path) as _:
+                    pass
+        except Exception as e:
+            logging.warning(f"Cached file appears corrupted ({file_name}): {e}. Re-downloading...")
+            try:
+                cache_path.unlink()
+            except Exception:
+                pass
+        else:
+            # Update access time to mark as recently used
+            cache_path.touch()
+            logging.debug(f"[CACHE] HIT: {file_name} (no Supabase egress)")
+            return cache_path
 
     cache_path.parent.mkdir(parents=True, exist_ok=True)
 

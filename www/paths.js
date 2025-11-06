@@ -707,7 +707,7 @@ function displayContours(heatmapData) {
                     strokeOpacity: 0.9,
                     strokeWeight: 2.5,
                     fillColor: color,
-                    fillOpacity: 0.35,  // Consistent opacity for all contours
+                    fillOpacity: 0.5,  // Increased opacity for clearer shading
                     map: map,
                     clickable: false,
                     zIndex: 10 + (3 - indexFromOuter)
