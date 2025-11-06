@@ -359,8 +359,18 @@ def spaceshot():
     Run all available ensemble models with Monte Carlo analysis.
     Returns both the 21 main ensemble paths AND Monte Carlo landing positions for heatmap.
     Respects DOWNLOAD_CONTROL and NUM_PERTURBED_MEMBERS.
+    
+    Weighting: Ensemble landing points are weighted more heavily than Monte Carlo points
+    to reflect that weather model uncertainty (different forecast scenarios) is typically
+    more significant than parameter uncertainty (measurement/launch variations).
+    Default: ensemble_weight = 2.0 (ensemble points count 2× in density calculation)
     """
     app.logger.info("Ensemble run with Monte Carlo started: /sim/spaceshot endpoint called")
+    
+    # Weighting factor for ensemble points relative to Monte Carlo points
+    # Higher values give more weight to weather model uncertainty vs parameter uncertainty
+    # Reasonable range: 1.5-3.0 (2.0 = ensemble points count twice as much)
+    ENSEMBLE_WEIGHT = 2.0
     import time
     start_time = time.time()
     args = request.args
@@ -520,7 +530,8 @@ def spaceshot():
                     'lat': float(final_lat),
                     'lon': float(final_lon),
                     'perturbation_id': pert['perturbation_id'],
-                    'model_id': model
+                    'model_id': model,
+                    'weight': 1.0  # Standard weight for Monte Carlo (parameter uncertainty)
                 }
             return None
         except Exception as e:
@@ -596,7 +607,8 @@ def spaceshot():
                                         'lat': float(final_lat),
                                         'lon': float(final_lon),
                                         'perturbation_id': -1,  # -1 indicates ensemble (not Monte Carlo)
-                                        'model_id': model
+                                        'model_id': model,
+                                        'weight': ENSEMBLE_WEIGHT  # Higher weight for weather model uncertainty
                                     })
                             except Exception as e:
                                 app.logger.warning(f"Failed to extract landing position from ensemble model {model}: {e}")

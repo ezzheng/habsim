@@ -311,28 +311,30 @@ class CustomHeatmapOverlay extends google.maps.OverlayView {
                     const dist = Math.sqrt(distSq);
                     
                     // Apply smoothing kernel
-                    let weight = 0;
+                    let kernelWeight = 0;
                     if (this.smoothingType === 'none') {
                         // No smoothing: raw point count (use small radius for binning)
                         if (distSq < (bandwidth * 0.1) ** 2) {
-                            weight = 1;
+                            kernelWeight = 1;
                         }
                     } else if (this.smoothingType === 'epanechnikov') {
                         // Epanechnikov kernel (more rectangular, preserves shape better)
                         if (dist <= 1) {
-                            weight = (1 - distSq) * 3 / 4; // Epanechnikov kernel
+                            kernelWeight = (1 - distSq) * 3 / 4; // Epanechnikov kernel
                         }
                     } else if (this.smoothingType === 'uniform') {
                         // Uniform kernel (rectangular)
                         if (dist <= 1) {
-                            weight = 1;
+                            kernelWeight = 1;
                         }
                     } else if (this.smoothingType === 'gaussian') {
                         // Gaussian kernel (smooth but circular)
-                        weight = Math.exp(-distSq / 2);
+                        kernelWeight = Math.exp(-distSq / 2);
                     }
                     
-                    density += weight;
+                    // Apply point weight (ensemble points weighted more heavily than Monte Carlo)
+                    const pointWeight = point.weight || 1.0;
+                    density += kernelWeight * pointWeight;
                 }
                 grid[i][j] = density;
             }
@@ -482,6 +484,7 @@ function displayHeatmap(heatmapData) {
         console.log(`Creating custom heatmap with ${heatmapData.length} landing positions`);
         
         // Convert landing positions to normalized coordinates
+        // Preserve weight field for weighted density calculation
         const heatmapPoints = heatmapData.map(point => {
             // Validate point has lat/lon
             if (typeof point.lat !== 'number' || typeof point.lon !== 'number') {
@@ -493,7 +496,9 @@ function displayHeatmap(heatmapData) {
             if (lon > 180) {
                 lon = ((lon + 180) % 360) - 180;
             }
-            return { lat: point.lat, lon: lon };
+            // Preserve weight field (default to 1.0 if not specified)
+            const weight = typeof point.weight === 'number' ? point.weight : 1.0;
+            return { lat: point.lat, lon: lon, weight: weight };
         }).filter(p => p !== null); // Remove invalid points
         
         if (heatmapPoints.length === 0) {
@@ -645,12 +650,13 @@ function displayContours(heatmapData) {
         if (!heatmapData || heatmapData.length === 0) return;
         if (!map) return;
         
-        // Normalize and validate points
+        // Normalize and validate points, preserve weight field
         const points = heatmapData.map(point => {
             if (typeof point.lat !== 'number' || typeof point.lon !== 'number') return null;
             let lon = point.lon;
             if (lon > 180) lon = ((lon + 180) % 360) - 180;
-            return { lat: point.lat, lon: lon };
+            const weight = typeof point.weight === 'number' ? point.weight : 1.0;
+            return { lat: point.lat, lon: lon, weight: weight };
         }).filter(p => p !== null);
         
         if (points.length < 10) {
@@ -846,7 +852,10 @@ function createDensityGrid(points, bounds, gridSize) {
                 const lonDist = (point.lon - gridLon) / bandwidth;
                 const distSq = latDist * latDist + lonDist * lonDist;
                 // Gaussian kernel
-                density += Math.exp(-distSq / 2);
+                const kernelWeight = Math.exp(-distSq / 2);
+                // Apply point weight (ensemble points weighted more heavily than Monte Carlo)
+                const pointWeight = point.weight || 1.0;
+                density += kernelWeight * pointWeight;
             }
             grid[i][j] = density;
         }
