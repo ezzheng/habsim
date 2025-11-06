@@ -81,6 +81,11 @@ _whichgefs_lock = threading.Lock()
 _downloading_files = set()
 _downloading_lock = threading.Lock()
 
+# Limit concurrent downloads to prevent connection pool exhaustion
+# During ensemble, 21 models try to download simultaneously - too many for Supabase
+# Semaphore limits to 4 concurrent downloads at a time across all workers
+_download_semaphore = threading.Semaphore(4)
+
 def _object_url(path: str) -> str:
     return f"{_BASE_URL}/storage/v1/object/{path}"
 
@@ -318,63 +323,67 @@ def _ensure_cached(file_name: str) -> Path:
     with _downloading_lock:
         _downloading_files.add(file_name)
     
-    try:
-        # For large files, prevent concurrent downloads of the same file ACROSS PROCESSES
-        # This avoids connection pool exhaustion and partial download conflicts
-        # Use file-based locking (fcntl) which works across Gunicorn worker processes
-        is_large_file = file_name == 'worldelev.npy' or file_name.endswith('.npy')
-        lock_file = None
-        lock_fd = None
-        if is_large_file:
-            # Create a lock file for inter-process coordination
-            lock_file = _CACHE_DIR / f".{file_name}.lock"
+    # For large files, prevent concurrent downloads of the same file ACROSS PROCESSES
+    # This avoids connection pool exhaustion and partial download conflicts
+    # Use file-based locking (fcntl) which works across Gunicorn worker processes
+    is_large_file = file_name == 'worldelev.npy' or file_name.endswith('.npy')
+    lock_file = None
+    lock_fd = None
+    if is_large_file:
+        # Create a lock file for inter-process coordination
+        lock_file = _CACHE_DIR / f".{file_name}.lock"
+        try:
+            # Open lock file (create if doesn't exist)
+            lock_fd = open(lock_file, 'a')
+            
+            # Try to acquire exclusive lock (non-blocking)
+            import fcntl
             try:
-                # Open lock file (create if doesn't exist)
-                lock_fd = open(lock_file, 'a')
+                fcntl.flock(lock_fd.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                logging.debug(f"Acquired download lock for {file_name}")
+            except BlockingIOError:
+                # Another process is downloading - wait and check if it completed
+                logging.info(f"Another process is downloading {file_name}, waiting for completion...")
                 
-                # Try to acquire exclusive lock (non-blocking)
-                import fcntl
-                try:
-                    fcntl.flock(lock_fd.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-                    logging.debug(f"Acquired download lock for {file_name}")
-                except BlockingIOError:
-                    # Another process is downloading - wait and check if it completed
-                    logging.info(f"Another process is downloading {file_name}, waiting for completion...")
-                    
-                    # Wait up to 5 minutes for the download to complete
-                    for i in range(300):  # 300 * 1s = 5 minutes
-                        time.sleep(1)
-                        if cache_path.exists() and cache_path.stat().st_size > 0:
-                            # File was downloaded by another process
-                            lock_fd.close()
-                            cache_path.touch()
-                            logging.info(f"File {file_name} was downloaded by another process (cache HIT)")
-                            return cache_path
-                        
-                        # Log progress every 30 seconds
-                        if i % 30 == 0 and i > 0:
-                            logging.info(f"Still waiting for {file_name} download ({i}s elapsed)...")
-                    
-                    # After 5 minutes, acquire lock (blocking) to download ourselves
-                    logging.warning(f"Timeout waiting for {file_name} download, acquiring lock...")
-                    fcntl.flock(lock_fd.fileno(), fcntl.LOCK_EX)
-                
-                # Double-check file wasn't created while waiting for lock
-                if cache_path.exists() and cache_path.stat().st_size > 0:
-                    fcntl.flock(lock_fd.fileno(), fcntl.LOCK_UN)
-                    lock_fd.close()
-                    cache_path.touch()
-                    logging.debug(f"File {file_name} exists after acquiring lock (cache HIT)")
-                    return cache_path
-            except Exception as e:
-                logging.warning(f"File locking error for {file_name} (non-critical): {e}")
-                if lock_fd:
-                    try:
+                # Wait up to 5 minutes for the download to complete
+                for i in range(300):  # 300 * 1s = 5 minutes
+                    time.sleep(1)
+                    if cache_path.exists() and cache_path.stat().st_size > 0:
+                        # File was downloaded by another process
                         lock_fd.close()
-                    except:
-                        pass
-                lock_fd = None
+                        cache_path.touch()
+                        logging.info(f"File {file_name} was downloaded by another process (cache HIT)")
+                        return cache_path
+                    
+                    # Log progress every 30 seconds
+                    if i % 30 == 0 and i > 0:
+                        logging.info(f"Still waiting for {file_name} download ({i}s elapsed)...")
+                
+                # After 5 minutes, acquire lock (blocking) to download ourselves
+                logging.warning(f"Timeout waiting for {file_name} download, acquiring lock...")
+                fcntl.flock(lock_fd.fileno(), fcntl.LOCK_EX)
+            
+            # Double-check file wasn't created while waiting for lock
+            if cache_path.exists() and cache_path.stat().st_size > 0:
+                fcntl.flock(lock_fd.fileno(), fcntl.LOCK_UN)
+                lock_fd.close()
+                cache_path.touch()
+                logging.debug(f"File {file_name} exists after acquiring lock (cache HIT)")
+                return cache_path
+        except Exception as e:
+            logging.warning(f"File locking error for {file_name} (non-critical): {e}")
+            if lock_fd:
+                try:
+                    lock_fd.close()
+                except:
+                    pass
+            lock_fd = None
 
+    # CRITICAL: Acquire download semaphore to limit concurrent downloads
+    # This prevents connection pool exhaustion when ensemble downloads 21 files
+    # Semaphore allows max 4 concurrent downloads across all workers
+    _download_semaphore.acquire()
+    try:
         # Log download attempt (this will use Supabase egress)
         download_start = time.time()
         logging.info(f"[CACHE] MISS: {file_name} - downloading from Supabase (will use egress)")
@@ -596,6 +605,9 @@ def _ensure_cached(file_name: str) -> Path:
         # This ensures the set doesn't grow unbounded with failed download attempts
         with _downloading_lock:
             _downloading_files.discard(file_name)
+        
+        # Always release download semaphore, even on error
+        _download_semaphore.release()
 
 
 def _iter_content(resp: requests.Response) -> Iterator[bytes]:
