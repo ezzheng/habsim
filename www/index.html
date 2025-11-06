@@ -526,53 +526,92 @@
                 display: none !important;
             }
             
-            /* Full page map */
+            /* CRITICAL: Remove all default print margins */
+            @page {
+                size: landscape;
+                margin: 0;
+            }
+            
+            /* Force zero margins on all containers */
+            html, body {
+                margin: 0 !important;
+                padding: 0 !important;
+                background: white !important;
+                height: 100vh !important;
+                width: 100vw !important;
+                overflow: hidden !important;
+            }
+            
+            /* Full page map - use absolute instead of fixed to avoid browser chrome issues */
             #main-container {
-                position: fixed !important;
-                top: 0; left: 0; right: 0; bottom: 0;
+                position: absolute !important;
+                top: 0 !important;
+                left: 0 !important;
+                right: 0 !important;
+                bottom: 0 !important;
+                width: 100vw !important;
+                height: 100vh !important;
                 padding: 0 !important;
                 margin: 0 !important;
+                overflow: hidden !important;
             }
             
             #map {
-                position: fixed !important;
-                top: 0; left: 0; right: 0; bottom: 0;
+                position: absolute !important;
+                top: 0 !important;
+                left: 0 !important;
+                right: 0 !important;
+                bottom: 0 !important;
+                width: 100% !important;
+                height: 100% !important;
                 margin: 0 !important;
                 padding: 0 !important;
                 background: white !important;
-                overflow: hidden !important; /* prevent any inner overflow from showing as bars */
-            }
-
-            /* Ensure internal Google map containers fill the page */
-            .gm-style, .gm-style > div {
-                height: 100% !important;
-                width: 100% !important;
-                background: white !important;
-            }
-
-            /* Hide Google logos/attribution and controls in print */
-            .gm-style-cc, .gm-style-cc *,
-            .gmnoprint, .gm-fullscreen-control, .gm-control-active, .gm-svpc,
-            .gm-bundled-control, .gm-bundled-control-on-bottom,
-            .gm-style .gm-style-cc {
-                display: none !important;
-                height: 0 !important;
                 overflow: hidden !important;
+                box-sizing: border-box !important;
+            }
+
+            /* CRITICAL: Aggressively hide ALL Google Maps UI elements */
+            /* Using attribute selectors to catch dynamically generated elements */
+            .gm-style-cc,
+            .gmnoprint,
+            .gm-fullscreen-control,
+            .gm-control-active,
+            .gm-svpc,
+            .gm-bundled-control,
+            .gm-bundled-control-on-bottom,
+            [class*="gm-style-cc"],
+            [class*="gmnoprint"],
+            [aria-label="Keyboard shortcuts"],
+            [aria-label="Map Data"],
+            div[style*="bottom: 0"] > div[style*="background"],
+            .gm-style > div:last-child,
+            .gm-style a[href*="google.com/maps"],
+            .gm-style a[target="_blank"] {
+                display: none !important;
+                visibility: hidden !important;
+                height: 0 !important;
+                width: 0 !important;
+                overflow: hidden !important;
+                opacity: 0 !important;
+                position: absolute !important;
+                pointer-events: none !important;
             }
             
             /* Show print overlay with parameters */
             #print-overlay {
                 display: block !important;
-                position: fixed; /* anchor to viewport to avoid shifts */
-                top: 12px;   /* slight inset to avoid browser header/bleed issues */
-                left: 12px;
-                background: white;
-                padding: 15px 20px;
-                border-radius: 8px;
-                box-shadow: 0 2px 8px rgba(0,0,0,0.2);
-                z-index: 10000;
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
-                max-width: 400px;
+                position: absolute !important; /* Absolute positioning for consistent placement */
+                top: 16px !important;   /* Consistent offset from true page edge */
+                left: 16px !important;
+                background: white !important;
+                padding: 15px 20px !important;
+                border-radius: 8px !important;
+                box-shadow: 0 2px 8px rgba(0,0,0,0.2) !important;
+                z-index: 10000 !important;
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif !important;
+                max-width: 400px !important;
+                margin: 0 !important;
             }
             
             #print-overlay h2 {
@@ -614,25 +653,6 @@
                 color-adjust: exact !important;
             }
             
-            @page {
-                size: landscape;
-                margin: 0;
-            }
-            
-            /* Reset any body/html margins that might offset the overlay */
-            html, body {
-                margin: 0 !important;
-                padding: 0 !important;
-                background: white !important;
-            }
-            body { padding-top: 0 !important; }
-            
-            /* Ensure print overlay is truly at top-left of the map */
-            #print-overlay {
-                margin: 0 !important;
-                margin-top: 0 !important;
-                margin-left: 0 !important;
-            }
         }
         
         /* Hide print overlay by default */
