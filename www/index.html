@@ -571,31 +571,19 @@
                 box-sizing: border-box !important;
             }
 
-            /* CRITICAL: Aggressively hide ALL Google Maps UI elements */
-            /* Using attribute selectors to catch dynamically generated elements */
+            /* Hide Google Maps UI elements - be specific to avoid hiding map tiles */
             .gm-style-cc,
             .gmnoprint,
             .gm-fullscreen-control,
             .gm-control-active,
-            .gm-svpc,
             .gm-bundled-control,
             .gm-bundled-control-on-bottom,
-            [class*="gm-style-cc"],
-            [class*="gmnoprint"],
-            [aria-label="Keyboard shortcuts"],
-            [aria-label="Map Data"],
-            div[style*="bottom: 0"] > div[style*="background"],
-            .gm-style > div:last-child,
             .gm-style a[href*="google.com/maps"],
-            .gm-style a[target="_blank"] {
+            .gm-style a[href*="terms"] {
                 display: none !important;
                 visibility: hidden !important;
                 height: 0 !important;
-                width: 0 !important;
                 overflow: hidden !important;
-                opacity: 0 !important;
-                position: absolute !important;
-                pointer-events: none !important;
             }
             
             /* Show print overlay with parameters */
@@ -938,74 +926,33 @@
                 // Keep the generated title for filename consistency
             }
             
-            // CRITICAL: Force-clean Google Maps layout IMMEDIATELY before printing
-            // Google Maps changes its DOM structure when zoomed/panned
+            // CRITICAL: Hide only Google Maps UI elements before printing
+            // Don't touch the map tiles themselves - only attribution/controls
             function forceCleanMapForPrint() {
                 try {
-                    // 1. Force map container to exact viewport dimensions
-                    const mapDiv = document.getElementById('map');
-                    if (mapDiv) {
-                        mapDiv.style.position = 'absolute';
-                        mapDiv.style.top = '0';
-                        mapDiv.style.left = '0';
-                        mapDiv.style.width = '100vw';
-                        mapDiv.style.height = '100vh';
-                        mapDiv.style.overflow = 'hidden';
-                        mapDiv.style.margin = '0';
-                        mapDiv.style.padding = '0';
-                    }
-                    
-                    // 2. Hide all Google Maps UI elements (attribution, controls, terms)
+                    // ONLY hide UI elements, NOT the map tiles/canvas
+                    // Be very specific to avoid hiding map content
                     const selectors = [
-                        '.gm-style-cc',
-                        '.gmnoprint', 
-                        '.gm-fullscreen-control',
-                        '.gm-bundled-control',
-                        '.gm-bundled-control-on-bottom',
-                        '.gm-control-active',
-                        'a[href*="google.com/maps"]',
-                        '[aria-label="Keyboard shortcuts"]',
-                        '[aria-label="Map Data"]',
-                        '.gm-style > div[style*="bottom"]'
+                        '.gm-style-cc',           // Copyright
+                        '.gmnoprint',             // Controls
+                        '.gm-fullscreen-control', // Fullscreen button
+                        '.gm-bundled-control',    // Zoom controls
+                        'a[href*="google.com/maps"]', // "Open in Google Maps" links
+                        'a[target="_blank"]'      // External links
                     ];
                     
                     selectors.forEach(selector => {
                         document.querySelectorAll(selector).forEach(el => {
-                            el.style.display = 'none';
-                            el.style.visibility = 'hidden';
-                            el.style.opacity = '0';
-                            el.style.height = '0';
-                            el.style.width = '0';
-                            el.style.overflow = 'hidden';
-                            el.style.position = 'absolute';
-                            el.style.left = '-9999px';
+                            // Only hide if it's actually a UI element (not a tile container)
+                            if (el.tagName === 'A' || el.className.includes('control') || 
+                                el.className.includes('cc') || el.className.includes('noprint')) {
+                                el.style.display = 'none !important';
+                                el.style.visibility = 'hidden !important';
+                            }
                         });
                     });
-                    
-                    // 3. CRITICAL: Force all .gm-style children to max 100vh
-                    // After zoom, Google Maps can set heights > 100vh causing overflow
-                    document.querySelectorAll('.gm-style, .gm-style > div').forEach(el => {
-                        const computedHeight = window.getComputedStyle(el).height;
-                        if (parseInt(computedHeight) > window.innerHeight) {
-                            el.style.height = '100vh';
-                            el.style.maxHeight = '100vh';
-                        }
-                        el.style.overflow = 'hidden';
-                    });
-                    
-                    // 4. Remove any absolutely positioned divs at bottom
-                    document.querySelectorAll('.gm-style > div').forEach(el => {
-                        const style = window.getComputedStyle(el);
-                        if (style.position === 'absolute') {
-                            const bottom = style.bottom;
-                            // If positioned at bottom (0-20px from bottom), hide it
-                            if (bottom && parseInt(bottom) >= 0 && parseInt(bottom) <= 20) {
-                                el.style.display = 'none';
-                            }
-                        }
-                    });
                 } catch(e) {
-                    console.warn('Error cleaning map for print:', e);
+                    console.warn('Error hiding Google Maps UI:', e);
                 }
             }
             
