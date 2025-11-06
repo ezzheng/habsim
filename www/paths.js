@@ -506,46 +506,9 @@ function displayHeatmap(heatmapData) {
             return;
         }
         
-        console.log(`Creating custom heatmap overlay with ${heatmapPoints.length} valid points`);
+        console.log(`Creating contours with ${heatmapPoints.length} valid points`);
         
-        // Create custom heatmap overlay
-        // Options: 'none' (raw), 'epanechnikov' (recommended), 'uniform', 'gaussian'
-        heatmapLayer = new CustomHeatmapOverlay(heatmapPoints, {
-            opacity: 0.72,
-            smoothingType: 'gaussian',  // Gaussian kernel (smooth circular)
-            smoothingBandwidth: null,        // null = auto-calculate (5% of data range)
-            gridResolution: 100,             // Higher = smoother but slower
-            // Lower density (outer) → green; higher density (inner) → red
-            // Start with visible opacity (0.15) so heatmap is visible even at low density
-            gradient: [
-                {stop: 0.00, color: 'rgba(0, 255, 0, 0.15)'},      // slightly visible green at zero density
-                {stop: 0.15, color: 'rgba(34, 102, 0, 0.30)'},     // darker green (less blend with map)
-                {stop: 0.35, color: 'rgba(204, 170, 0, 0.58)'},    // richer yellow
-                {stop: 0.60, color: 'rgba(230, 100, 0, 0.82)'},    // stronger orange
-                {stop: 0.80, color: 'rgba(200, 0, 0, 0.96)'},      // vivid red (inner)
-                {stop: 1.00, color: 'rgba(150, 0, 0, 1.00)'}       // deep red peak
-            ]
-        });
-        
-        heatmapLayer.setMap(map);
-        
-        // Explicitly draw heatmap immediately (Google Maps may not call draw() immediately)
-        // Use setTimeout to ensure projection is ready
-        setTimeout(() => {
-            if (heatmapLayer) {
-                heatmapLayer.draw();
-            }
-        }, 100);
-        
-        // Redraw on zoom/pan to update heatmap - store listener for cleanup
-        heatmapLayer._boundsListener = google.maps.event.addListener(map, 'bounds_changed', () => {
-            if (heatmapLayer) {
-                heatmapLayer.draw();
-            }
-        });
-        
-        console.log(`Custom heatmap displayed successfully with ${heatmapPoints.length} points`);
-        
+        // Skip heatmap - only display contours with colored shading
         // Generate and display probability contours with labels
         displayContours(heatmapData);
     } catch (error) {
@@ -737,14 +700,17 @@ function displayContours(heatmapData) {
                 }
                 
                 // Use Polygon instead of Polyline for proper closed contours
-                // Remove fill color so only heatmap is visible
+                // Add colored fill shading based on threshold level
+                // Outer contours (lower probability) = lighter/more transparent
+                // Inner contours (higher probability) = darker/more opaque
+                const fillOpacity = 0.3 + (threshold * 0.3); // 0.3 to 0.6 opacity range
                 const polygon = new google.maps.Polygon({
                     paths: path,
                     strokeColor: color,
                     strokeOpacity: 0.9,
                     strokeWeight: 2.5,
-                    fillColor: 'transparent',
-                    fillOpacity: 0,
+                    fillColor: color,
+                    fillOpacity: fillOpacity,
                     map: map,
                     clickable: false,
                     zIndex: 10 + (3 - indexFromOuter)
