@@ -700,14 +700,14 @@ function displayContours(heatmapData) {
                 }
                 
                 // Use Polygon instead of Polyline for proper closed contours
-                // Add colored fill shading with consistent opacity
                 const polygon = new google.maps.Polygon({
                     paths: path,
                     strokeColor: color,
                     strokeOpacity: 0.9,
                     strokeWeight: 2.5,
                     fillColor: color,
-                    fillOpacity: 0.5,  // Increased opacity for clearer shading
+                    // Shade to create bands: outer 90% green, then 70% yellow, 50% orange, 30% red (inner)
+                    fillOpacity: 0.18,
                     map: map,
                     clickable: false,
                     zIndex: 10 + (3 - indexFromOuter)
