@@ -937,19 +937,74 @@
             function restoreTitleAfterPrint(){
                 // Keep the generated title for filename consistency
             }
+            
+            // CRITICAL: Force-hide Google Maps attribution IMMEDIATELY before printing
+            // Google Maps injects new attribution elements when map is panned/zoomed
+            // CSS alone can't catch these fast enough
+            function forceHideGoogleAttribution() {
+                try {
+                    // Hide all Google Maps UI elements (attribution, controls, terms)
+                    const selectors = [
+                        '.gm-style-cc',
+                        '.gmnoprint', 
+                        '.gm-fullscreen-control',
+                        '.gm-bundled-control',
+                        '.gm-bundled-control-on-bottom',
+                        '.gm-control-active',
+                        'a[href*="google.com/maps"]',
+                        '[aria-label="Keyboard shortcuts"]',
+                        '[aria-label="Map Data"]'
+                    ];
+                    
+                    selectors.forEach(selector => {
+                        document.querySelectorAll(selector).forEach(el => {
+                            el.style.display = 'none';
+                            el.style.visibility = 'hidden';
+                            el.style.opacity = '0';
+                            el.style.height = '0';
+                            el.style.width = '0';
+                            el.style.overflow = 'hidden';
+                        });
+                    });
+                    
+                    // Also hide any bottom-anchored divs (common for attribution)
+                    document.querySelectorAll('.gm-style > div').forEach(el => {
+                        const style = window.getComputedStyle(el);
+                        if (style.position === 'absolute' && style.bottom === '0px') {
+                            el.style.display = 'none';
+                        }
+                    });
+                } catch(e) {
+                    console.warn('Error hiding Google Maps attribution:', e);
+                }
+            }
+            
             if (window.matchMedia) {
                 const mediaQueryList = window.matchMedia('print');
                 if (mediaQueryList.addEventListener) {
                     mediaQueryList.addEventListener('change', function(e){
-                        if (e.matches) setTitleBeforePrint(); else restoreTitleAfterPrint();
+                        if (e.matches) {
+                            setTitleBeforePrint();
+                            forceHideGoogleAttribution();
+                        } else {
+                            restoreTitleAfterPrint();
+                        }
                     });
                 } else if (mediaQueryList.addListener) {
                     mediaQueryList.addListener(function(mql){
-                        if (mql.matches) setTitleBeforePrint(); else restoreTitleAfterPrint();
+                        if (mql.matches) {
+                            setTitleBeforePrint();
+                            forceHideGoogleAttribution();
+                        } else {
+                            restoreTitleAfterPrint();
+                        }
                     });
                 }
             }
-            window.addEventListener('beforeprint', setTitleBeforePrint);
+            window.addEventListener('beforeprint', function() {
+                setTitleBeforePrint();
+                forceHideGoogleAttribution();
+            });
             window.addEventListener('afterprint', restoreTitleAfterPrint);
         })();
 
