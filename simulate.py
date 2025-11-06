@@ -441,7 +441,28 @@ def _periodic_cache_trim():
                 logging.info(f"Idle check: {idle_duration:.1f}s idle (threshold: {_IDLE_RESET_TIMEOUT}s), cache size: {cache_size}, last_cleanup: {last_cleanup_ago:.1f}s ago, should_trigger: {should_trigger}")
             # Fix: Handle case where cleanup never ran (_last_idle_cleanup = 0)
             # If cleanup never ran, allow it immediately (0 means "never")
-            time_since_last_cleanup = (now - _last_idle_cleanup) if _last_idle_cleanup > 0 else float('inf')
+            if _last_idle_cleanup == 0:
+                # Cleanup never ran - allow it immediately if idle threshold reached
+                time_since_last_cleanup = float('inf')
+            else:
+                time_since_last_cleanup = now - _last_idle_cleanup
+            
+            # Emergency cleanup: if idle >600s and cleanup never ran, force it immediately
+            if idle_duration > 600 and _last_idle_cleanup == 0:
+                logging.error(f"EMERGENCY: Worker idle for {idle_duration:.1f}s but cleanup never ran! Forcing cleanup now.")
+                try:
+                    with _cache_lock:
+                        cache_size = len(_simulator_cache)
+                    _idle_memory_cleanup(idle_duration)
+                    _last_idle_cleanup = time.time()
+                    logging.info(f"Emergency idle cleanup completed successfully")
+                except Exception as emergency_error:
+                    logging.error(f"Emergency cleanup failed: {emergency_error}", exc_info=True)
+                    _last_idle_cleanup = time.time()  # Mark as attempted
+                consecutive_trim_failures = 0
+                time.sleep(5)
+                continue
+            
             if idle_duration >= _IDLE_RESET_TIMEOUT and time_since_last_cleanup >= _IDLE_CLEAN_COOLDOWN:
                 with _cache_lock:
                     cache_size = len(_simulator_cache)
@@ -578,12 +599,19 @@ def _force_aggressive_trim():
         logging.info(f"Aggressive trim complete: kept {len(_simulator_cache)} simulator(s)")
 
 def _start_cache_trim_thread():
-    """Start background thread for periodic cache trimming (called once per worker)"""
+    """Start background thread for periodic cache trimming (called once per worker)
+    This thread is critical for idle cleanup - it must start even if no simulators are accessed."""
     global _cache_trim_thread_started
     if not _cache_trim_thread_started:
         _cache_trim_thread_started = True
-        thread = threading.Thread(target=_periodic_cache_trim, daemon=True)
+        thread = threading.Thread(target=_periodic_cache_trim, daemon=True, name="CacheTrimThread")
         thread.start()
+        logging.info("Cache trim background thread started (idle cleanup will run after 120s of inactivity)")
+
+# Start cleanup thread immediately when module is imported (after function definition)
+# This ensures idle cleanup works even if no simulators are accessed
+# The thread will monitor idle time and trigger cleanup after 120 seconds of inactivity
+_start_cache_trim_thread()
 
 def _get_simulator(model):
     """Get simulator for given model, with dynamic multi-simulator LRU cache."""

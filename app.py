@@ -130,8 +130,12 @@ def _prewarm_cache():
         app.logger.info(f"Cache pre-warming failed (non-critical, will retry on-demand): {e}")
 
 # Start cache trim thread early (ensures memory management is active from startup)
-_cache_trim_thread = threading.Thread(target=_start_cache_trim_thread, daemon=True)
-_cache_trim_thread.start()
+# This is critical - the cleanup thread must start even if no simulators are accessed
+# The thread in simulate.py also starts at module import, but we ensure it here as well
+try:
+    _start_cache_trim_thread()
+except Exception as e:
+    app.logger.warning(f"Failed to start cache trim thread from app startup (non-critical): {e}")
 
 # Start pre-warming in background thread
 _cache_warmer_thread = threading.Thread(target=_prewarm_cache, daemon=True)
