@@ -352,6 +352,9 @@ def _ensure_cached(file_name: str) -> Path:
                         # File was downloaded by another process
                         lock_fd.close()
                         cache_path.touch()
+                        # Remove from downloading set before returning
+                        with _downloading_lock:
+                            _downloading_files.discard(file_name)
                         logging.info(f"File {file_name} was downloaded by another process (cache HIT)")
                         return cache_path
                     
@@ -368,6 +371,9 @@ def _ensure_cached(file_name: str) -> Path:
                 fcntl.flock(lock_fd.fileno(), fcntl.LOCK_UN)
                 lock_fd.close()
                 cache_path.touch()
+                # Remove from downloading set before returning
+                with _downloading_lock:
+                    _downloading_files.discard(file_name)
                 logging.debug(f"File {file_name} exists after acquiring lock (cache HIT)")
                 return cache_path
         except Exception as e:

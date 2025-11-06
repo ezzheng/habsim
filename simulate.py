@@ -242,10 +242,17 @@ def _cleanup_old_model_files(old_timestamp: str):
         # Remove the trailing newline if present (currgefs sometimes has \n)
         old_timestamp = old_timestamp.strip()
         
-        # Get all NPZ files matching old model timestamp pattern
+        # Get all files matching old model timestamp pattern
         # Pattern: YYYYMMDDHH_NN.npz (e.g., 2025110306_00.npz)
+        # CRITICAL: Also match extracted .data.npy files to prevent orphan accumulation
         old_model_pattern = f"{old_timestamp}_*.npz"
         old_files = list(_CACHE_DIR.glob(old_model_pattern))
+        
+        # CRITICAL: Also delete extracted .data.npy files (322MB each)
+        # Without this, every GEFS cycle leaves 6.7GB of orphaned files
+        extracted_pattern = f"{old_timestamp}_*.npz.data.npy"
+        extracted_files = list(_CACHE_DIR.glob(extracted_pattern))
+        old_files.extend(extracted_files)
         
         # Also check for files without model number (e.g., whichgefs)
         other_patterns = [f"{old_timestamp}.npz", f"{old_timestamp}"]
