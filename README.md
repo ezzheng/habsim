@@ -149,7 +149,8 @@ This is an offshoot of the prediction server developed for the Stanford Space In
 - **Download Strategy**: Files download on-demand with per-file locking, extended timeouts, and stall detection
 - **Model Change Cleanup**: Automatically deletes old model files when GEFS updates every 6 hours
 - **Idle effect**: Idle worker cleanup does not delete disk cache; simulators are rebuilt from these on next request
-- **Persistent Volume**: When mounted to `/app/data`, files persist across restarts and are shared across all workers. Benefits:
+- **Persistent Volume**: When mounted to `/app/data`, files persist across restarts and are shared across all workers. 
+Benefits:
   - Lower Supabase egress (one shared download per forecast cycle)
   - Faster warmups after deploys/restarts
   - Consistent performance across workers
