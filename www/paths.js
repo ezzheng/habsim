@@ -512,7 +512,7 @@ function displayHeatmap(heatmapData) {
         // Options: 'none' (raw), 'epanechnikov' (recommended), 'uniform', 'gaussian'
         heatmapLayer = new CustomHeatmapOverlay(heatmapPoints, {
             opacity: 0.72,
-            smoothingType: 'epanechnikov',  // Change to 'none' for raw density, 'gaussian' for smooth circular
+            smoothingType: 'gaussian',  // Gaussian kernel (smooth circular)
             smoothingBandwidth: null,        // null = auto-calculate (5% of data range)
             gridResolution: 100,             // Higher = smoother but slower
             // Lower density (outer) → green; higher density (inner) → red
