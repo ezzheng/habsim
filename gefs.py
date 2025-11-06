@@ -206,6 +206,12 @@ def _cleanup_old_cache_files():
                 pass
         
         # Calculate total cache size (excluding worldelev.npy)
+        # PERFORMANCE: Only calculate size if we're close to the file limit
+        # Avoids expensive stat() calls on every download
+        if len(cached_files) < _MAX_CACHED_FILES - 5:
+            # Well under limit, skip size calculation
+            return
+        
         total_size_gb = sum(f.stat().st_size for f in cached_files) / (1024**3)
         
         # Sort by access time (oldest first) for LRU eviction
