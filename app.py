@@ -427,7 +427,7 @@ def spaceshot():
     # Process:
     # 1. Generate N perturbations (default 20) with random variations
     # 2. Run each perturbation through all ensemble models (21 models)
-    # 3. Collect final landing positions (420 total: 20 × 21)
+    # 3. Collect final landing positions: 21 ensemble + 420 Monte Carlo = 441 total
     # 4. Return landing positions for heatmap visualization
     #
     # Perturbation ranges (designed for high-altitude balloon launches):
@@ -471,7 +471,7 @@ def spaceshot():
     
     from concurrent.futures import ThreadPoolExecutor, as_completed
     paths = [None] * len(model_ids)  # Pre-allocate to preserve order for 21 ensemble paths
-    landing_positions = []  # Monte Carlo landing positions (420 total: 20 perturbations × 21 models)
+    landing_positions = []  # Landing positions: 21 ensemble + 420 Monte Carlo = 441 total
     
     def run_ensemble_simulation(model):
         """Run standard ensemble simulation for one model.
@@ -581,7 +581,26 @@ def spaceshot():
                     model = ensemble_futures[future]
                     try:
                         idx = model_ids.index(model)
-                        paths[idx] = future.result()
+                        result = future.result()
+                        paths[idx] = result
+                        
+                        # Extract landing position from ensemble path and add to heatmap data
+                        # Result format: (rise, coast, fall) where fall is list of [timestamp, lat, lon, alt, ...]
+                        if result != "error" and result is not None:
+                            try:
+                                rise, coast, fall = result
+                                if len(fall) > 0:
+                                    # Get last point in descent phase (final landing position)
+                                    __, final_lat, final_lon, __, __, __, __, __ = fall[-1]
+                                    landing_positions.append({
+                                        'lat': float(final_lat),
+                                        'lon': float(final_lon),
+                                        'perturbation_id': -1,  # -1 indicates ensemble (not Monte Carlo)
+                                        'model_id': model
+                                    })
+                            except Exception as e:
+                                app.logger.warning(f"Failed to extract landing position from ensemble model {model}: {e}")
+                        
                         ensemble_completed += 1
                         with _progress_lock:
                             if request_id in _progress_tracking:
@@ -624,7 +643,9 @@ def spaceshot():
         # Log summary
         ensemble_success = sum(1 for p in paths if p != "error" and p is not None)
         elapsed = time.time() - start_time
-        app.logger.info(f"Ensemble + Monte Carlo complete: {ensemble_success}/{len(model_ids)} ensemble paths, {len(landing_positions)} Monte Carlo positions in {elapsed:.1f} seconds")
+        ensemble_landings = sum(1 for p in landing_positions if p.get('perturbation_id') == -1)
+        montecarlo_landings = len(landing_positions) - ensemble_landings
+        app.logger.info(f"Ensemble + Monte Carlo complete: {ensemble_success}/{len(model_ids)} ensemble paths, {ensemble_landings} ensemble + {montecarlo_landings} Monte Carlo = {len(landing_positions)} total landing positions in {elapsed:.1f} seconds")
         
     except Exception as e:
         app.logger.exception(f"Ensemble + Monte Carlo run failed with unexpected error: {e}")
@@ -653,15 +674,14 @@ def spaceshot():
     # ========================================================================
     # RESPONSE FORMAT
     # ========================================================================
-    # Returns both ensemble paths (for line plotting) and Monte Carlo landing
-    # positions (for heatmap visualization):
+    # Returns both ensemble paths (for line plotting) and landing positions (for heatmap):
     # - paths: 21 full trajectory paths for Polyline rendering
-    # - heatmap_data: 420 landing positions (lat, lon) for density visualization
+    # - heatmap_data: 441 landing positions (21 ensemble + 420 Monte Carlo) for density visualization
     # - request_id: Unique ID for progress tracking (client polls /sim/progress)
     # ========================================================================
     return jsonify({
         'paths': paths,  # Original 21 ensemble paths for line plotting
-        'heatmap_data': landing_positions,  # Monte Carlo landing positions for heatmap
+        'heatmap_data': landing_positions,  # 441 landing positions (21 ensemble + 420 Monte Carlo) for heatmap
         'request_id': request_id  # For progress polling
     })
 
