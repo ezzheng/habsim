@@ -938,12 +938,24 @@
                 // Keep the generated title for filename consistency
             }
             
-            // CRITICAL: Force-hide Google Maps attribution IMMEDIATELY before printing
-            // Google Maps injects new attribution elements when map is panned/zoomed
-            // CSS alone can't catch these fast enough
-            function forceHideGoogleAttribution() {
+            // CRITICAL: Force-clean Google Maps layout IMMEDIATELY before printing
+            // Google Maps changes its DOM structure when zoomed/panned
+            function forceCleanMapForPrint() {
                 try {
-                    // Hide all Google Maps UI elements (attribution, controls, terms)
+                    // 1. Force map container to exact viewport dimensions
+                    const mapDiv = document.getElementById('map');
+                    if (mapDiv) {
+                        mapDiv.style.position = 'absolute';
+                        mapDiv.style.top = '0';
+                        mapDiv.style.left = '0';
+                        mapDiv.style.width = '100vw';
+                        mapDiv.style.height = '100vh';
+                        mapDiv.style.overflow = 'hidden';
+                        mapDiv.style.margin = '0';
+                        mapDiv.style.padding = '0';
+                    }
+                    
+                    // 2. Hide all Google Maps UI elements (attribution, controls, terms)
                     const selectors = [
                         '.gm-style-cc',
                         '.gmnoprint', 
@@ -953,7 +965,8 @@
                         '.gm-control-active',
                         'a[href*="google.com/maps"]',
                         '[aria-label="Keyboard shortcuts"]',
-                        '[aria-label="Map Data"]'
+                        '[aria-label="Map Data"]',
+                        '.gm-style > div[style*="bottom"]'
                     ];
                     
                     selectors.forEach(selector => {
@@ -964,18 +977,35 @@
                             el.style.height = '0';
                             el.style.width = '0';
                             el.style.overflow = 'hidden';
+                            el.style.position = 'absolute';
+                            el.style.left = '-9999px';
                         });
                     });
                     
-                    // Also hide any bottom-anchored divs (common for attribution)
+                    // 3. CRITICAL: Force all .gm-style children to max 100vh
+                    // After zoom, Google Maps can set heights > 100vh causing overflow
+                    document.querySelectorAll('.gm-style, .gm-style > div').forEach(el => {
+                        const computedHeight = window.getComputedStyle(el).height;
+                        if (parseInt(computedHeight) > window.innerHeight) {
+                            el.style.height = '100vh';
+                            el.style.maxHeight = '100vh';
+                        }
+                        el.style.overflow = 'hidden';
+                    });
+                    
+                    // 4. Remove any absolutely positioned divs at bottom
                     document.querySelectorAll('.gm-style > div').forEach(el => {
                         const style = window.getComputedStyle(el);
-                        if (style.position === 'absolute' && style.bottom === '0px') {
-                            el.style.display = 'none';
+                        if (style.position === 'absolute') {
+                            const bottom = style.bottom;
+                            // If positioned at bottom (0-20px from bottom), hide it
+                            if (bottom && parseInt(bottom) >= 0 && parseInt(bottom) <= 20) {
+                                el.style.display = 'none';
+                            }
                         }
                     });
                 } catch(e) {
-                    console.warn('Error hiding Google Maps attribution:', e);
+                    console.warn('Error cleaning map for print:', e);
                 }
             }
             
@@ -985,7 +1015,7 @@
                     mediaQueryList.addEventListener('change', function(e){
                         if (e.matches) {
                             setTitleBeforePrint();
-                            forceHideGoogleAttribution();
+                            forceCleanMapForPrint();
                         } else {
                             restoreTitleAfterPrint();
                         }
@@ -994,7 +1024,7 @@
                     mediaQueryList.addListener(function(mql){
                         if (mql.matches) {
                             setTitleBeforePrint();
-                            forceHideGoogleAttribution();
+                            forceCleanMapForPrint();
                         } else {
                             restoreTitleAfterPrint();
                         }
@@ -1003,7 +1033,7 @@
             }
             window.addEventListener('beforeprint', function() {
                 setTitleBeforePrint();
-                forceHideGoogleAttribution();
+                forceCleanMapForPrint();
             });
             window.addEventListener('afterprint', restoreTitleAfterPrint);
         })();
@@ -1035,3 +1065,4 @@
 <script defer src="/_vercel/speed-insights/script.js"></script>
 </body>
 </html>
+
