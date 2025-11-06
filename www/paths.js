@@ -700,17 +700,14 @@ function displayContours(heatmapData) {
                 }
                 
                 // Use Polygon instead of Polyline for proper closed contours
-                // Add colored fill shading based on threshold level
-                // Outer contours (lower probability) = lighter/more transparent
-                // Inner contours (higher probability) = darker/more opaque
-                const fillOpacity = 0.3 + (threshold * 0.3); // 0.3 to 0.6 opacity range
+                // Add colored fill shading with consistent opacity
                 const polygon = new google.maps.Polygon({
                     paths: path,
                     strokeColor: color,
                     strokeOpacity: 0.9,
                     strokeWeight: 2.5,
                     fillColor: color,
-                    fillOpacity: fillOpacity,
+                    fillOpacity: 0.35,  // Consistent opacity for all contours
                     map: map,
                     clickable: false,
                     zIndex: 10 + (3 - indexFromOuter)
