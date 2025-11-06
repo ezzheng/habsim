@@ -482,63 +482,78 @@ def _ensure_cached(file_name: str) -> Path:
                     pass
             
             try:
-                resp = _SESSION.get(
-                    _object_url(f"{_BUCKET}/{file_name}"),
-                    headers=_COMMON_HEADERS,
-                    stream=True,
-                    timeout=download_timeout,
-                )
+                # Create temp file first to ensure we can write (catches permission errors early)
+                tmp_path.parent.mkdir(parents=True, exist_ok=True)
+                temp_file_created = False
                 
-                # Handle file not found errors with helpful message
-                if resp.status_code == 400 or resp.status_code == 404:
-                    error_msg = f"File not found in Supabase: {file_name} (status {resp.status_code})"
-                    logging.error(error_msg)
-                    raise FileNotFoundError(f"{error_msg}. The model file may not have been uploaded yet, or the model timestamp may be incorrect. Check Supabase storage or verify the model timestamp in 'whichgefs'.")
-                
-                resp.raise_for_status()
-                
-                # Get expected content length if available
-                expected_size = resp.headers.get('Content-Length')
-                if expected_size:
-                    expected_size = int(expected_size)
-                
-                bytes_written = 0
-                last_chunk_time = time.time()
                 try:
-                    with open(tmp_path, 'wb') as fh:
-                        for chunk in _iter_content(resp):
-                            current_time = time.time()
-                            
-                            # Check for connection timeout (no data for 120 seconds)
-                            # Increased from 60s to 120s to tolerate Railway-Supabase network slowness
-                            if is_large_file and (current_time - last_chunk_time) > 120:
-                                raise IOError(f"Download stalled: no data received for 120 seconds")
-                            
-                            if chunk:
-                                fh.write(chunk)
-                                bytes_written += len(chunk)
-                                last_chunk_time = current_time
+                    resp = _SESSION.get(
+                        _object_url(f"{_BUCKET}/{file_name}"),
+                        headers=_COMMON_HEADERS,
+                        stream=True,
+                        timeout=download_timeout,
+                    )
+                    
+                    # Handle file not found errors with helpful message
+                    if resp.status_code == 400 or resp.status_code == 404:
+                        error_msg = f"File not found in Supabase: {file_name} (status {resp.status_code})"
+                        logging.error(error_msg)
+                        raise FileNotFoundError(f"{error_msg}. The model file may not have been uploaded yet, or the model timestamp may be incorrect. Check Supabase storage or verify the model timestamp in 'whichgefs'.")
+                    
+                    resp.raise_for_status()
+                    
+                    # Get expected content length if available
+                    expected_size = resp.headers.get('Content-Length')
+                    if expected_size:
+                        expected_size = int(expected_size)
+                    
+                    bytes_written = 0
+                    last_chunk_time = time.time()
+                    try:
+                        with open(tmp_path, 'wb') as fh:
+                            temp_file_created = True
+                            for chunk in _iter_content(resp):
+                                current_time = time.time()
                                 
-                                # For large files, log progress every 50MB
-                                if is_large_file and bytes_written % (50 * 1024 * 1024) < _CHUNK_SIZE:
-                                    mb_written = bytes_written / (1024 * 1024)
-                                    if expected_size:
-                                        mb_total = expected_size / (1024 * 1024)
-                                        logging.info(f"Downloading {file_name}: {mb_written:.1f}MB / {mb_total:.1f}MB ({100 * bytes_written / expected_size:.1f}%)")
-                                    else:
-                                        logging.info(f"Downloading {file_name}: {mb_written:.1f}MB")
-                except Exception as write_error:
-                    # If file was created but write failed, clean it up
-                    if tmp_path.exists():
-                        try:
-                            tmp_path.unlink()
-                        except:
-                            pass
-                    raise IOError(f"Download failed: error writing {file_name}: {write_error}")
+                                # Check for connection timeout (no data for 120 seconds)
+                                # Increased from 60s to 120s to tolerate Railway-Supabase network slowness
+                                if is_large_file and (current_time - last_chunk_time) > 120:
+                                    raise IOError(f"Download stalled: no data received for 120 seconds")
+                                
+                                if chunk:
+                                    fh.write(chunk)
+                                    bytes_written += len(chunk)
+                                    last_chunk_time = current_time
+                                    
+                                    # For large files, log progress every 50MB
+                                    if is_large_file and bytes_written % (50 * 1024 * 1024) < _CHUNK_SIZE:
+                                        mb_written = bytes_written / (1024 * 1024)
+                                        if expected_size:
+                                            mb_total = expected_size / (1024 * 1024)
+                                            logging.info(f"Downloading {file_name}: {mb_written:.1f}MB / {mb_total:.1f}MB ({100 * bytes_written / expected_size:.1f}%)")
+                                        else:
+                                            logging.info(f"Downloading {file_name}: {mb_written:.1f}MB")
+                    except Exception as write_error:
+                        # If file was created but write failed, clean it up
+                        if tmp_path.exists():
+                            try:
+                                tmp_path.unlink()
+                            except:
+                                pass
+                        # More descriptive error message
+                        if temp_file_created:
+                            raise IOError(f"Download failed: error writing {file_name} (wrote {bytes_written} bytes): {write_error}")
+                        else:
+                            raise IOError(f"Download failed: could not create temp file for {file_name}: {write_error}")
+                except (requests.exceptions.RequestException, requests.exceptions.Timeout, requests.exceptions.ConnectionError) as req_error:
+                    # Network/connection errors before file creation
+                    error_msg = f"Network error downloading {file_name}: {req_error}"
+                    logging.warning(f"{error_msg} (attempt {attempt + 1}/{max_retries})")
+                    raise IOError(error_msg)
                 
                 # Verify download completed successfully
                 if not tmp_path.exists():
-                    raise IOError(f"Download failed: temp file not created for {file_name}")
+                    raise IOError(f"Download failed: temp file not created for {file_name} (request succeeded but no file written)")
                 
                 actual_size = tmp_path.stat().st_size
                 if actual_size == 0:
