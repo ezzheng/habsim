@@ -96,13 +96,10 @@ def _check_authentication():
 @app.before_request
 def _record_worker_activity():
     """Mark the worker as active so idle cleanup waits until the user is gone.
-    Excludes status/health endpoints that poll continuously."""
-    # Skip if not authenticated (will be handled by auth check)
-    if not _is_authenticated():
-        return
-    
+    Excludes status/health endpoints that poll continuously.
+    Works for both authenticated and unauthenticated requests (backend API is public)."""
     # Don't reset idle timer for status/health endpoints that poll frequently
-    excluded_paths = ['/sim/status', '/sim/models', '/sim/cache-status', '/', '/favicon.ico']
+    excluded_paths = ['/sim/status', '/sim/models', '/sim/cache-status', '/', '/favicon.ico', '/login']
     path = request.path
     # Also exclude static file requests (CSS, JS, images) and Railway health checks
     if (path.startswith('/static/') or 
