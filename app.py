@@ -17,23 +17,16 @@ app.config['SESSION_COOKIE_SECURE'] = True  # Required for SameSite=None
 # Sessions expire when browser closes (not permanent) - requires login every time
 # CORS configuration - allow credentials for cross-origin requests
 # Since frontend (Vercel) and backend (Railway) are on different domains,
-# we need to allow credentials. Use a function to dynamically allow Vercel domains.
-def cors_origin_check(origin):
-    """Check if origin is allowed for CORS"""
-    if not origin:
-        return False
-    allowed_patterns = [
-        'https://habsim-5zztxxkpc-ezzheng-projects.vercel.app',
-        'https://habsim.org',
-        'http://localhost:3000',
-        'http://localhost:5000'
-    ]
-    # Allow any Vercel domain
-    if '.vercel.app' in origin or origin.endswith('.vercel.app'):
-        return True
-    return origin in allowed_patterns
-
-CORS(app, supports_credentials=True, origins=cors_origin_check)
+# we need to allow credentials. Use regex pattern to allow any Vercel domain.
+CORS(app, 
+     supports_credentials=True, 
+     origins=[
+         'https://habsim-5zztxxkpc-ezzheng-projects.vercel.app',
+         'https://habsim.org',
+         r'https://.*\.vercel\.app',  # Allow any Vercel preview deployment
+         'http://localhost:3000',
+         'http://localhost:5000'
+     ])
 Compress(app)  # Automatically compress responses (10x size reduction)
 
 # Password for authentication - read from environment variable for security
