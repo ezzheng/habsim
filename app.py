@@ -29,21 +29,8 @@ CORS(app,
      ])
 Compress(app)  # Automatically compress responses (10x size reduction)
 
-# Password for authentication - read from environment variable for security
-# Set HABSIM_PASSWORD environment variable in Railway deployment
-# Only require it on Railway (where the actual Flask app runs)
-LOGIN_PASSWORD = os.environ.get('HABSIM_PASSWORD')
-if not LOGIN_PASSWORD:
-    # Check if we're on Railway (where the Flask app actually runs)
-    is_railway = os.environ.get('RAILWAY_ENVIRONMENT') is not None or os.environ.get('RAILWAY_SERVICE_NAME') is not None
-    if is_railway:
-        # On Railway, password must be set
-        raise ValueError("HABSIM_PASSWORD environment variable must be set on Railway. Please configure it in Railway project settings.")
-    else:
-        # Not on Railway (local dev or Vercel proxy) - allow fallback
-        LOGIN_PASSWORD = 'SSI Balloons'  # Fallback for local dev/Vercel
-        import warnings
-        warnings.warn("HABSIM_PASSWORD not set - using default password. Set HABSIM_PASSWORD on Railway for production.")
+# Password for authentication
+LOGIN_PASSWORD = os.environ.get('HABSIM_PASSWORD', 'SSI Balloons')
 
 # Cache decorator for GET requests
 def cache_for(seconds=300):
@@ -73,7 +60,7 @@ def _is_authenticated():
 
 @app.before_request
 def _check_authentication():
-    """Check authentication before processing requests"""
+    """Check authentication - only protect the frontend page, not backend API"""
     path = request.path
     
     # Allow login page and login POST without authentication
@@ -81,28 +68,22 @@ def _check_authentication():
         return None  # Continue to login route
     
     # Allow static assets (served by Vercel) without authentication
-    # These are handled by Vercel static file serving, not Flask
     if (path.startswith('/static/') or 
         path.endswith(('.css', '.js', '.png', '.jpg', '.ico', '.svg', '.woff', '.woff2', '.ttf')) or
         path in ['/paths.js', '/style.js', '/util.js', '/logo.png']):
         return None  # Let Vercel handle static files
     
-    # Allow status/health check endpoints without authentication (they're just status checks)
-    if path in ['/sim/status', '/sim/which', '/sim/models']:
-        return None  # Allow status endpoints without auth
+    # Allow ALL backend API endpoints without authentication
+    # Only the frontend page requires authentication
+    if path.startswith('/sim/'):
+        return None  # All API endpoints are public
     
-    # Check authentication for all other routes
-    if not _is_authenticated():
-        # If requesting the main page, redirect to login
-        if path == '/' or path == '/index.html':
+    # Only require authentication for the main frontend page
+    if path == '/' or path == '/index.html':
+        if not _is_authenticated():
             return redirect('/login')
-        # For API endpoints, return 401
-        if path.startswith('/sim/'):
-            return jsonify({'error': 'Authentication required'}), 401
-        # For other routes, redirect to login
-        return redirect('/login?next=' + path)
     
-    # User is authenticated, continue with request
+    # All other routes continue normally
     return None
 
 @app.before_request
@@ -912,7 +893,8 @@ Given a lat and lon, returns the elevation as a string
 @app.route('/sim/elev')
 def elevation():
     lat, lon = float(request.args['lat']), float(request.args['lon'])
-    return str(elev.getElevation(lat, lon))
+    elevation_value = elev.getElevation(lat, lon)
+    return jsonify(elevation_value)  # Return JSON instead of string
 
 
 '''
