@@ -32,6 +32,18 @@ jobs:
         run: |
           python3 scripts/auto_downloader.py --test --logfile ./gefs_downloader.log --savedir ./data/gefs
       
+      - name: List output files
+        if: always()  # Always run, even on failure
+        run: |
+          echo "=== Contents of ./data/gefs ==="
+          ls -lh ./data/gefs/ || echo "Directory does not exist"
+          echo ""
+          echo "=== Looking for .npz files ==="
+          find ./data/gefs -name "*.npz" -type f 2>/dev/null | head -25 || echo "No .npz files found"
+          echo ""
+          echo "=== Looking for whichgefs ==="
+          ls -lh ./data/gefs/whichgefs 2>/dev/null || echo "whichgefs not found"
+      
       - name: Upload logs
         if: always()  # Always upload, even on success
         uses: actions/upload-artifact@v4
@@ -40,4 +52,15 @@ jobs:
           path: |
             gefs_downloader.log
           if-no-files-found: ignore
+      
+      - name: Upload combined files
+        if: always()  # Always upload, even on failure (for debugging)
+        uses: actions/upload-artifact@v4
+        with:
+          name: combined-files
+          path: |
+            data/gefs/*.npz
+            data/gefs/whichgefs
+          if-no-files-found: ignore
+          retention-days: 7  # Keep artifacts for 7 days for debugging
 
