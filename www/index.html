@@ -817,8 +817,16 @@
     }
     window.addEventListener('load', adjustLayout);
     window.addEventListener('resize', adjustLayout);
-        // topbar segmented buttons - disabled since only Standard mode is available
+        // Check authentication on page load (sessionStorage expires when tab closes)
         window.addEventListener('DOMContentLoaded', function(){
+            // Check if user is authenticated via sessionStorage
+            if (!sessionStorage.getItem('authenticated')) {
+                // Not authenticated - redirect to login
+                window.location.href = '/login';
+                return;
+            }
+            
+            // topbar segmented buttons - disabled since only Standard mode is available
             // Mode switching disabled - only Standard mode available
             // const segs = document.querySelectorAll('.segment');
             // segs.forEach(btn => {

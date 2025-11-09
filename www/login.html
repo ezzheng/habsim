@@ -229,6 +229,17 @@
         </form>
     </div>
     <script>
+        // If already authenticated, redirect to main page
+        if (sessionStorage.getItem('authenticated')) {
+            window.location.href = '/';
+        }
+        
+        // Clear sessionStorage on logout
+        const urlParams = new URLSearchParams(window.location.search);
+        if (urlParams.get('logout') === '1') {
+            sessionStorage.removeItem('authenticated');
+        }
+        
         const form = document.getElementById('loginForm');
         const passwordInput = document.getElementById('password');
         const loginButton = document.getElementById('loginButton');
@@ -236,7 +247,6 @@
         const errorMessage = document.getElementById('errorMessage');
         
         // Check for error in URL params
-        const urlParams = new URLSearchParams(window.location.search);
         if (urlParams.get('error') === '1') {
             errorMessage.textContent = 'Incorrect password. Please try again.';
             errorMessage.classList.add('show');
@@ -259,7 +269,9 @@
             })
             .then(response => {
                 if (response.redirected) {
-                    // Success - redirect to main app
+                    // Success - store in sessionStorage (expires when tab closes)
+                    sessionStorage.setItem('authenticated', 'true');
+                    // Redirect to main app
                     window.location.href = response.url;
                 } else {
                     // Error - show message

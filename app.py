@@ -225,17 +225,16 @@ def login():
 
 @app.route('/logout')
 def logout():
-    """Logout handler"""
+    """Logout handler - clears both server session and client sessionStorage"""
     session.pop('authenticated', None)
-    return redirect('/login')
+    # Redirect with query param so client-side can clear sessionStorage
+    return redirect('/login?logout=1')
 
 @app.route('/')
 def index():
     """Serve main application page (requires authentication)"""
-    # Check authentication only for frontend page
-    if not _is_authenticated():
-        return redirect('/login')
-    
+    # Authentication is checked client-side via sessionStorage (expires on tab close)
+    # Backend doesn't need to check - sessionStorage handles it
     index_html_path = os.path.join(os.path.dirname(__file__), 'www', 'index.html')
     try:
         with open(index_html_path, 'r', encoding='utf-8') as f:
