@@ -217,9 +217,14 @@ def login():
         password = request.form.get('password', '').strip()
         expected_password = (LOGIN_PASSWORD or '').strip()
         
-        # Debug logging
-        app.logger.info(f"Login attempt - expected password length: {len(expected_password)}, received length: {len(password)}")
+        # Debug logging - detailed comparison
+        app.logger.info(f"=== LOGIN ATTEMPT ===")
+        app.logger.info(f"Expected password length: {len(expected_password)}")
+        app.logger.info(f"Received password length: {len(password)}")
         app.logger.info(f"Expected password set: {bool(expected_password)}")
+        app.logger.info(f"Expected password repr: {repr(expected_password[:5])}...{repr(expected_password[-5:]) if len(expected_password) > 10 else ''}")
+        app.logger.info(f"Received password repr: {repr(password[:5])}...{repr(password[-5:]) if len(password) > 10 else ''}")
+        app.logger.info(f"Passwords match: {password == expected_password}")
         
         if not expected_password:
             app.logger.error("HABSIM_PASSWORD environment variable is not set!")
@@ -228,18 +233,23 @@ def login():
         # Compare passwords (case-sensitive, exact match)
         if password == expected_password:
             session['authenticated'] = True
-            app.logger.info("Login successful")
+            app.logger.info("✓ Login successful")
             # Session is NOT permanent - expires when browser closes (requires login every time)
             # Redirect to next page or home
             next_page = request.args.get('next', '/')
             return redirect(next_page)
         else:
             # Wrong password - redirect back to login with error
-            app.logger.warning(f"Login failed - password mismatch")
-            # Log first and last character of each (for debugging, without revealing full password)
+            app.logger.warning(f"✗ Login failed - password mismatch")
+            # Log detailed comparison
             if expected_password and password:
-                app.logger.warning(f"Expected starts with: '{expected_password[0]}', ends with: '{expected_password[-1]}'")
-                app.logger.warning(f"Received starts with: '{password[0]}', ends with: '{password[-1]}'")
+                app.logger.warning(f"Expected: length={len(expected_password)}, first_char='{expected_password[0]}', last_char='{expected_password[-1]}'")
+                app.logger.warning(f"Received: length={len(password)}, first_char='{password[0]}', last_char='{password[-1]}'")
+                # Check for common issues
+                if expected_password.lower() == password.lower():
+                    app.logger.warning("⚠ Case sensitivity issue detected!")
+                if expected_password.replace(' ', '') == password.replace(' ', ''):
+                    app.logger.warning("⚠ Whitespace issue detected!")
             return redirect('/login?error=1')
     
     # GET request - serve login page
