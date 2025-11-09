@@ -32,6 +32,13 @@ Compress(app)  # Automatically compress responses (10x size reduction)
 # Password for authentication
 LOGIN_PASSWORD = os.environ.get('HABSIM_PASSWORD')
 
+# Log password status at startup (without revealing the actual password)
+if LOGIN_PASSWORD:
+    # Use a simple print since app.logger might not be ready yet
+    print(f"[AUTH] HABSIM_PASSWORD is set (length: {len(LOGIN_PASSWORD)})")
+else:
+    print("[AUTH] WARNING: HABSIM_PASSWORD environment variable is NOT set - login will fail!")
+
 # Cache decorator for GET requests
 def cache_for(seconds=300):
     """Add HTTP cache headers to responses"""
@@ -210,8 +217,14 @@ else:
 def login():
     """Login page and authentication handler"""
     if request.method == 'POST':
-        password = request.form.get('password', '')
-        if password == LOGIN_PASSWORD:
+        password = request.form.get('password', '').strip()
+        expected_password = (LOGIN_PASSWORD or '').strip()
+        
+        # Debug logging (remove in production if needed)
+        if not expected_password:
+            app.logger.error("HABSIM_PASSWORD environment variable is not set!")
+        
+        if password == expected_password and expected_password:
             session['authenticated'] = True
             # Session is NOT permanent - expires when browser closes (requires login every time)
             # Redirect to next page or home
@@ -219,6 +232,7 @@ def login():
             return redirect(next_page)
         else:
             # Wrong password - redirect back to login with error
+            app.logger.warning(f"Login failed - password mismatch (expected length: {len(expected_password)}, got length: {len(password)})")
             return redirect('/login?error=1')
     
     # GET request - serve login page
