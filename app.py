@@ -9,24 +9,12 @@ import os
 import secrets
 
 app = Flask(__name__)
-# Configure session for authentication
+# Configure session for authentication (frontend only)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', secrets.token_hex(32))
 app.config['SESSION_COOKIE_HTTPONLY'] = True
-app.config['SESSION_COOKIE_SAMESITE'] = 'None'  # Allow cross-origin cookies
-app.config['SESSION_COOKIE_SECURE'] = True  # Required for SameSite=None
-# Sessions expire when browser closes (not permanent) - requires login every time
-# CORS configuration - allow credentials for cross-origin requests
-# Since frontend (Vercel) and backend (Railway) are on different domains,
-# we need to allow credentials. Use regex pattern to allow any Vercel domain.
-CORS(app, 
-     supports_credentials=True, 
-     origins=[
-         'https://habsim-5zztxxkpc-ezzheng-projects.vercel.app',
-         'https://habsim.org',
-         r'https://.*\.vercel\.app',  # Allow any Vercel preview deployment
-         'http://localhost:3000',
-         'http://localhost:5000'
-     ])
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+app.config['SESSION_COOKIE_SECURE'] = os.environ.get('FLASK_ENV') == 'production'
+CORS(app)
 Compress(app)  # Automatically compress responses (10x size reduction)
 
 # Password for authentication
@@ -70,7 +58,7 @@ def _record_worker_activity():
     """Mark the worker as active so idle cleanup waits until the user is gone.
     Excludes status/health endpoints that poll continuously."""
     # Don't reset idle timer for status/health endpoints that poll frequently
-    excluded_paths = ['/sim/status', '/sim/models', '/sim/cache-status', '/', '/favicon.ico', '/login']
+    excluded_paths = ['/sim/status', '/sim/models', '/sim/cache-status', '/', '/favicon.ico']
     path = request.path
     # Also exclude static file requests (CSS, JS, images) and Railway health checks
     if (path.startswith('/static/') or 
