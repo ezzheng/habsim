@@ -62,5 +62,5 @@ jobs:
             data/gefs/*.npz
             data/gefs/whichgefs
           if-no-files-found: ignore
-          retention-days: 7  # Keep artifacts for 7 days for debugging
+          retention-days: 3  # Keep artifacts for 3 days for debugging
 
