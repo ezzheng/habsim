@@ -217,19 +217,29 @@ def login():
         password = request.form.get('password', '').strip()
         expected_password = (LOGIN_PASSWORD or '').strip()
         
-        # Debug logging (remove in production if needed)
+        # Debug logging
+        app.logger.info(f"Login attempt - expected password length: {len(expected_password)}, received length: {len(password)}")
+        app.logger.info(f"Expected password set: {bool(expected_password)}")
+        
         if not expected_password:
             app.logger.error("HABSIM_PASSWORD environment variable is not set!")
+            return redirect('/login?error=1')
         
-        if password == expected_password and expected_password:
+        # Compare passwords (case-sensitive, exact match)
+        if password == expected_password:
             session['authenticated'] = True
+            app.logger.info("Login successful")
             # Session is NOT permanent - expires when browser closes (requires login every time)
             # Redirect to next page or home
             next_page = request.args.get('next', '/')
             return redirect(next_page)
         else:
             # Wrong password - redirect back to login with error
-            app.logger.warning(f"Login failed - password mismatch (expected length: {len(expected_password)}, got length: {len(password)})")
+            app.logger.warning(f"Login failed - password mismatch")
+            # Log first and last character of each (for debugging, without revealing full password)
+            if expected_password and password:
+                app.logger.warning(f"Expected starts with: '{expected_password[0]}', ends with: '{expected_password[-1]}'")
+                app.logger.warning(f"Received starts with: '{password[0]}', ends with: '{password[-1]}'")
             return redirect('/login?error=1')
     
     # GET request - serve login page
