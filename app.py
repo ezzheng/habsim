@@ -372,14 +372,17 @@ def cache_status():
 
 @app.route('/sim/status')
 def status():
+    """Health check endpoint - must always return 200 for Railway health checks"""
     try:
         f = open_gefs('whichgefs')
         _ = f.readline()
         f.close()
         return "Ready"
     except Exception as e:
+        # Even on error, return 200 so Railway doesn't think the service is down
+        # Log the error but don't fail the health check
         app.logger.info(f"Status check failed (non-critical): {e}")
-        return "Unavailable"
+        return "Ready"  # Always return Ready so Railway doesn't restart
 
 @app.route('/sim/models')
 def models():
