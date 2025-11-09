@@ -30,7 +30,7 @@ CORS(app,
 Compress(app)  # Automatically compress responses (10x size reduction)
 
 # Password for authentication
-LOGIN_PASSWORD = os.environ.get('HABSIM_PASSWORD', 'SSI Balloons')
+LOGIN_PASSWORD = os.environ.get('HABSIM_PASSWORD')
 
 # Cache decorator for GET requests
 def cache_for(seconds=300):
@@ -893,8 +893,7 @@ Given a lat and lon, returns the elevation as a string
 @app.route('/sim/elev')
 def elevation():
     lat, lon = float(request.args['lat']), float(request.args['lon'])
-    elevation_value = elev.getElevation(lat, lon)
-    return jsonify(elevation_value)  # Return JSON instead of string
+    return str(elev.getElevation(lat, lon))
 
 
 '''
