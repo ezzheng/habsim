@@ -14,6 +14,7 @@ app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', secrets.token_hex(32))
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 app.config['SESSION_COOKIE_SECURE'] = os.environ.get('FLASK_ENV') == 'production'
+# Don't set SESSION_COOKIE_MAX_AGE - this makes it a session cookie that expires when browser closes
 CORS(app)
 Compress(app)  # Automatically compress responses (10x size reduction)
 
@@ -192,6 +193,7 @@ def login():
         # Compare passwords (case-sensitive, exact match)
         if password == expected_password:
             session['authenticated'] = True
+            session.permanent = False  # Explicitly set to non-permanent (expires when browser closes)
             app.logger.info("✓ Login successful")
             # Session is NOT permanent - expires when browser closes (requires login every time)
             # Redirect to next page or home
