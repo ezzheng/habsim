@@ -70,8 +70,12 @@
             object-fit: contain;
             opacity: 0.9;
             transition: opacity 0.2s;
+            cursor: pointer;
         }
         .login-logo:hover {
+            opacity: 1;
+        }
+        .login-header a:hover .login-logo {
             opacity: 1;
         }
         .login-header h1 {
@@ -204,7 +208,9 @@
 <body>
     <div class="login-container">
         <div class="login-header">
-            <img src="/logo.png" alt="SSI Logo" class="login-logo">
+            <a href="https://www.stanfordssi.org/" target="_blank" rel="noopener noreferrer" style="display: inline-block; text-decoration: none;">
+                <img src="/logo.png" alt="SSI Logo" class="login-logo">
+            </a>
             <h1><a href="https://www.stanfordssi.org/" target="_blank" rel="noopener noreferrer" style="color: inherit; text-decoration: none;">HABSIM</a></h1>
             <p>High Altitude Balloon Simulator</p>
         </div>
