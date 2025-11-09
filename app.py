@@ -1,14 +1,25 @@
-from flask import Flask, jsonify, request, Response, render_template, send_from_directory, make_response
+from flask import Flask, jsonify, request, Response, render_template, send_from_directory, make_response, session, redirect, url_for
 from flask_cors import CORS
 from flask_compress import Compress
 import threading
 from functools import wraps
 import random
 import time
+import os
+import secrets
 
 app = Flask(__name__)
+# Configure session for authentication
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', secrets.token_hex(32))
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+app.config['SESSION_COOKIE_SECURE'] = os.environ.get('FLASK_ENV') == 'production'  # HTTPS only in production
+# Sessions expire when browser closes (not permanent) - requires login every time
 CORS(app)
 Compress(app)  # Automatically compress responses (10x size reduction)
+
+# Password for authentication
+LOGIN_PASSWORD = "SSI Balloons"
 
 # Cache decorator for GET requests
 def cache_for(seconds=300):
@@ -32,10 +43,48 @@ import simulate
 import downloader  # Import to access model configuration
 
 
+def _is_authenticated():
+    """Check if user is authenticated"""
+    return session.get('authenticated', False)
+
+@app.before_request
+def _check_authentication():
+    """Check authentication before processing requests"""
+    path = request.path
+    
+    # Allow login page and login POST without authentication
+    if path == '/login':
+        return None  # Continue to login route
+    
+    # Allow static assets (served by Vercel) without authentication
+    # These are handled by Vercel static file serving, not Flask
+    if (path.startswith('/static/') or 
+        path.endswith(('.css', '.js', '.png', '.jpg', '.ico', '.svg', '.woff', '.woff2', '.ttf')) or
+        path in ['/paths.js', '/style.js', '/util.js', '/logo.png']):
+        return None  # Let Vercel handle static files
+    
+    # Check authentication for all other routes
+    if not _is_authenticated():
+        # If requesting the main page, redirect to login
+        if path == '/' or path == '/index.html':
+            return redirect('/login')
+        # For API endpoints, return 401
+        if path.startswith('/sim/'):
+            return jsonify({'error': 'Authentication required'}), 401
+        # For other routes, redirect to login
+        return redirect('/login?next=' + path)
+    
+    # User is authenticated, continue with request
+    return None
+
 @app.before_request
 def _record_worker_activity():
     """Mark the worker as active so idle cleanup waits until the user is gone.
     Excludes status/health endpoints that poll continuously."""
+    # Skip if not authenticated (will be handled by auth check)
+    if not _is_authenticated():
+        return
+    
     # Don't reset idle timer for status/health endpoints that poll frequently
     excluded_paths = ['/sim/status', '/sim/models', '/sim/cache-status', '/', '/favicon.ico']
     path = request.path
@@ -140,6 +189,50 @@ except Exception as e:
 # Start pre-warming in background thread
 _cache_warmer_thread = threading.Thread(target=_prewarm_cache, daemon=True)
 _cache_warmer_thread.start()
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    """Login page and authentication handler"""
+    if request.method == 'POST':
+        password = request.form.get('password', '')
+        if password == LOGIN_PASSWORD:
+            session['authenticated'] = True
+            # Session is NOT permanent - expires when browser closes (requires login every time)
+            # Redirect to next page or home
+            next_page = request.args.get('next', '/')
+            return redirect(next_page)
+        else:
+            # Wrong password - redirect back to login with error
+            return redirect('/login?error=1')
+    
+    # GET request - serve login page
+    login_html_path = os.path.join(os.path.dirname(__file__), 'www', 'login.html')
+    try:
+        with open(login_html_path, 'r', encoding='utf-8') as f:
+            response = make_response(f.read())
+            response.headers['Content-Type'] = 'text/html; charset=utf-8'
+            return response
+    except FileNotFoundError:
+        return "Login page not found", 404
+
+@app.route('/logout')
+def logout():
+    """Logout handler"""
+    session.pop('authenticated', None)
+    return redirect('/login')
+
+@app.route('/')
+def index():
+    """Serve main application page (requires authentication)"""
+    # Authentication is checked in before_request
+    index_html_path = os.path.join(os.path.dirname(__file__), 'www', 'index.html')
+    try:
+        with open(index_html_path, 'r', encoding='utf-8') as f:
+            response = make_response(f.read())
+            response.headers['Content-Type'] = 'text/html; charset=utf-8'
+            return response
+    except FileNotFoundError:
+        return "Application not found", 404
 
 @app.route('/sim/which')
 def whichgefs():

@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HABSIM - Login</title>
+    <link rel="icon" type="image/png" href="/logo.png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #ffffff;
+            --fg: #111827;
+            --muted: #6b7280;
+            --line: #e5e7eb;
+            --soft: #f3f4f6;
+            --brand: #111827;
+            --brand-600: #0b1220;
+            --error: #ef4444;
+            --radius: 12px;
+        }
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --bg: #0b0f14;
+                --fg: #e5e7eb;
+                --muted: #9ca3af;
+                --line: #1f2937;
+                --soft: #0f1520;
+                --brand: #93c5fd;
+                --brand-600: #60a5fa;
+            }
+        }
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        html, body {
+            height: 100%;
+            font-family: 'Inter', system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+            background: var(--bg);
+            color: var(--fg);
+        }
+        body {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            background: linear-gradient(135deg, var(--soft) 0%, var(--bg) 100%);
+        }
+        .login-container {
+            width: 100%;
+            max-width: 420px;
+            background: var(--bg);
+            border-radius: var(--radius);
+            box-shadow: 0 4px 24px rgba(0, 0, 0, 0.1);
+            padding: 40px 32px;
+            border: 1px solid var(--line);
+        }
+        .login-header {
+            text-align: center;
+            margin-bottom: 32px;
+        }
+        .login-header h1 {
+            font-size: 28px;
+            font-weight: 700;
+            color: var(--fg);
+            margin-bottom: 8px;
+            letter-spacing: 0.5px;
+        }
+        .login-header p {
+            font-size: 14px;
+            color: var(--muted);
+        }
+        .login-form {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .form-label {
+            font-size: 14px;
+            font-weight: 500;
+            color: var(--fg);
+        }
+        .form-input {
+            width: 100%;
+            padding: 12px 16px;
+            font-size: 15px;
+            font-family: inherit;
+            color: var(--fg);
+            background: var(--bg);
+            border: 2px solid var(--line);
+            border-radius: 8px;
+            transition: all 0.2s;
+        }
+        .form-input:focus {
+            outline: none;
+            border-color: var(--brand);
+            box-shadow: 0 0 0 3px rgba(17, 24, 39, 0.1);
+        }
+        @media (prefers-color-scheme: dark) {
+            .form-input:focus {
+                box-shadow: 0 0 0 3px rgba(147, 197, 253, 0.1);
+            }
+        }
+        .form-input::placeholder {
+            color: var(--muted);
+        }
+        .error-message {
+            display: none;
+            padding: 12px 16px;
+            background: rgba(239, 68, 68, 0.1);
+            border: 1px solid var(--error);
+            border-radius: 8px;
+            color: var(--error);
+            font-size: 14px;
+            text-align: center;
+        }
+        .error-message.show {
+            display: block;
+        }
+        .login-button {
+            width: 100%;
+            padding: 14px 24px;
+            font-size: 15px;
+            font-weight: 600;
+            font-family: inherit;
+            color: #ffffff;
+            background: var(--brand);
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+        }
+        .login-button:hover {
+            background: var(--brand-600);
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+        }
+        .login-button:active {
+            transform: translateY(0);
+        }
+        .login-button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+        .spinner {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            border-top-color: #ffffff;
+            border-radius: 50%;
+            animation: spin 0.6s linear infinite;
+            margin-right: 8px;
+            vertical-align: middle;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        @media (max-width: 480px) {
+            .login-container {
+                padding: 32px 24px;
+            }
+            .login-header h1 {
+                font-size: 24px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="login-container">
+        <div class="login-header">
+            <h1>HABSIM</h1>
+            <p>High Altitude Balloon Simulator</p>
+        </div>
+        <form class="login-form" id="loginForm" method="POST" action="/login">
+            <div class="error-message" id="errorMessage"></div>
+            <div class="form-group">
+                <label for="password" class="form-label">Password</label>
+                <input 
+                    type="password" 
+                    id="password" 
+                    name="password" 
+                    class="form-input" 
+                    placeholder="Enter password"
+                    autocomplete="current-password"
+                    required
+                    autofocus
+                >
+            </div>
+            <button type="submit" class="login-button" id="loginButton">
+                <span id="buttonText">Log In</span>
+            </button>
+        </form>
+    </div>
+    <script>
+        const form = document.getElementById('loginForm');
+        const passwordInput = document.getElementById('password');
+        const loginButton = document.getElementById('loginButton');
+        const buttonText = document.getElementById('buttonText');
+        const errorMessage = document.getElementById('errorMessage');
+        
+        // Check for error in URL params
+        const urlParams = new URLSearchParams(window.location.search);
+        if (urlParams.get('error') === '1') {
+            errorMessage.textContent = 'Incorrect password. Please try again.';
+            errorMessage.classList.add('show');
+        }
+        
+        form.addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            // Disable button and show loading state
+            loginButton.disabled = true;
+            buttonText.innerHTML = '<span class="spinner"></span>Logging in...';
+            errorMessage.classList.remove('show');
+            
+            // Submit form
+            const formData = new FormData(form);
+            fetch('/login', {
+                method: 'POST',
+                body: formData,
+                redirect: 'follow'
+            })
+            .then(response => {
+                if (response.redirected) {
+                    // Success - redirect to main app
+                    window.location.href = response.url;
+                } else {
+                    // Error - show message
+                    errorMessage.textContent = 'Incorrect password. Please try again.';
+                    errorMessage.classList.add('show');
+                    loginButton.disabled = false;
+                    buttonText.textContent = 'Log In';
+                    passwordInput.focus();
+                }
+            })
+            .catch(error => {
+                errorMessage.textContent = 'An error occurred. Please try again.';
+                errorMessage.classList.add('show');
+                loginButton.disabled = false;
+                buttonText.textContent = 'Log In';
+            });
+        });
+        
+        // Clear error on input
+        passwordInput.addEventListener('input', function() {
+            if (errorMessage.classList.contains('show')) {
+                errorMessage.classList.remove('show');
+            }
+        });
+    </script>
+</body>
+</html>
+

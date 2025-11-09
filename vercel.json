@@ -6,6 +6,9 @@
   ],
   "routes": [
     { "src": "/sim/(.*)", "dest": "/app.py" },
+    { "src": "/login", "dest": "/app.py" },
+    { "src": "/logout", "dest": "/app.py" },
+    { "src": "/", "dest": "/app.py" },
     { "src": "/(.*)", "dest": "/www/$1" }
   ]
 }
