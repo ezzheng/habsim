@@ -37,17 +37,20 @@ CORS(app, supports_credentials=True, origins=cors_origin_check)
 Compress(app)  # Automatically compress responses (10x size reduction)
 
 # Password for authentication - read from environment variable for security
-# Set HABSIM_PASSWORD environment variable in your deployment (Railway)
-# In production, this MUST be set - no fallback allowed
+# Set HABSIM_PASSWORD environment variable in Railway deployment
+# Only require it on Railway (where the actual Flask app runs)
 LOGIN_PASSWORD = os.environ.get('HABSIM_PASSWORD')
 if not LOGIN_PASSWORD:
-    # Only allow fallback in local development (when FLASK_ENV is not production)
-    if os.environ.get('FLASK_ENV') != 'production' and os.environ.get('RAILWAY_ENVIRONMENT') is None:
-        LOGIN_PASSWORD = 'SSI Balloons'  # Local dev fallback only
-        import warnings
-        warnings.warn("HABSIM_PASSWORD not set - using default password for local development only!")
+    # Check if we're on Railway (where the Flask app actually runs)
+    is_railway = os.environ.get('RAILWAY_ENVIRONMENT') is not None or os.environ.get('RAILWAY_SERVICE_NAME') is not None
+    if is_railway:
+        # On Railway, password must be set
+        raise ValueError("HABSIM_PASSWORD environment variable must be set on Railway. Please configure it in Railway project settings.")
     else:
-        raise ValueError("HABSIM_PASSWORD environment variable must be set in production. Please configure it in Railway settings.")
+        # Not on Railway (local dev or Vercel proxy) - allow fallback
+        LOGIN_PASSWORD = 'SSI Balloons'  # Fallback for local dev/Vercel
+        import warnings
+        warnings.warn("HABSIM_PASSWORD not set - using default password. Set HABSIM_PASSWORD on Railway for production.")
 
 # Cache decorator for GET requests
 def cache_for(seconds=300):

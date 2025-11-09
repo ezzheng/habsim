@@ -81,6 +81,14 @@
             margin-bottom: 8px;
             letter-spacing: 0.5px;
         }
+        .login-header h1 a {
+            color: inherit;
+            text-decoration: none;
+            transition: opacity 0.2s;
+        }
+        .login-header h1 a:hover {
+            opacity: 0.7;
+        }
         .login-header p {
             font-size: 14px;
             color: var(--muted);
@@ -197,7 +205,7 @@
     <div class="login-container">
         <div class="login-header">
             <img src="/logo.png" alt="SSI Logo" class="login-logo">
-            <h1>HABSIM</h1>
+            <h1><a href="https://www.stanfordssi.org/" target="_blank" rel="noopener noreferrer" style="color: inherit; text-decoration: none;">HABSIM</a></h1>
             <p>High Altitude Balloon Simulator</p>
         </div>
         <form class="login-form" id="loginForm" method="POST" action="/login">
