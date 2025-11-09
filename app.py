@@ -17,20 +17,37 @@ app.config['SESSION_COOKIE_SECURE'] = True  # Required for SameSite=None
 # Sessions expire when browser closes (not permanent) - requires login every time
 # CORS configuration - allow credentials for cross-origin requests
 # Since frontend (Vercel) and backend (Railway) are on different domains,
-# we need to allow credentials. Cannot use '*' with credentials, so we allow common origins.
-# Update this list with your actual Vercel domain(s)
-CORS(app, supports_credentials=True, origins=[
-    'https://habsim-5zztxxkpc-ezzheng-projects.vercel.app',
-    'https://habsim.org',
-    'https://*.vercel.app',  # Allow all Vercel preview deployments
-    'http://localhost:3000',
-    'http://localhost:5000'
-])
+# we need to allow credentials. Use a function to dynamically allow Vercel domains.
+def cors_origin_check(origin):
+    """Check if origin is allowed for CORS"""
+    if not origin:
+        return False
+    allowed_patterns = [
+        'https://habsim-5zztxxkpc-ezzheng-projects.vercel.app',
+        'https://habsim.org',
+        'http://localhost:3000',
+        'http://localhost:5000'
+    ]
+    # Allow any Vercel domain
+    if '.vercel.app' in origin or origin.endswith('.vercel.app'):
+        return True
+    return origin in allowed_patterns
+
+CORS(app, supports_credentials=True, origins=cors_origin_check)
 Compress(app)  # Automatically compress responses (10x size reduction)
 
 # Password for authentication - read from environment variable for security
-# Set HABSIM_PASSWORD environment variable in your deployment (Railway/Vercel)
-LOGIN_PASSWORD = os.environ.get('HABSIM_PASSWORD', 'SSI Balloons')  # Default fallback for local dev
+# Set HABSIM_PASSWORD environment variable in your deployment (Railway)
+# In production, this MUST be set - no fallback allowed
+LOGIN_PASSWORD = os.environ.get('HABSIM_PASSWORD')
+if not LOGIN_PASSWORD:
+    # Only allow fallback in local development (when FLASK_ENV is not production)
+    if os.environ.get('FLASK_ENV') != 'production' and os.environ.get('RAILWAY_ENVIRONMENT') is None:
+        LOGIN_PASSWORD = 'SSI Balloons'  # Local dev fallback only
+        import warnings
+        warnings.warn("HABSIM_PASSWORD not set - using default password for local development only!")
+    else:
+        raise ValueError("HABSIM_PASSWORD environment variable must be set in production. Please configure it in Railway settings.")
 
 # Cache decorator for GET requests
 def cache_for(seconds=300):
@@ -73,6 +90,10 @@ def _check_authentication():
         path.endswith(('.css', '.js', '.png', '.jpg', '.ico', '.svg', '.woff', '.woff2', '.ttf')) or
         path in ['/paths.js', '/style.js', '/util.js', '/logo.png']):
         return None  # Let Vercel handle static files
+    
+    # Allow status/health check endpoints without authentication (they're just status checks)
+    if path in ['/sim/status', '/sim/which', '/sim/models']:
+        return None  # Allow status endpoints without auth
     
     # Check authentication for all other routes
     if not _is_authenticated():
