@@ -66,38 +66,9 @@ def _is_authenticated():
     return session.get('authenticated', False)
 
 @app.before_request
-def _check_authentication():
-    """Check authentication - only protect the frontend page, not backend API"""
-    path = request.path
-    
-    # Allow login page and login POST without authentication
-    if path == '/login':
-        return None  # Continue to login route
-    
-    # Allow static assets (served by Vercel) without authentication
-    if (path.startswith('/static/') or 
-        path.endswith(('.css', '.js', '.png', '.jpg', '.ico', '.svg', '.woff', '.woff2', '.ttf')) or
-        path in ['/paths.js', '/style.js', '/util.js', '/logo.png']):
-        return None  # Let Vercel handle static files
-    
-    # Allow ALL backend API endpoints without authentication
-    # Only the frontend page requires authentication
-    if path.startswith('/sim/'):
-        return None  # All API endpoints are public
-    
-    # Only require authentication for the main frontend page
-    if path == '/' or path == '/index.html':
-        if not _is_authenticated():
-            return redirect('/login')
-    
-    # All other routes continue normally
-    return None
-
-@app.before_request
 def _record_worker_activity():
     """Mark the worker as active so idle cleanup waits until the user is gone.
-    Excludes status/health endpoints that poll continuously.
-    Works for both authenticated and unauthenticated requests (backend API is public)."""
+    Excludes status/health endpoints that poll continuously."""
     # Don't reset idle timer for status/health endpoints that poll frequently
     excluded_paths = ['/sim/status', '/sim/models', '/sim/cache-status', '/', '/favicon.ico', '/login']
     path = request.path
@@ -271,7 +242,10 @@ def logout():
 @app.route('/')
 def index():
     """Serve main application page (requires authentication)"""
-    # Authentication is checked in before_request
+    # Check authentication only for frontend page
+    if not _is_authenticated():
+        return redirect('/login')
+    
     index_html_path = os.path.join(os.path.dirname(__file__), 'www', 'index.html')
     try:
         with open(index_html_path, 'r', encoding='utf-8') as f:
