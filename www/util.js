@@ -96,7 +96,7 @@ function getElev() {
 
     lat = document.getElementById("lat").value;
     lng = document.getElementById("lon").value;
-    fetch(URL_ROOT + "/elev?lat=" + lat + "&lon=" + lng, { signal: window.__elevAbort.signal })
+    fetch(URL_ROOT + "/elev?lat=" + lat + "&lon=" + lng, { signal: window.__elevAbort.signal, credentials: 'include' })
         .then(res => {
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             return res.json();
@@ -140,7 +140,7 @@ function getTimeremain() {
         descr = document.getElementById("desc").value;
         lat = document.getElementById("lat").value;
         lng = document.getElementById("lon").value;
-        fetch(URL_ROOT + "/elev?lat=" + lat + "&lon=" + lng)
+        fetch(URL_ROOT + "/elev?lat=" + lat + "&lon=" + lng, { credentials: 'include' })
             .then(res => res.json())
             .then((ground) => {
                 time = (alt - ground)/(3600*descr);

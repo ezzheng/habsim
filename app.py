@@ -12,14 +12,25 @@ app = Flask(__name__)
 # Configure session for authentication
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', secrets.token_hex(32))
 app.config['SESSION_COOKIE_HTTPONLY'] = True
-app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
-app.config['SESSION_COOKIE_SECURE'] = os.environ.get('FLASK_ENV') == 'production'  # HTTPS only in production
+app.config['SESSION_COOKIE_SAMESITE'] = 'None'  # Allow cross-origin cookies
+app.config['SESSION_COOKIE_SECURE'] = True  # Required for SameSite=None
 # Sessions expire when browser closes (not permanent) - requires login every time
-CORS(app)
+# CORS configuration - allow credentials for cross-origin requests
+# Since frontend (Vercel) and backend (Railway) are on different domains,
+# we need to allow credentials. Cannot use '*' with credentials, so we allow common origins.
+# Update this list with your actual Vercel domain(s)
+CORS(app, supports_credentials=True, origins=[
+    'https://habsim-5zztxxkpc-ezzheng-projects.vercel.app',
+    'https://habsim.org',
+    'https://*.vercel.app',  # Allow all Vercel preview deployments
+    'http://localhost:3000',
+    'http://localhost:5000'
+])
 Compress(app)  # Automatically compress responses (10x size reduction)
 
-# Password for authentication
-LOGIN_PASSWORD = "SSI Balloons"
+# Password for authentication - read from environment variable for security
+# Set HABSIM_PASSWORD environment variable in your deployment (Railway/Vercel)
+LOGIN_PASSWORD = os.environ.get('HABSIM_PASSWORD', 'SSI Balloons')  # Default fallback for local dev
 
 # Cache decorator for GET requests
 def cache_for(seconds=300):

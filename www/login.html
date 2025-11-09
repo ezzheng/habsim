@@ -62,6 +62,18 @@
             text-align: center;
             margin-bottom: 32px;
         }
+        .login-logo {
+            width: 80px;
+            height: 80px;
+            margin: 0 auto 20px;
+            display: block;
+            object-fit: contain;
+            opacity: 0.9;
+            transition: opacity 0.2s;
+        }
+        .login-logo:hover {
+            opacity: 1;
+        }
         .login-header h1 {
             font-size: 28px;
             font-weight: 700;
@@ -173,12 +185,18 @@
             .login-header h1 {
                 font-size: 24px;
             }
+            .login-logo {
+                width: 64px;
+                height: 64px;
+                margin-bottom: 16px;
+            }
         }
     </style>
 </head>
 <body>
     <div class="login-container">
         <div class="login-header">
+            <img src="/logo.png" alt="SSI Logo" class="login-logo">
             <h1>HABSIM</h1>
             <p>High Altitude Balloon Simulator</p>
         </div>
