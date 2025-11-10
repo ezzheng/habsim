@@ -448,6 +448,9 @@ def singlezpb(timestamp, lat, lon, alt, equil, eqtime, asc, desc, model):
         # ========================================================================
         # Calculate ascent duration: time to climb from launch (alt) to burst (equil)
         # Formula: distance / rate / 3600 (convert seconds to hours)
+        #   - (equil - alt): Vertical distance to climb (meters)
+        #   - asc: Ascent rate (m/s)
+        #   - Divide by 3600 to convert seconds to hours
         # If already at burst altitude, duration is 0
         dur = 0 if equil == alt else (equil - alt) / asc / 3600
         
@@ -458,7 +461,8 @@ def singlezpb(timestamp, lat, lon, alt, equil, eqtime, asc, desc, model):
         # - dur: Maximum duration (hours) - stops when burst altitude reached
         # - alt: Starting altitude (meters)
         # - model: Weather model to use
-        # - elevation=False: Don't use elevation data during ascent
+        # - elevation=False: Skip ground elevation checks during ascent (balloon is going up,
+        #   so it won't hit ground. This avoids unnecessary elevation lookups for performance)
         rise = simulate.simulate(timestamp, lat, lon, asc, 240, dur, alt, model, elevation=False)
         
         # Extract final position from ascent phase to use as starting point for coast
@@ -476,6 +480,8 @@ def singlezpb(timestamp, lat, lon, alt, equil, eqtime, asc, desc, model):
         # - eqtime: Duration (hours) - how long to float at equilibrium
         # - alt: Current altitude (burst altitude, stays constant)
         # - model: Same weather model
+        # - elevation=True (default): Use elevation checks (though not needed at high altitude,
+        #   this is the default behavior for consistency)
         coast = simulate.simulate(timestamp, lat, lon, 0, 240, eqtime, alt, model)
         
         # Extract final position from coast phase to use as starting point for descent
@@ -488,15 +494,23 @@ def singlezpb(timestamp, lat, lon, alt, equil, eqtime, asc, desc, model):
         # ========================================================================
         # Calculate descent duration: time to fall from burst altitude to ground
         # Formula: altitude / descent_rate / 3600 (convert seconds to hours)
+        #   - alt: Current altitude (burst altitude in meters)
+        #   - desc: Descent rate (m/s, positive value)
+        #   - Divide by 3600 to convert seconds to hours
+        # Note: This is an estimate assuming ground is at 0m. The actual simulation
+        # will stop when elevation=True detects the balloon hits the ground.
         dur = (alt) / desc / 3600
         
         # Simulate descent phase:
         # - timestamp, lat, lon: Final position from coast phase
         # - -desc: Descent rate (negative, m/s) - negative because descending
         # - 240: Step size (seconds) - same as other phases
-        # - dur: Maximum duration (hours) - stops when ground is reached
+        # - dur: Maximum duration (hours) - estimate, actual stop is when ground is hit
         # - alt: Starting altitude (burst altitude)
         # - model: Same weather model
+        # - elevation=True (default): CRITICAL - Check ground elevation and stop simulation
+        #   when balloon.alt < ground_elevation. This ensures the balloon stops at the actual
+        #   ground level (which may be above sea level) rather than continuing below ground.
         fall = simulate.simulate(timestamp, lat, lon, -desc, 240, dur, alt, model)
         
         # Return all three trajectory phases
