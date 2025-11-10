@@ -1,23 +1,47 @@
-//Maps initialization
-var element = document.getElementById("map");
-var map = new google.maps.Map(element, {
-    center: new google.maps.LatLng(37.4, -121.5),
-    zoom: 9,
-    mapTypeId: "OSM",
-    zoomControl: false,
-    gestureHandling: 'greedy',
-    mapTypeControl: true,
-    mapTypeControlOptions: {
-        position: google.maps.ControlPosition.BOTTOM_LEFT
-    },
-    fullscreenControl: true,
-    fullscreenControlOptions: {
-        position: google.maps.ControlPosition.BOTTOM_RIGHT
-    },
-    streetViewControl: false
-});
-// Make map accessible globally
-window.map = map;
+//Maps initialization - wait for layout to be ready
+function initMap() {
+    var element = document.getElementById("map");
+    if (!element) {
+        // Retry if element not ready
+        setTimeout(initMap, 100);
+        return;
+    }
+    var map = new google.maps.Map(element, {
+        center: new google.maps.LatLng(37.4, -121.5),
+        zoom: 9,
+        mapTypeId: "OSM",
+        zoomControl: false,
+        gestureHandling: 'greedy',
+        mapTypeControl: true,
+        mapTypeControlOptions: {
+            position: google.maps.ControlPosition.BOTTOM_LEFT
+        },
+        fullscreenControl: true,
+        fullscreenControlOptions: {
+            position: google.maps.ControlPosition.BOTTOM_RIGHT
+        },
+        streetViewControl: false
+    });
+    // Make map accessible globally
+    window.map = map;
+    
+    // Trigger resize after a short delay to ensure container has dimensions
+    setTimeout(function() {
+        google.maps.event.trigger(map, 'resize');
+    }, 200);
+    
+    return map;
+}
+
+// Initialize map when DOM is ready
+var map;
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', function() {
+        setTimeout(initMap, 100); // Small delay to let layout adjust
+    });
+} else {
+    setTimeout(initMap, 100); // Small delay to let layout adjust
+}
 var clickMarker = null;
 var heatmapLayer = null; // Global heatmap layer for Monte Carlo visualization
 google.maps.event.addListener(map, 'click', function (event) {
