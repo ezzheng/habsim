@@ -164,7 +164,9 @@ async function habmc(){
     
 }
 function toTimestamp(year,month,day,hour,minute){
-    var datum = new Date(Date.UTC(year,month-1,day,hour,minute));
+    // Create date in local time, then convert to UTC timestamp
+    // This allows users to enter local time and it gets converted to UTC for the simulation
+    var datum = new Date(year,month-1,day,hour,minute);
     return datum.getTime()/1000;
 }
 
