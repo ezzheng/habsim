@@ -284,12 +284,12 @@ HABSIM uses a multi-layer caching strategy optimized for Railway (max 32GB RAM, 
   - Monte Carlo adds trajectory computation overhead (~420KB-2MB for results)
 - **CPU**: High (32 ThreadPoolExecutor workers + 32 Gunicorn threads, CPU-bound with pre-loaded arrays)
 - **Process**: 
-  - Check if files exist on disk → download from S3 if missing
+  - Check if files exist on disk → download from S3 via `get_object()` if missing (streaming, 1MB chunks)
   - Create simulators with pre-loaded arrays (ensemble mode) → cache in RAM
   - **Monte Carlo Generation**: Generate 20 parameter perturbations (random variations in launch conditions)
   - Run 21 ensemble paths + 420 Monte Carlo simulations in parallel (441 total)
   - Simulation runs CPU-bound (arrays in RAM, no disk I/O during simulation)
-  - Files cached on disk for subsequent runs (no additional egress)
+  - Files cached on disk for subsequent runs (no additional S3 egress)
 - **Output**: Returns both `paths` (21 ensemble trajectories) and `heatmap_data` (420 landing positions)
   - **Monte Carlo Perturbations**: ±0.1° lat/lon (≈ ±11km), ±50m altitude, ±200m equilibrium altitude, ±10% equilibrium time, ±0.1 m/s ascent/descent rates
   - **Heatmap Visualization**: 420 landing positions aggregated into probability density contours (cyan → red gradient)
@@ -303,5 +303,5 @@ HABSIM uses a multi-layer caching strategy optimized for Railway (max 32GB RAM, 
 ### After Ensemble Completes
 - **Trim window**: `_periodic_cache_trim()` collapses the cache back to 5 simulators once the 60 s ensemble timer expires (still capped at 5 min total).
 - **Idle cleanup**: If no further requests arrive for ~3 min, `_idle_memory_cleanup()` purges remaining simulators, runs multi-pass GC, and calls `malloc_trim(0)` so RSS returns close to cold-start levels.
-- **Disk cache**: Wind files stay on disk, so the next ensemble rebuilds simulators from local storage instead of redownloading from S3.
+- **Disk cache**: Wind files stay on disk, so the next ensemble rebuilds simulators from local storage instead of redownloading from S3 via `get_object()`.
 - **Maximum Duration**: Even with consecutive ensemble calls, cache will force trim after 5 minutes to prevent memory bloat

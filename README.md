@@ -46,12 +46,16 @@ This is an offshoot of the prediction server developed for the Stanford Space In
 
 ### Data Pipeline
 - **`gefs.py`** - GEFS file downloader with LRU cache and AWS S3 integration
-  - Downloads from AWS S3 bucket via boto3 SDK
-  - LRU eviction policy: max 25 weather files (~7.7GB), `worldelev.npy` (451MB) always kept
-  - Files cached on disk with access-time tracking
-  - Automatic cleanup before new downloads when limit exceeded
-  - Robust download with per-file locking, longer timeouts (20 min for large files), progress logging, stall detection
-  - Pre-downloads `worldelev.npy` at startup to avoid on-demand download failures
+  - **Storage Backend**: AWS S3 via boto3 SDK (`boto3.client('s3')`)
+  - **Authentication**: IAM credentials (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`) with region (`AWS_REGION`)
+  - **Bucket**: Configurable via `S3_BUCKET_NAME` env var (default: `habsim-storage`)
+  - **Client Configuration**: Dual S3 clients - main client (32 connections, 3 retries) for large files, status client (4 connections, 2 retries) for `whichgefs` checks
+  - **Operations**: `get_object()` for downloads (streaming), `upload_file()` for uploads (auto-multipart), `delete_object()` for cleanup, `list_objects_v2()` for listing
+  - **Error Handling**: `ClientError` exceptions with `NoSuchKey` detection for missing files
+  - **LRU Eviction**: Max 25 weather files (~7.7GB), `worldelev.npy` (451MB) always kept
+  - **Caching**: Files cached on disk with access-time tracking, automatic cleanup before new downloads
+  - **Download Features**: Per-file locking (fcntl), extended timeouts (30 min for large files), progress logging, stall detection (120s), NPZ validation
+  - **Pre-warming**: Pre-downloads `worldelev.npy` at startup to avoid on-demand failures
 
 - **`elev.py`** - Elevation data loader
   - Loads preprocessed `worldelev.npy` (global 0.008° resolution array)
@@ -119,7 +123,8 @@ This is an offshoot of the prediction server developed for the Stanford Space In
 
 - **`requirements.txt`** - Python package dependencies
   - `flask==3.0.2`, `flask-cors==4.0.0`, `flask-compress==1.15` (Gzip compression)
-  - `numpy==1.26.4` (numerical computing), `requests==2.32.3` (HTTP library), `gunicorn==22.0.0`, `boto3==1.35.0` (AWS S3 SDK)
+  - `numpy==1.26.4` (numerical computing), `requests==2.32.3` (HTTP library), `gunicorn==22.0.0`
+  - `boto3==1.35.0` (AWS S3 SDK for cloud storage operations)
 
 - **`vercel.json`** - Vercel deployment configuration
   - Routes `/sim/*` → Python build (`app.py`), `/*` → static files (`www/`)
@@ -135,11 +140,15 @@ This is an offshoot of the prediction server developed for the Stanford Space In
 ## Data Storage
 
 ### AWS S3 Storage (Cloud)
-- **Location**: AWS S3 bucket (`habsim-storage`)
+- **Location**: AWS S3 bucket (`habsim-storage`, configurable via `S3_BUCKET_NAME`)
+- **Region**: `us-west-1` (configurable via `AWS_REGION`)
 - **Files**: 21 model `.npz` files per forecast cycle + `whichgefs` timestamp file
 - **Purpose**: Long-term storage, source of truth for weather datasets
-- **Access pattern**: First request per worker per model hits S3; subsequent accesses come from local disk cache
-- **Authentication**: Uses AWS IAM credentials (access key ID and secret access key) for secure access
+- **SDK**: boto3 (`boto3.client('s3')`) with adaptive retries and connection pooling
+- **Authentication**: IAM credentials via environment variables (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`)
+- **Access Pattern**: First request per worker per model hits S3 via `get_object()`; subsequent accesses use local disk cache
+- **Upload**: GitHub Actions auto-downloader uses `upload_file()` (auto-multipart for large files) every 6 hours
+- **Cleanup**: Old model files deleted via `delete_object()` when new cycle uploads complete
 
 ### Railway Instance (Local Disk Cache)
 - **Location**: `/app/data/gefs` on Railway (persistent volume if mounted, otherwise ephemeral storage)
