@@ -67,14 +67,18 @@
         }
         /* Top bar */
         #info {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
             width: 100%;
             max-width: none !important;
             padding: 0 !important;
             margin: 0 !important;
-            top: 0px;
             background-color: transparent;
             border-bottom: none;
             box-shadow: none;
+            z-index: 1000;
         }
         .topbar {
             display: flex;
@@ -265,7 +269,7 @@
         .toggle {
             border: solid 1px #a2a2a2;
         }
-        /* Parameter panel - overlay that slides down from top */
+        /* Parameter panel - overlay that slides down from bottom of nav bar */
         #param-panel {
             position: fixed;
             top: var(--nav-height, 0px);
@@ -278,16 +282,18 @@
             overflow-x: hidden;
             width: 100%;
             box-sizing: border-box;
-            z-index: 1001;
+            z-index: 999;
             -webkit-overflow-scrolling: touch;
-            will-change: transform;
+            will-change: transform, opacity;
             transform: translateY(0);
-            transition: transform 300ms cubic-bezier(0.2, 0.8, 0.2, 1);
+            opacity: 1;
+            transition: transform 300ms cubic-bezier(0.2, 0.8, 0.2, 1), opacity 300ms cubic-bezier(0.2, 0.8, 0.2, 1);
             box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
         }
         #param-panel.collapsed {
-            transform: translateY(-100%);
+            transform: translateY(calc(-100% - 1px));
             pointer-events: none;
+            opacity: 0;
         }
         /* No motion block unnecessary now */
         .param-grid {
