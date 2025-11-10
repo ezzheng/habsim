@@ -364,6 +364,12 @@
         .param-field.placeholder {
             visibility: hidden;
         }
+        /* Desktop: param-row-mobile groups stack vertically (default behavior) */
+        .param-row-mobile {
+            display: flex;
+            flex-direction: column;
+            gap: var(--space-sm);
+        }
         .spinner {
             width: 14px;
             height: 14px;
