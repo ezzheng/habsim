@@ -380,6 +380,10 @@
         .param-field-time-mobile {
             display: none;
         }
+        /* Hide mobile param-row-mobile groups on desktop (they're in third column) */
+        .param-column.right .param-row-mobile {
+            display: none;
+        }
         .spinner {
             width: 14px;
             height: 14px;
@@ -552,6 +556,10 @@
             }
             .param-field-time-desktop {
                 display: none;
+            }
+            /* Show mobile param-row-mobile groups on mobile */
+            .param-column.right .param-row-mobile {
+                display: flex;
             }
             .param-row-mobile {
                 flex-direction: row;
