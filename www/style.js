@@ -145,9 +145,12 @@ function setMode(mode){
         gstep.style.display = "none";
         if (gtimer) gtimer.style.display = "flex";
         if (eqbtn) eqbtn.style.visibility = "visible";
-        document.getElementById("asc").value = 4;
-        document.getElementById("equil").value = 30000;
-        document.getElementById("desc").value = 8;
+        const ascEl = document.getElementById("asc");
+        const equilEl = document.getElementById("equil");
+        const descEl = document.getElementById("desc");
+        if (ascEl) ascEl.value = 4;
+        if (equilEl) equilEl.value = 30000;
+        if (descEl) descEl.value = 8;
         var remain = document.getElementById("timeremain");
         if (remain) remain.style.visibility = "visible";
     } else if (mode === "ZPB"){
@@ -157,10 +160,14 @@ function setMode(mode){
         gstep.style.display = "none";
         if (gtimer) gtimer.style.display = "flex";
         if (eqbtn) eqbtn.style.visibility = "visible";
-        document.getElementById("asc").value = 4;
-        document.getElementById("equil").value = 30000;
-        document.getElementById("eqtime").value = 1;
-        document.getElementById("desc").value = 8;
+        const ascEl = document.getElementById("asc");
+        const equilEl = document.getElementById("equil");
+        const eqtimeEl = document.getElementById("eqtime");
+        const descEl = document.getElementById("desc");
+        if (ascEl) ascEl.value = 4;
+        if (equilEl) equilEl.value = 30000;
+        if (eqtimeEl) eqtimeEl.value = 1;
+        if (descEl) descEl.value = 8;
         var remain = document.getElementById("timeremain");
         if (remain) remain.style.visibility = "visible";
     } else { // FLOAT
@@ -170,12 +177,18 @@ function setMode(mode){
         gstep.style.display = "flex";
         if (gtimer) gtimer.style.display = "none";
         if (eqbtn) eqbtn.style.visibility = "hidden";
-        document.getElementById("asc").value = 4;
-        document.getElementById("equil").value = 30000;
-        document.getElementById("desc").value = 8;
-        document.getElementById("coeff").value = 0.5;
-        document.getElementById("dur").value = 48;
-        document.getElementById("step").value = 240;
+        const ascEl = document.getElementById("asc");
+        const equilEl = document.getElementById("equil");
+        const descEl = document.getElementById("desc");
+        const coeffEl = document.getElementById("coeff");
+        const durEl = document.getElementById("dur");
+        const stepEl = document.getElementById("step");
+        if (ascEl) ascEl.value = 4;
+        if (equilEl) equilEl.value = 30000;
+        if (descEl) descEl.value = 8;
+        if (coeffEl) coeffEl.value = 0.5;
+        if (durEl) durEl.value = 48;
+        if (stepEl) stepEl.value = 240;
         var remain = document.getElementById("timeremain");
         if (remain) remain.style.visibility = "hidden";
     }
