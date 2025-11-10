@@ -343,8 +343,8 @@
             position: relative;
         }
         .field-input:focus { 
-            outline: 2px solid var(--brand-600); 
-            outline-offset: 1px;
+            outline: none;
+            border-color: var(--brand-600);
             box-shadow: 0 0 0 3px rgba(17, 24, 39, 0.1), 0 0 20px rgba(17, 24, 39, 0.15);
             transform: scale(1.02);
         }
@@ -357,11 +357,12 @@
         .field-input-ripple {
             position: absolute;
             border-radius: 50%;
-            background: rgba(17, 24, 39, 0.15);
+            background: rgba(17, 24, 39, 0.1);
             transform: scale(0);
             animation: ripple 0.6s ease-out;
             pointer-events: none;
             z-index: 0;
+            will-change: transform, opacity;
         }
         @keyframes ripple {
             to {
@@ -1227,13 +1228,13 @@
                 const wrapper = input.parentElement;
                 if (wrapper && wrapper.classList.contains('field-inputs')) {
                     wrapper.style.position = 'relative';
-                    wrapper.style.overflow = 'hidden';
+                    wrapper.style.overflow = 'visible';
                     
                     input.addEventListener('focus', function() {
                         const ripple = document.createElement('div');
                         ripple.classList.add('field-input-ripple');
                         const rect = wrapper.getBoundingClientRect();
-                        const size = Math.max(rect.width, rect.height);
+                        const size = Math.max(rect.width, rect.height) * 2;
                         ripple.style.width = ripple.style.height = size + 'px';
                         ripple.style.left = (rect.width / 2 - size / 2) + 'px';
                         ripple.style.top = (rect.height / 2 - size / 2) + 'px';
