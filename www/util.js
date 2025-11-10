@@ -56,11 +56,10 @@ function setupMapListeners() {
     google.maps.event.addListener(map, 'click', function (event) {
         displayCoordinates(event.latLng);
     });
-}
-
-//Define OSM map type pointing at the OpenStreetMap tile server
-map.mapTypes.set("OSM", new google.maps.ImageMapType({
-    getTileUrl: function(coord, zoom) {
+    
+    //Define OSM map type pointing at the OpenStreetMap tile server
+    map.mapTypes.set("OSM", new google.maps.ImageMapType({
+        getTileUrl: function(coord, zoom) {
         // "Wrap" x (longitude) at 180th meridian properly
         // NB: Don't touch coord.x: because coord param is by reference, and changing its x property breaks something in Google's lib
         var tilesPerGlobe = 1 << zoom;
