@@ -423,7 +423,7 @@ def singlepredict():
     return jsonify(path)
 
 
-def singlezpb(timestamp, lat, lon, alt, equil, eqtime, asc, desc, model):
+def singlezpb(timestamp, lat, lon, alt, equil, eqtime, asc, desc, model, coefficient=1.0):
     """
     Simulate a zero-pressure balloon (ZPB) flight in three phases: ascent, coast/float, and descent.
     
@@ -436,6 +436,7 @@ def singlezpb(timestamp, lat, lon, alt, equil, eqtime, asc, desc, model):
     - asc: Ascent rate (m/s) - vertical velocity during ascent phase
     - desc: Descent rate (m/s) - vertical velocity during descent phase (positive value, will be negated)
     - model: GEFS weather model number (0-20)
+    - coefficient: Floating coefficient (default 1.0) - scales horizontal wind effect
     
     Returns:
     - Tuple of (rise, coast, fall) - three trajectory arrays for each flight phase
@@ -463,7 +464,8 @@ def singlezpb(timestamp, lat, lon, alt, equil, eqtime, asc, desc, model):
         # - model: Weather model to use
         # - elevation=False: Skip ground elevation checks during ascent (balloon is going up,
         #   so it won't hit ground. This avoids unnecessary elevation lookups for performance)
-        rise = simulate.simulate(timestamp, lat, lon, asc, 240, dur, alt, model, elevation=False)
+        # - coefficient: Floating coefficient - scales horizontal wind effect
+        rise = simulate.simulate(timestamp, lat, lon, asc, 240, dur, alt, model, coefficient=coefficient, elevation=False)
         
         # Extract final position from ascent phase to use as starting point for coast
         if len(rise) > 0:
@@ -482,7 +484,8 @@ def singlezpb(timestamp, lat, lon, alt, equil, eqtime, asc, desc, model):
         # - model: Same weather model
         # - elevation=True (default): Use elevation checks (though not needed at high altitude,
         #   this is the default behavior for consistency)
-        coast = simulate.simulate(timestamp, lat, lon, 0, 240, eqtime, alt, model)
+        # - coefficient: Floating coefficient - scales horizontal wind effect
+        coast = simulate.simulate(timestamp, lat, lon, 0, 240, eqtime, alt, model, coefficient=coefficient)
         
         # Extract final position from coast phase to use as starting point for descent
         if len(coast) > 0:
@@ -511,7 +514,8 @@ def singlezpb(timestamp, lat, lon, alt, equil, eqtime, asc, desc, model):
         # - elevation=True (default): CRITICAL - Check ground elevation and stop simulation
         #   when balloon.alt < ground_elevation. This ensures the balloon stops at the actual
         #   ground level (which may be above sea level) rather than continuing below ground.
-        fall = simulate.simulate(timestamp, lat, lon, -desc, 240, dur, alt, model)
+        # - coefficient: Floating coefficient - scales horizontal wind effect
+        fall = simulate.simulate(timestamp, lat, lon, -desc, 240, dur, alt, model, coefficient=coefficient)
         
         # Return all three trajectory phases
         return (rise, coast, fall)
@@ -574,13 +578,15 @@ def spaceshot():
     base_equil = float(args['equil'])
     base_eqtime = float(args['eqtime'])
     base_asc, base_desc = float(args['asc']), float(args['desc'])
+    # Coefficient defaults to 1.0 if not provided (STANDARD/ZPB modes don't send it)
+    base_coeff = float(args.get('coeff', 1.0))
     
     # Optional: number of perturbations (default 20)
     num_perturbations = int(args.get('num_perturbations', 20))
     
     # Generate unique request ID for progress tracking
     # Use simple hash that's easy to replicate on client side
-    request_key = f"{args['timestamp']}_{args['lat']}_{args['lon']}_{args['alt']}_{args['equil']}_{args['eqtime']}_{args['asc']}_{args['desc']}"
+    request_key = f"{args['timestamp']}_{args['lat']}_{args['lon']}_{args['alt']}_{args['equil']}_{args['eqtime']}_{args['asc']}_{args['desc']}_{base_coeff}"
     # Simple hash function (same as client-side)
     hash_val = 0
     for char in request_key:
@@ -640,10 +646,12 @@ def spaceshot():
     # - Equilibrium altitude: ±200m - burst altitude uncertainty
     # - Equilibrium time: ±0.5 hours - timing variation at equilibrium (absolute, works even when base = 0)
     # - Ascent/Descent rate: ±0.5 m/s - rate measurement uncertainty
+    # - Floating coefficient: 0.9 to 1.0, weighted towards 0.95-1.0 (70% in [0.95, 1.0], 30% in [0.9, 0.95])
     #
-    # Note: Using uniform random distribution for perturbations. If landing positions
-    # appear circular/concentric, it's likely due to Google Maps heatmap smoothing
-    # (applies Gaussian-like aggregation), not the perturbation distribution itself.
+    # Note: Using uniform random distribution for most perturbations. Coefficient uses weighted
+    # distribution to favor values closer to 1.0. If landing positions appear circular/concentric,
+    # it's likely due to Google Maps heatmap smoothing (applies Gaussian-like aggregation),
+    # not the perturbation distribution itself.
     # ============================================================================
     perturbations = []
     # Use random seed based on request parameters for reproducibility while maintaining randomness
@@ -662,6 +670,15 @@ def spaceshot():
         pert_asc = max(0.1, base_asc + random.uniform(-0.5, 0.5))  # ±0.5 m/s, min 0.1
         pert_desc = max(0.1, base_desc + random.uniform(-0.5, 0.5))  # ±0.5 m/s, min 0.1
         
+        # Floating coefficient perturbation: 0.9 to 1.0, weighted towards 0.95-1.0
+        # 90% chance: uniform in [0.95, 1.0] (higher values more likely)
+        # 10% chance: uniform in [0.9, 0.95] (lower values less likely)
+        # Note: Absolute range [0.9, 1.0], not relative to base_coeff
+        if random.random() < 0.9:
+            pert_coeff = random.uniform(0.95, 1.0)
+        else:
+            pert_coeff = random.uniform(0.9, 0.95)
+        
         perturbations.append({
             'perturbation_id': i,
             'lat': pert_lat,
@@ -670,7 +687,8 @@ def spaceshot():
             'equil': pert_equil,
             'eqtime': pert_eqtime,
             'asc': pert_asc,
-            'desc': pert_desc
+            'desc': pert_desc,
+            'coeff': pert_coeff
         })
     
     from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -709,7 +727,8 @@ def spaceshot():
         try:
             # Run full trajectory simulation with perturbed parameters
             result = singlezpb(timestamp, pert['lat'], pert['lon'], pert['alt'], 
-                             pert['equil'], pert['eqtime'], pert['asc'], pert['desc'], model)
+                             pert['equil'], pert['eqtime'], pert['asc'], pert['desc'], model,
+                             coefficient=pert.get('coeff', 1.0))
             
             if result == "error" or result == "alt error":
                 return None
