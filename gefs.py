@@ -320,6 +320,52 @@ def _cleanup_old_cache_files():
 
 
 def _ensure_cached(file_name: str) -> Path:
+    """
+    Ensure a GEFS file is cached on disk, downloading from S3 if necessary.
+    
+    This function implements robust S3 download with the following reliability features:
+    
+    **File Handle Management:**
+    - Uses context managers (`with open()`) to ensure files are always closed
+    - Proper cleanup of file handles even on exceptions
+    - os.fsync() to ensure data is synced to disk (with error handling)
+    
+    **Exception Handling:**
+    - Distinguishes fatal errors (file not found) from retryable errors (network issues)
+    - Catches ClientError (S3 API errors), IOError (write/stall errors), and unexpected errors
+    - All errors are properly logged with retry attempt information
+    
+    **Flushing and Syncing:**
+    - Periodic flushing every 10MB during download to prevent data loss
+    - os.fsync() before closing to ensure data is persisted to disk
+    - Error handling for fsync failures (non-critical on some file systems)
+    
+    **Socket Timeout:**
+    - Configures socket timeout for large files (30 minutes) if supported
+    - Gracefully handles cases where timeout is not supported
+    
+    **Temporary File Cleanup:**
+    - Partial downloads are always cleaned up on failure
+    - Cleanup happens in all error paths (IOError, ClientError, unexpected)
+    - Previous incomplete downloads are cleaned up before retry attempts
+    
+    **File Integrity Verification:**
+    - Verifies file size matches expected ContentLength from S3
+    - Validates file is non-empty and not suspiciously small
+    - NPZ file structure validation before committing to cache
+    
+    **Retry Logic:**
+    - Up to 5 retries for NPZ files, 3 for other large files
+    - Exponential backoff (2s, 4s, 8s, 16s, 32s)
+    - Distinguishes retryable vs fatal errors in logs
+    
+    Returns:
+        Path to cached file (ready for memory-mapped access)
+        
+    Raises:
+        FileNotFoundError: If file doesn't exist in S3 (fatal, no retry)
+        IOError: For retryable errors (network, incomplete downloads, etc.)
+    """
     cache_path = _CACHE_DIR / file_name
     
     # Fast path: Check if file exists BEFORE any locking
@@ -477,41 +523,46 @@ def _ensure_cached(file_name: str) -> Path:
                     pass
             
             try:
-                # Create temp file first to ensure we can write (catches permission errors early)
-                tmp_path.parent.mkdir(parents=True, exist_ok=True)
-                temp_file_created = False
-                
+                # Get object metadata first to check if it exists and get size
+                # This helps distinguish between fatal (file not found) and retryable errors
                 try:
-                    # Get object metadata first to check if it exists and get size
-                    try:
-                        head_response = _S3_CLIENT.head_object(Bucket=_BUCKET, Key=file_name)
-                        expected_size = head_response.get('ContentLength')
-                    except ClientError as e:
-                        if e.response['Error']['Code'] == '404' or e.response['Error']['Code'] == 'NoSuchKey':
-                            error_msg = f"File not found in S3: {file_name}"
-                            logging.error(error_msg)
-                            raise FileNotFoundError(f"{error_msg}. The model file may not have been uploaded yet, or the model timestamp may be incorrect. Check S3 storage or verify the model timestamp in 'whichgefs'.")
-                        raise
-                    
-                    # Download file with streaming
-                    # Use streaming mode to handle large files efficiently
+                    head_response = _S3_CLIENT.head_object(Bucket=_BUCKET, Key=file_name)
+                    expected_size = head_response.get('ContentLength')
+                except ClientError as e:
+                    error_code = e.response.get('Error', {}).get('Code', '')
+                    if error_code in ('404', 'NoSuchKey'):
+                        # File not found - fatal error, don't retry
+                        error_msg = f"File not found in S3: {file_name}"
+                        logging.error(error_msg)
+                        raise FileNotFoundError(f"{error_msg}. The model file may not have been uploaded yet, or the model timestamp may be incorrect. Check S3 storage or verify the model timestamp in 'whichgefs'.")
+                    # Other S3 errors (403, 500, etc.) - retryable
+                    logging.warning(f"S3 head_object failed for {file_name}: {e} (retryable, attempt {attempt + 1}/{max_retries})")
+                    raise IOError(f"S3 metadata error: {e}")
+                
+                # Download file with streaming
+                # Use streaming mode to handle large files efficiently
+                response = None
+                body = None
+                try:
                     response = _S3_CLIENT.get_object(Bucket=_BUCKET, Key=file_name)
                     body = response['Body']
-                    # Ensure body is in streaming mode (it should be by default)
-                    if hasattr(body, 'set_socket_timeout'):
-                        # Set socket timeout for large files
-                        body.set_socket_timeout(1800)  # 30 minutes
                     
+                    # Configure socket timeout for large files (if supported)
+                    # Some response bodies may not support this, so check first
+                    if hasattr(body, 'set_socket_timeout'):
+                        try:
+                            body.set_socket_timeout(1800)  # 30 minutes
+                        except (AttributeError, TypeError):
+                            # Non-critical: socket timeout not supported, continue anyway
+                            pass
+                    
+                    # Create temp file and download with proper resource management
+                    tmp_path.parent.mkdir(parents=True, exist_ok=True)
                     bytes_written = 0
                     last_chunk_time = time.time()
-                    temp_file_created = False
-                    fh = None
-                    try:
-                        # Create temp file first to ensure we can write
-                        tmp_path.parent.mkdir(parents=True, exist_ok=True)
-                        fh = open(tmp_path, 'wb')
-                        temp_file_created = True
-                        
+                    
+                    # Use context manager for file handle to ensure it's always closed
+                    with open(tmp_path, 'wb') as fh:
                         try:
                             while True:
                                 chunk = body.read(_CHUNK_SIZE)
@@ -521,15 +572,16 @@ def _ensure_cached(file_name: str) -> Path:
                                 current_time = time.time()
                                 
                                 # Check for connection timeout (no data for 120 seconds)
-                                # Increased from 60s to 120s to tolerate network slowness
+                                # This detects stalled downloads (retryable)
                                 if is_large_file and (current_time - last_chunk_time) > 120:
-                                    raise IOError(f"Download stalled: no data received for 120 seconds")
+                                    raise IOError(f"Download stalled: no data received for 120 seconds (retryable)")
                                 
                                 fh.write(chunk)
                                 bytes_written += len(chunk)
                                 last_chunk_time = current_time
                                 
-                                # Flush periodically for large files to ensure data is written
+                                # Flush periodically for large files to ensure data is written to disk
+                                # This prevents data loss if process crashes mid-download
                                 if is_large_file and bytes_written % (10 * 1024 * 1024) < _CHUNK_SIZE:
                                     fh.flush()
                                 
@@ -541,40 +593,67 @@ def _ensure_cached(file_name: str) -> Path:
                                         logging.info(f"Downloading {file_name}: {mb_written:.1f}MB / {mb_total:.1f}MB ({100 * bytes_written / expected_size:.1f}%)")
                                     else:
                                         logging.info(f"Downloading {file_name}: {mb_written:.1f}MB")
-                        finally:
-                            # Always close and sync the file handle, even on error
-                            if fh is not None:
-                                fh.flush()
-                                os.fsync(fh.fileno())
-                                fh.close()
-                    except Exception as write_error:
-                        # If file was created but write failed, clean it up
-                        if tmp_path.exists():
+                            
+                            # Flush and sync to disk before closing (ensures data is persisted)
+                            fh.flush()
                             try:
-                                tmp_path.unlink()
-                            except:
+                                # os.fsync() ensures data is written to disk, not just buffer
+                                # This is critical for large files to prevent data loss
+                                os.fsync(fh.fileno())
+                            except (OSError, AttributeError):
+                                # Non-critical: fsync failed (e.g., on some file systems)
+                                # Data should still be written due to flush()
                                 pass
-                        # More descriptive error message
-                        if temp_file_created:
-                            raise IOError(f"Download failed: error writing {file_name} (wrote {bytes_written} bytes): {write_error}")
-                        else:
-                            raise IOError(f"Download failed: could not create temp file for {file_name}: {write_error}")
-                except (ClientError, IOError) as req_error:
-                    # Network/connection errors before file creation
-                    error_msg = f"Error downloading {file_name}: {req_error}"
-                    logging.warning(f"{error_msg} (attempt {attempt + 1}/{max_retries})")
-                    raise IOError(error_msg)
+                        except Exception as write_error:
+                            # Write error during download - clean up partial file
+                            # This is a retryable error
+                            raise IOError(f"Error writing {file_name} (wrote {bytes_written} bytes): {write_error}")
+                except ClientError as s3_error:
+                    # S3 API errors (throttling, network issues, etc.) - retryable
+                    error_code = s3_error.response.get('Error', {}).get('Code', '')
+                    if error_code in ('403', '429', '500', '502', '503', '504'):
+                        # Throttling or server errors - definitely retryable
+                        logging.warning(f"S3 download error for {file_name}: {error_code} (retryable, attempt {attempt + 1}/{max_retries})")
+                        raise IOError(f"S3 error ({error_code}): {s3_error}")
+                    else:
+                        # Other S3 errors - log and retry
+                        logging.warning(f"S3 download error for {file_name}: {s3_error} (retryable, attempt {attempt + 1}/{max_retries})")
+                        raise IOError(f"S3 error: {s3_error}")
+                except IOError:
+                    # Re-raise IOErrors (stall detection, write errors) - already retryable
+                    raise
+                except Exception as unexpected_error:
+                    # Unexpected errors - log and treat as retryable
+                    logging.warning(f"Unexpected error downloading {file_name}: {unexpected_error} (retryable, attempt {attempt + 1}/{max_retries})")
+                    raise IOError(f"Unexpected download error: {unexpected_error}")
+                finally:
+                    # Ensure S3 response body is closed to free resources
+                    if body is not None:
+                        try:
+                            body.close()
+                        except:
+                            pass
                 
                 # Verify download completed successfully
+                # This is a critical step to ensure file integrity before committing
                 if not tmp_path.exists():
                     raise IOError(f"Download failed: temp file not created for {file_name} (request succeeded but no file written)")
                 
                 actual_size = tmp_path.stat().st_size
                 if actual_size == 0:
-                    raise IOError(f"Download failed: file {file_name} is empty")
+                    # Empty file - fatal error, don't retry (file exists but is corrupted)
+                    raise IOError(f"Download failed: file {file_name} is empty (fatal)")
                 
+                # Verify file size matches expected size (if available)
+                # This catches incomplete downloads that weren't detected during streaming
                 if expected_size and actual_size != expected_size:
-                    raise IOError(f"Download incomplete: {file_name} expected {expected_size} bytes, got {actual_size}")
+                    # Size mismatch - retryable error (download was incomplete)
+                    raise IOError(f"Download incomplete: {file_name} expected {expected_size} bytes, got {actual_size} (retryable)")
+                
+                # Final verification: ensure file is readable and non-empty
+                # This catches edge cases where file exists but is corrupted
+                if actual_size < 1024:  # Files should be at least 1KB
+                    raise IOError(f"Download failed: file {file_name} is suspiciously small ({actual_size} bytes) (fatal)")
                 
                 # Log successful download with size (for egress tracking)
                 size_mb = actual_size / (1024 * 1024)
@@ -591,8 +670,26 @@ def _ensure_cached(file_name: str) -> Path:
                 
                 # Success - break out of retry loop
                 break
+            except FileNotFoundError:
+                # File not found in S3 - fatal error, don't retry
+                # Clean up any partial download and release lock
+                if tmp_path.exists():
+                    try:
+                        tmp_path.unlink()
+                    except:
+                        pass
+                if lock_fd:
+                    try:
+                        import fcntl
+                        fcntl.flock(lock_fd.fileno(), fcntl.LOCK_UN)
+                        lock_fd.close()
+                    except:
+                        pass
+                # Re-raise immediately (no retry for missing files)
+                raise
             except IOError as e:
-                # Clean up incomplete download
+                # Retryable errors: network issues, incomplete downloads, write errors, stalls
+                # Clean up incomplete download before retry
                 if tmp_path.exists():
                     try:
                         tmp_path.unlink()
@@ -600,12 +697,28 @@ def _ensure_cached(file_name: str) -> Path:
                         pass
                 last_error = e
                 if attempt < max_retries - 1:
-                    # Wait before retry (exponential backoff: 2s, 4s, 8s)
+                    # Wait before retry (exponential backoff: 2s, 4s, 8s, 16s, 32s)
                     wait_time = 2 ** (attempt + 1)
-                    logging.warning(f"Download attempt {attempt + 1}/{max_retries} failed for {file_name}: {e}. Retrying in {wait_time}s...")
-                    time.sleep(wait_time)
+                    # Check if error message indicates fatal vs retryable
+                    error_str = str(e).lower()
+                    if 'fatal' in error_str:
+                        # Fatal error - don't retry
+                        logging.error(f"Download failed with fatal error for {file_name}: {e}")
+                        if lock_fd:
+                            try:
+                                import fcntl
+                                fcntl.flock(lock_fd.fileno(), fcntl.LOCK_UN)
+                                lock_fd.close()
+                            except:
+                                pass
+                        raise
+                    else:
+                        # Retryable error - log and retry
+                        logging.warning(f"Download attempt {attempt + 1}/{max_retries} failed for {file_name}: {e}. Retrying in {wait_time}s...")
+                        time.sleep(wait_time)
                 else:
                     # Last attempt failed - release lock and clean up
+                    logging.error(f"Download failed after {max_retries} attempts for {file_name}: {last_error}")
                     if lock_fd:
                         try:
                             import fcntl
@@ -615,6 +728,7 @@ def _ensure_cached(file_name: str) -> Path:
                             pass
                     raise
             except Exception as e:
+                # Unexpected errors - treat as retryable but log as warning
                 # Clean up incomplete download
                 if tmp_path.exists():
                     try:
@@ -624,10 +738,11 @@ def _ensure_cached(file_name: str) -> Path:
                 last_error = e
                 if attempt < max_retries - 1:
                     wait_time = 2 ** (attempt + 1)
-                    logging.warning(f"Download attempt {attempt + 1}/{max_retries} failed for {file_name}: {e}. Retrying in {wait_time}s...")
+                    logging.warning(f"Unexpected error on download attempt {attempt + 1}/{max_retries} for {file_name}: {e}. Retrying in {wait_time}s...")
                     time.sleep(wait_time)
                 else:
                     # Last attempt failed - release lock and clean up
+                    logging.error(f"Download failed after {max_retries} attempts for {file_name} (unexpected error): {last_error}")
                     if lock_fd:
                         try:
                             import fcntl
