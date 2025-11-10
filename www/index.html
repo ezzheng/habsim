@@ -62,17 +62,59 @@
         #custom-map-type-menu button:hover {
             background-color: #f5f5f5 !important;
         }
-        /* Ensure fullscreen control is visible on mobile */
-        .gm-fullscreen-control {
-            display: block !important;
-            visibility: visible !important;
-            opacity: 1 !important;
+        /* Custom map controls styling */
+        #custom-map-controls {
+            position: absolute;
+            bottom: 10px;
+            right: 10px;
+            z-index: 1000;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
         }
+        
+        .custom-zoom-button,
+        .custom-fullscreen-button {
+            background-color: white;
+            border: none;
+            border-radius: 2px;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+            cursor: pointer;
+            padding: 0;
+            width: 40px;
+            height: 40px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+            color: #5B5B5B;
+            transition: background-color 0.1s;
+            font-family: Roboto, Arial, sans-serif;
+            font-weight: 500;
+        }
+        
+        .custom-zoom-button:hover,
+        .custom-fullscreen-button:hover {
+            background-color: #f5f5f5;
+        }
+        
+        .custom-zoom-button:active,
+        .custom-fullscreen-button:active {
+            background-color: #e0e0e0;
+        }
+        
+        /* Mobile: Use safe-area insets for bottom offset */
         @media (max-width: 768px) {
-            .gm-fullscreen-control {
-                display: block !important;
-                visibility: visible !important;
-                opacity: 1 !important;
+            #custom-map-controls {
+                bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+                right: calc(10px + env(safe-area-inset-right, 0px));
+            }
+        }
+        
+        /* Hide in print mode */
+        @media print {
+            #custom-map-controls {
+                display: none !important;
             }
         }
         /* Top bar */
@@ -642,7 +684,7 @@
         /* Print styles for PDF export */
         @media print {
             /* Hide UI elements */
-            #info, nav, .topbar, #param-panel, .param-grid, .param-column, #sim-spinner, #custom-map-type-control, #custom-map-type-menu {
+            #info, nav, .topbar, #param-panel, .param-grid, .param-column, #sim-spinner, #custom-map-type-control, #custom-map-type-menu, #custom-map-controls {
                 display: none !important;
             }
             

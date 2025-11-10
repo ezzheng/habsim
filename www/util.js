@@ -4,13 +4,10 @@ var map = new google.maps.Map(element, {
     center: new google.maps.LatLng(37.4, -121.5),
     zoom: 9,
     mapTypeId: "OSM",
-    zoomControl: false,
+    zoomControl: false, // Disable default - we'll use custom
     gestureHandling: 'greedy',
     mapTypeControl: false, // Disable default control - we'll use custom
-    fullscreenControl: true,
-    fullscreenControlOptions: {
-        position: google.maps.ControlPosition.BOTTOM_RIGHT
-    },
+    fullscreenControl: false, // Disable default - we'll use custom
     streetViewControl: false
 });
 var clickMarker = null;
@@ -178,6 +175,137 @@ google.maps.event.addListener(map, 'click', function (event) {
         
         // Initialize active state
         updateActiveMapType(map.getMapTypeId());
+    });
+})();
+
+// Custom zoom and fullscreen controls
+(function() {
+    // Wait for map to be ready
+    google.maps.event.addListenerOnce(map, 'idle', function() {
+        // Create controls container
+        const controlsContainer = document.createElement('div');
+        controlsContainer.id = 'custom-map-controls';
+        controlsContainer.style.cssText = `
+            position: absolute;
+            bottom: 10px;
+            right: 10px;
+            z-index: 1000;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        `;
+        
+        // Zoom In button
+        const zoomInButton = document.createElement('button');
+        zoomInButton.type = 'button';
+        zoomInButton.className = 'custom-zoom-button';
+        zoomInButton.innerHTML = '+';
+        zoomInButton.title = 'Zoom in';
+        zoomInButton.onclick = function(e) {
+            e.stopPropagation();
+            map.setZoom(map.getZoom() + 1);
+        };
+        
+        // Zoom Out button
+        const zoomOutButton = document.createElement('button');
+        zoomOutButton.type = 'button';
+        zoomOutButton.className = 'custom-zoom-button';
+        zoomOutButton.innerHTML = '−';
+        zoomOutButton.title = 'Zoom out';
+        zoomOutButton.onclick = function(e) {
+            e.stopPropagation();
+            map.setZoom(map.getZoom() - 1);
+        };
+        
+        // Fullscreen button
+        const fullscreenButton = document.createElement('button');
+        fullscreenButton.type = 'button';
+        fullscreenButton.className = 'custom-fullscreen-button';
+        fullscreenButton.innerHTML = '⛶';
+        fullscreenButton.title = 'Toggle fullscreen';
+        
+        // Fullscreen functions
+        function isFullscreenSupported() {
+            return !!(document.fullscreenEnabled || 
+                     document.webkitFullscreenEnabled || 
+                     document.mozFullScreenEnabled || 
+                     document.msFullscreenEnabled);
+        }
+        
+        function getFullscreenElement() {
+            return document.fullscreenElement || 
+                   document.webkitFullscreenElement || 
+                   document.mozFullScreenElement || 
+                   document.msFullscreenElement;
+        }
+        
+        function enterFullscreen() {
+            const mapElement = document.getElementById('map');
+            if (!mapElement) return;
+            
+            if (mapElement.requestFullscreen) {
+                mapElement.requestFullscreen();
+            } else if (mapElement.webkitRequestFullscreen) {
+                mapElement.webkitRequestFullscreen();
+            } else if (mapElement.mozRequestFullScreen) {
+                mapElement.mozRequestFullScreen();
+            } else if (mapElement.msRequestFullscreen) {
+                mapElement.msRequestFullscreen();
+            }
+        }
+        
+        function exitFullscreen() {
+            if (document.exitFullscreen) {
+                document.exitFullscreen();
+            } else if (document.webkitExitFullscreen) {
+                document.webkitExitFullscreen();
+            } else if (document.mozCancelFullScreen) {
+                document.mozCancelFullScreen();
+            } else if (document.msExitFullscreen) {
+                document.msExitFullscreen();
+            }
+        }
+        
+        function updateFullscreenIcon() {
+            const isFullscreen = !!getFullscreenElement();
+            fullscreenButton.innerHTML = isFullscreen ? '⛶' : '⛶';
+            fullscreenButton.title = isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen';
+        }
+        
+        fullscreenButton.onclick = function(e) {
+            e.stopPropagation();
+            if (!isFullscreenSupported()) {
+                console.warn('Fullscreen not supported');
+                return;
+            }
+            
+            const isFullscreen = !!getFullscreenElement();
+            if (isFullscreen) {
+                exitFullscreen();
+            } else {
+                enterFullscreen();
+            }
+        };
+        
+        // Listen for fullscreen changes
+        const fullscreenEvents = ['fullscreenchange', 'webkitfullscreenchange', 'mozfullscreenchange', 'MSFullscreenChange'];
+        fullscreenEvents.forEach(function(event) {
+            document.addEventListener(event, updateFullscreenIcon);
+        });
+        
+        // Assemble controls
+        controlsContainer.appendChild(zoomInButton);
+        controlsContainer.appendChild(zoomOutButton);
+        controlsContainer.appendChild(fullscreenButton);
+        
+        // Add to map container
+        const mapContainer = document.getElementById('map');
+        if (mapContainer) {
+            mapContainer.appendChild(controlsContainer);
+        }
+        
+        // Initialize fullscreen icon
+        updateFullscreenIcon();
     });
 })();
 
