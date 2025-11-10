@@ -444,16 +444,33 @@ def _process_cleanup_queue():
 
 def _trim_cache_to_normal():
     """Trim cache back to normal size, keeping most recently used models.
-    Uses delayed cleanup queue to ensure simulators are only cleaned up after they're definitely not in use."""
+    Uses delayed cleanup queue to ensure simulators are only cleaned up after they're definitely not in use.
+    Optimized to be fast when called frequently - only processes cleanup queue if items are ready."""
     global _current_max_cache, _simulator_cache, _simulator_access_times, _ensemble_mode_until, _ensemble_mode_started, _cleanup_queue
     
-    # Process any pending cleanups first
-    _process_cleanup_queue()
-    
-    # Get memory before cleanup (for logging)
-    rss_before = _get_rss_memory_mb()
-    
     now = time.time()
+    
+    # Fast path: Quick check if trimming is needed (without processing cleanup queue)
+    with _cache_lock:
+        cache_size = len(_simulator_cache)
+        MAX_ENSEMBLE_DURATION = 300  # 5 minutes maximum
+        ensemble_expired = _ensemble_mode_until > 0 and now > _ensemble_mode_until
+        ensemble_exceeded_max = _ensemble_mode_started > 0 and (now - _ensemble_mode_started) >= MAX_ENSEMBLE_DURATION
+        needs_trim = (ensemble_expired or ensemble_exceeded_max or 
+                     cache_size > _current_max_cache or cache_size > MAX_SIMULATOR_CACHE_ENSEMBLE)
+    
+    # Only process cleanup queue if we're actually going to trim (saves time on frequent calls)
+    if needs_trim:
+        # Quick check if cleanup queue has items ready (non-blocking check)
+        with _cleanup_queue_lock:
+            has_ready_items = any(cleanup_time <= now for _, (_, cleanup_time) in _cleanup_queue.items())
+        
+        # Only process cleanup queue if items are ready (avoid expensive operations when not needed)
+        if has_ready_items:
+            _process_cleanup_queue()
+    
+    # Get memory before cleanup (for logging) - only if actually trimming
+    rss_before = _get_rss_memory_mb() if needs_trim else None
     
     with _cache_lock:
         # Check if ensemble mode has expired or exceeded max duration
@@ -748,10 +765,11 @@ def _get_simulator(model):
             logging.warning(f"[PERF] refresh() slow: time={refresh_time:.2f}s")
     
     # Trim cache if ensemble mode expired (called on every simulator access)
+    # Optimized to be fast - only does expensive work if actually needed
     trim_start = time.time()
     _trim_cache_to_normal()
     trim_time = time.time() - trim_start
-    if trim_time > 1.0:
+    if trim_time > 0.5:  # Reduced threshold since it should be much faster now
         logging.warning(f"[PERF] _trim_cache_to_normal() slow: time={trim_time:.2f}s")
     
     with _cache_lock:
