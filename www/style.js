@@ -1,17 +1,6 @@
 var btype = "STANDARD"
-var _isInitialLoad = true; // Track if this is the first time setMode is called
-
-// Helper function to set value on all elements with the same ID (handles duplicate IDs)
-function setValueForId(id, value) {
-    const elements = document.querySelectorAll(`#${id}`);
-    elements.forEach(el => {
-        if (el) el.value = value;
-    });
-}
-
 $(document).ready(function() {
     $('input[name="optradio"]').on('change', function () {
-        _isInitialLoad = false; // User is switching modes, not initial load
         if ($(this).val() === "standardbln") setMode("STANDARD");
         else if ($(this).val() === "zpbbln") setMode("ZPB");
         else if ($(this).val() === "floatbln") setMode("FLOAT");
@@ -23,11 +12,8 @@ $(document).ready(function() {
         });
     });
 
-    // initialize defaults and visibility - use setTimeout to ensure DOM is fully ready
-    setTimeout(function() {
-        setMode("STANDARD");
-        _isInitialLoad = false; // After initial setup, mark as not initial load
-    }, 0);
+    // initialize defaults and visibility
+    setMode("STANDARD");
 });
 
 var waypointsToggle = false;
@@ -168,20 +154,12 @@ function setMode(mode){
         gstep.style.display = "none";
         if (gtimer) gtimer.style.display = "flex";
         if (eqbtn) eqbtn.style.visibility = "visible";
-        // On initial load, set defaults unconditionally. Otherwise, only set if empty.
-        // Use setValueForId to handle duplicate IDs (mobile and desktop)
-        if (_isInitialLoad) {
-            setValueForId("asc", 4);
-            setValueForId("equil", 30000);
-            setValueForId("desc", 8);
-        } else {
-            const ascEl = document.getElementById("asc");
-            const equilEl = document.getElementById("equil");
-            const descEl = document.getElementById("desc");
-            if (ascEl && (!ascEl.value || ascEl.value.trim() === "")) setValueForId("asc", 4);
-            if (equilEl && (!equilEl.value || equilEl.value.trim() === "")) setValueForId("equil", 30000);
-            if (descEl && (!descEl.value || descEl.value.trim() === "")) setValueForId("desc", 8);
-        }
+        const ascEl = document.getElementById("asc");
+        const equilEl = document.getElementById("equil");
+        const descEl = document.getElementById("desc");
+        if (ascEl) ascEl.value = 4;
+        if (equilEl) equilEl.value = 30000;
+        if (descEl) descEl.value = 8;
         var remain = document.getElementById("timeremain");
         if (remain) remain.style.visibility = "visible";
     } else if (mode === "ZPB"){
@@ -191,23 +169,14 @@ function setMode(mode){
         gstep.style.display = "none";
         if (gtimer) gtimer.style.display = "flex";
         if (eqbtn) eqbtn.style.visibility = "visible";
-        // On initial load, set defaults unconditionally. Otherwise, only set if empty.
-        if (_isInitialLoad) {
-            setValueForId("asc", 4);
-            setValueForId("equil", 30000);
-            setValueForId("desc", 8);
-            const eqtimeEl = document.getElementById("eqtime");
-            if (eqtimeEl) eqtimeEl.value = 1;
-        } else {
-            const ascEl = document.getElementById("asc");
-            const equilEl = document.getElementById("equil");
-            const eqtimeEl = document.getElementById("eqtime");
-            const descEl = document.getElementById("desc");
-            if (ascEl && (!ascEl.value || ascEl.value.trim() === "")) setValueForId("asc", 4);
-            if (equilEl && (!equilEl.value || equilEl.value.trim() === "")) setValueForId("equil", 30000);
-            if (eqtimeEl && (!eqtimeEl.value || eqtimeEl.value.trim() === "")) eqtimeEl.value = 1;
-            if (descEl && (!descEl.value || descEl.value.trim() === "")) setValueForId("desc", 8);
-        }
+        const ascEl = document.getElementById("asc");
+        const equilEl = document.getElementById("equil");
+        const eqtimeEl = document.getElementById("eqtime");
+        const descEl = document.getElementById("desc");
+        if (ascEl) ascEl.value = 4;
+        if (equilEl) equilEl.value = 30000;
+        if (eqtimeEl) eqtimeEl.value = 1;
+        if (descEl) descEl.value = 8;
         var remain = document.getElementById("timeremain");
         if (remain) remain.style.visibility = "visible";
     } else { // FLOAT
@@ -217,31 +186,18 @@ function setMode(mode){
         gstep.style.display = "flex";
         if (gtimer) gtimer.style.display = "none";
         if (eqbtn) eqbtn.style.visibility = "hidden";
-        // On initial load, set defaults unconditionally. Otherwise, only set if empty.
-        if (_isInitialLoad) {
-            setValueForId("asc", 4);
-            setValueForId("equil", 30000);
-            setValueForId("desc", 8);
-            const coeffEl = document.getElementById("coeff");
-            const durEl = document.getElementById("dur");
-            const stepEl = document.getElementById("step");
-            if (coeffEl) coeffEl.value = 0.5;
-            if (durEl) durEl.value = 48;
-            if (stepEl) stepEl.value = 240;
-        } else {
-            const ascEl = document.getElementById("asc");
-            const equilEl = document.getElementById("equil");
-            const descEl = document.getElementById("desc");
-            const coeffEl = document.getElementById("coeff");
-            const durEl = document.getElementById("dur");
-            const stepEl = document.getElementById("step");
-            if (ascEl && (!ascEl.value || ascEl.value.trim() === "")) setValueForId("asc", 4);
-            if (equilEl && (!equilEl.value || equilEl.value.trim() === "")) setValueForId("equil", 30000);
-            if (descEl && (!descEl.value || descEl.value.trim() === "")) setValueForId("desc", 8);
-            if (coeffEl && (!coeffEl.value || coeffEl.value.trim() === "")) coeffEl.value = 0.5;
-            if (durEl && (!durEl.value || durEl.value.trim() === "")) durEl.value = 48;
-            if (stepEl && (!stepEl.value || stepEl.value.trim() === "")) stepEl.value = 240;
-        }
+        const ascEl = document.getElementById("asc");
+        const equilEl = document.getElementById("equil");
+        const descEl = document.getElementById("desc");
+        const coeffEl = document.getElementById("coeff");
+        const durEl = document.getElementById("dur");
+        const stepEl = document.getElementById("step");
+        if (ascEl) ascEl.value = 4;
+        if (equilEl) equilEl.value = 30000;
+        if (descEl) descEl.value = 8;
+        if (coeffEl) coeffEl.value = 0.5;
+        if (durEl) durEl.value = 48;
+        if (stepEl) stepEl.value = 240;
         var remain = document.getElementById("timeremain");
         if (remain) remain.style.visibility = "hidden";
     }
