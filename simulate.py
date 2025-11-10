@@ -436,7 +436,15 @@ def _process_cleanup_queue():
                     _cleanup_queue[model_id] = (simulator, now + _CLEANUP_DELAY)
                 continue
         
-        # Clean up the simulator (it's already removed from cache)
+        # CRITICAL: Also check if simulator is still in cache (shouldn't be, but safety check)
+        # If it's back in cache, don't clean it up (it was re-added after eviction)
+        with _cache_lock:
+            if model_id in _simulator_cache:
+                # Simulator is back in cache - don't clean it up, remove from queue
+                logging.warning(f"Simulator {model_id} is back in cache, skipping cleanup (was re-added after eviction)")
+                continue
+        
+        # Clean up the simulator (it's already removed from cache and not in use)
         _cleanup_simulator_safely(simulator)
         
         # Explicitly break reference
