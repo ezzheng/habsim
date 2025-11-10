@@ -21,6 +21,38 @@ var heatmapLayer = null; // Global heatmap layer for Monte Carlo visualization
 google.maps.event.addListener(map, 'click', function (event) {
     displayCoordinates(event.latLng);
 });
+
+// Make map type control dropdown open upward instead of downward
+// Use MutationObserver to detect when dropdown is opened and modify its position
+(function() {
+    const observer = new MutationObserver(function(mutations) {
+        // Find map type control dropdown menu
+        const dropdowns = document.querySelectorAll('.gm-style div[role="menu"], .gm-bundled-control-on-bottom > div[style*="position: absolute"]');
+        dropdowns.forEach(function(dropdown) {
+            const rect = dropdown.getBoundingClientRect();
+            const mapRect = document.getElementById('map').getBoundingClientRect();
+            // If dropdown is near bottom of screen, flip it upward
+            if (rect.bottom > mapRect.bottom - 50) {
+                dropdown.style.bottom = 'auto';
+                dropdown.style.top = '0';
+                dropdown.style.transform = 'translateY(-100%)';
+            }
+        });
+    });
+    
+    // Start observing after map is loaded
+    google.maps.event.addListenerOnce(map, 'idle', function() {
+        const mapContainer = document.getElementById('map');
+        if (mapContainer) {
+            observer.observe(mapContainer, {
+                childList: true,
+                subtree: true,
+                attributes: true,
+                attributeFilter: ['style', 'class']
+            });
+        }
+    });
+})();
 //Define OSM map type pointing at the OpenStreetMap tile server
 map.mapTypes.set("OSM", new google.maps.ImageMapType({
     getTileUrl: function(coord, zoom) {

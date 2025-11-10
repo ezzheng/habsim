@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <meta name="viewport" content="initial-scale=1.0, user-scalable=yes, viewport-fit=cover" />
+    <meta name="viewport" content="initial-scale=1.0, user-scalable=yes" />
     <title>HABSIM: High Altitude Balloon Simulator</title>
     <script>
         // Check authentication IMMEDIATELY before any content renders (prevents flash)
@@ -57,16 +57,32 @@
             margin: 0; 
             padding: 0;
         }
-        /* Account for mobile browser UI bars at bottom */
+        /* Account for mobile browser UI bars at bottom - mobile only */
         @media (max-width: 768px) {
-            #map {
-                padding-bottom: env(safe-area-inset-bottom, 0px);
+            @supports (padding: env(safe-area-inset-bottom)) {
+                #map {
+                    padding-bottom: env(safe-area-inset-bottom, 0px);
+                }
+                /* Ensure map controls aren't cut off */
+                .gm-style .gm-control-active,
+                .gm-style .gm-bundled-control {
+                    margin-bottom: env(safe-area-inset-bottom, 0px);
+                }
             }
-            /* Ensure map controls aren't cut off */
-            .gm-style .gm-control-active,
-            .gm-style .gm-bundled-control {
-                margin-bottom: env(safe-area-inset-bottom, 0px);
-            }
+        }
+        /* Hide Google Maps logo */
+        .gm-style-cc {
+            display: none !important;
+        }
+        .gm-style a[href*="google.com/maps"] {
+            display: none !important;
+        }
+        /* Make map type control dropdown open upward (since control is at bottom) */
+        .gm-style .gm-bundled-control-on-bottom > div[style*="position: absolute"],
+        .gm-style .gm-bundled-control-on-bottom > div[style*="position:absolute"] {
+            bottom: auto !important;
+            top: 0 !important;
+            transform: translateY(-100%) !important;
         }
         /* Hide Google Maps InfoWindow close button */
         .gm-ui-hover-effect {
