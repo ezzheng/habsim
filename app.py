@@ -86,7 +86,7 @@ def _record_worker_activity():
 _progress_tracking = {}
 _progress_lock = threading.Lock()
 
-# File pre-warming removed to reduce Supabase egress costs
+# File pre-warming removed to reduce S3 egress costs
 # Files will download on-demand when needed (still fast due to file cache)
 
 def _start_cache_trim_thread():
@@ -162,10 +162,10 @@ if is_railway:
         _start_cache_trim_thread()
     except Exception as e:
         app.logger.warning(f"Failed to start cache trim thread from app startup (non-critical): {e}")
-    
-    # Start pre-warming in background thread
-    _cache_warmer_thread = threading.Thread(target=_prewarm_cache, daemon=True)
-    _cache_warmer_thread.start()
+
+# Start pre-warming in background thread
+_cache_warmer_thread = threading.Thread(target=_prewarm_cache, daemon=True)
+_cache_warmer_thread.start()
 else:
     # On Vercel or local dev - skip heavy initialization
     app.logger.info("Skipping Railway-specific initialization (Vercel/local dev)")
@@ -247,10 +247,10 @@ def index():
 @app.route('/sim/which')
 def whichgefs():
     # Read directly from storage to avoid importing heavy modules on cold start
-    f = open_gefs('whichgefs')
-    s = f.readline()
+        f = open_gefs('whichgefs')
+        s = f.readline()
     f.close()
-    return s
+        return s
 
 @app.route('/sim/cache-status')
 def cache_status():
@@ -429,7 +429,7 @@ def singlezpb(timestamp, lat, lon, alt, equil, eqtime, asc, desc, model):
         fall = simulate.simulate(timestamp, lat, lon, -desc, 240, dur, alt, model)
         return (rise, coast, fall)
     except FileNotFoundError as e:
-        # File not found in Supabase - model may not exist yet
+        # File not found in S3 - model may not exist yet
         app.logger.warning(f"Model file not found: {e}")
         raise  # Re-raise to be handled by route handler
     except Exception as e:
@@ -451,10 +451,10 @@ def singlezpbh():
     asc, desc = float(args['asc']), float(args['desc'])
     model = int(args['model'])
     try:
-        path = singlezpb(timestamp, lat, lon, alt, equil, eqtime, asc, desc, model)
-        return jsonify(path)
+    path = singlezpb(timestamp, lat, lon, alt, equil, eqtime, asc, desc, model)
+    return jsonify(path)
     except FileNotFoundError as e:
-        # Model file not found in Supabase
+        # Model file not found in S3
         app.logger.warning(f"Model file not found for request: {e}")
         return make_response(jsonify({"error": "Model file not available. The requested model may not have been uploaded yet. Please check if the model timestamp is correct."}), 404)
 
@@ -766,7 +766,7 @@ def spaceshot():
         montecarlo_landings = len(landing_positions) - ensemble_landings
         app.logger.info(f"Ensemble + Monte Carlo complete: {ensemble_success}/{len(model_ids)} ensemble paths, {ensemble_landings} ensemble + {montecarlo_landings} Monte Carlo = {len(landing_positions)} total landing positions in {elapsed:.1f} seconds")
         
-    except Exception as e:
+            except Exception as e:
         app.logger.exception(f"Ensemble + Monte Carlo run failed with unexpected error: {e}")
         paths = ["error"] * len(model_ids)
         landing_positions = []

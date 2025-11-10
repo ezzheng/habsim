@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Automated GEFS downloader daemon.
-Downloads GEFS models every 6 hours and uploads to Supabase.
+Downloads GEFS models every 6 hours and uploads to S3.
 Number of models is controlled by downloader.DOWNLOAD_CONTROL and downloader.NUM_PERTURBED_MEMBERS.
 """
 import os
@@ -124,7 +124,7 @@ def check_data_available(timestamp: datetime, check_extended: bool = False) -> b
     return True
 
 def download_and_upload_model(timestamp: datetime) -> bool:
-    """Download model using downloader.py and upload to Supabase"""
+    """Download model using downloader.py and upload to S3"""
     timestamp_str = fmt_timestamp(timestamp)
     logger.info(f"Starting download for {timestamp_str}")
     
@@ -151,8 +151,8 @@ def download_and_upload_model(timestamp: datetime) -> bool:
         logger.error(traceback.format_exc())
         return False
     
-    # Upload model files to Supabase (respects DOWNLOAD_CONTROL and NUM_PERTURBED_MEMBERS)
-    logger.info(f"Uploading files to Supabase...")
+    # Upload model files to S3 (respects DOWNLOAD_CONTROL and NUM_PERTURBED_MEMBERS)
+    logger.info(f"Uploading files to S3...")
     # Determine which models to upload based on downloader settings
     model_ids = []
     if downloader.DOWNLOAD_CONTROL:
@@ -193,16 +193,16 @@ def download_and_upload_model(timestamp: datetime) -> bool:
             f.write(timestamp_str)
         logger.info(f"Updated local whichgefs to {timestamp_str}")
         
-        # Upload whichgefs file to Supabase
+        # Upload whichgefs file to S3
         try:
             if gefs.upload_gefs(statusfile_path, "whichgefs"):
-                logger.info(f"Uploaded whichgefs to Supabase: {timestamp_str}")
+                logger.info(f"Uploaded whichgefs to S3: {timestamp_str}")
             else:
-                logger.warning(f"Failed to upload whichgefs to Supabase")
+                logger.warning(f"Failed to upload whichgefs to S3")
         except Exception as e:
-            logger.warning(f"Failed to upload whichgefs to Supabase: {e}")
+            logger.warning(f"Failed to upload whichgefs to S3: {e}")
         
-        # Clean up old model files from Supabase
+        # Clean up old model files from S3
         # Option 1: Delete files from the previous model (if we know it)
         if old_model and old_model != timestamp:
             old_timestamp_str = fmt_timestamp(old_model)
@@ -216,7 +216,7 @@ def download_and_upload_model(timestamp: datetime) -> bool:
                     logger.warning(f"Failed to delete old file: {old_filename}")
         
         # Option 2: Also clean up any orphaned .npz files that don't match current model
-        # List all files in Supabase and delete any .npz files that aren't the current model
+        # List all files in S3 and delete any .npz files that aren't the current model
         try:
             all_files = gefs.listdir_gefs()
             current_model_files = {f"{timestamp_str}_{str(mid).zfill(2)}.npz" for mid in model_ids}

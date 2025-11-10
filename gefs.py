@@ -7,16 +7,16 @@ from pathlib import Path
 from typing import Iterator
 import threading
 
-import requests
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
+import boto3
+from botocore.exceptions import ClientError, NoCredentialsError
+from botocore.config import Config
 
-# Try to load from .env and/or supabase.env if available (non-fatal)
+# Try to load from .env file if available (non-fatal)
 def _load_env_file():
-    """Load environment variables from .env or supabase.env file if present.
+    """Load environment variables from .env file if present.
     Does not override existing environment variables and does not raise on failure.
     """
-    env_files = [Path('.env'), Path('supabase.env')]
+    env_files = [Path('.env')]
     for env_file in env_files:
         if env_file.exists():
             try:
@@ -32,46 +32,52 @@ def _load_env_file():
 
 _load_env_file()
 
-_BASE_URL = os.environ.get("SUPABASE_URL", "").rstrip('/')
-_KEY = os.environ.get("SUPABASE_SECRET", "")
-_BUCKET = "habsim"
+# AWS S3 configuration
+_AWS_ACCESS_KEY_ID = os.environ.get("AWS_ACCESS_KEY_ID", "")
+_AWS_SECRET_ACCESS_KEY = os.environ.get("AWS_SECRET_ACCESS_KEY", "")
+_AWS_REGION = os.environ.get("AWS_REGION", "us-west-1")
+_BUCKET = os.environ.get("S3_BUCKET_NAME", "habsim-storage")
 
-# Validate that Supabase credentials are set
-if not _BASE_URL:
-    raise ValueError("SUPABASE_URL environment variable is not set. Please configure it in Railway settings.")
-if not _KEY:
-    raise ValueError("SUPABASE_SECRET environment variable is not set. Please configure it in Railway settings.")
+# Validate that AWS credentials are set
+if not _AWS_ACCESS_KEY_ID:
+    raise ValueError("AWS_ACCESS_KEY_ID environment variable is not set. Please configure it in Railway settings.")
+if not _AWS_SECRET_ACCESS_KEY:
+    raise ValueError("AWS_SECRET_ACCESS_KEY environment variable is not set. Please configure it in Railway settings.")
 
-_COMMON_HEADERS = {
-    "Authorization": f"Bearer {_KEY}",
-    "apikey": _KEY,
-}
-
-# Main session for large file downloads (simulations)
-_SESSION = requests.Session()
-_RETRY = Retry(
-    total=3,
-    backoff_factor=0.5,
-    status_forcelist=(500, 502, 503, 504),
-    allowed_methods=("GET", "POST"),
+# Configure boto3 with retries and connection pooling
+_S3_CONFIG = Config(
+    retries={'max_attempts': 3, 'mode': 'adaptive'},
+    max_pool_connections=32,
+    connect_timeout=15,
+    read_timeout=60,
 )
-_ADAPTER = HTTPAdapter(max_retries=_RETRY, pool_connections=8, pool_maxsize=32)
-_SESSION.mount("https://", _ADAPTER)
-_SESSION.mount("http://", _ADAPTER)
 
-# Separate session for status checks (small files like whichgefs)
+# Main S3 client for large file downloads (simulations)
+_S3_CLIENT = boto3.client(
+    's3',
+    aws_access_key_id=_AWS_ACCESS_KEY_ID,
+    aws_secret_access_key=_AWS_SECRET_ACCESS_KEY,
+    region_name=_AWS_REGION,
+    config=_S3_CONFIG,
+)
+
+# Separate S3 client for status checks (small files like whichgefs)
 # This ensures status checks never wait behind large file downloads
-_STATUS_SESSION = requests.Session()
-_STATUS_RETRY = Retry(
-    total=2,  # Fewer retries for status checks (faster failure)
-    backoff_factor=0.3,
-    status_forcelist=(500, 502, 503, 504),
-    allowed_methods=("GET", "POST"),
+_STATUS_S3_CONFIG = Config(
+    retries={'max_attempts': 2, 'mode': 'adaptive'},
+    max_pool_connections=4,
+    connect_timeout=3,
+    read_timeout=10,
 )
-_STATUS_ADAPTER = HTTPAdapter(max_retries=_STATUS_RETRY, pool_connections=2, pool_maxsize=4)
-_STATUS_SESSION.mount("https://", _STATUS_ADAPTER)
-_STATUS_SESSION.mount("http://", _STATUS_ADAPTER)
+_STATUS_S3_CLIENT = boto3.client(
+    's3',
+    aws_access_key_id=_AWS_ACCESS_KEY_ID,
+    aws_secret_access_key=_AWS_SECRET_ACCESS_KEY,
+    region_name=_AWS_REGION,
+    config=_STATUS_S3_CONFIG,
+)
 
+# Timeout constants (kept for compatibility, but S3 uses boto3 config)
 _DEFAULT_TIMEOUT = (3, 60)
 _CACHEABLE_SUFFIXES = (".npz", ".npy")
 # Use Railway persistent volume if available, fallback to tempdir
@@ -96,30 +102,24 @@ _downloading_files = set()
 _downloading_lock = threading.Lock()
 
 # Limit concurrent downloads to prevent connection pool exhaustion
-# During ensemble, 21 models try to download simultaneously - too many for Supabase
+# During ensemble, 21 models try to download simultaneously - too many for S3
 # Semaphore limits to 4 concurrent downloads at a time across all workers
 _download_semaphore = threading.Semaphore(4)
 
-def _object_url(path: str) -> str:
-    return f"{_BASE_URL}/storage/v1/object/{path}"
-
-def _list_url(bucket: str) -> str:
-    return f"{_BASE_URL}/storage/v1/object/list/{bucket}"
-
 def listdir_gefs():
-    resp = _SESSION.post(
-        _list_url(_BUCKET),
-        headers=_COMMON_HEADERS,
-        json={"prefix": ""},
-        timeout=_DEFAULT_TIMEOUT,
-    )
-    resp.raise_for_status()
-    items = resp.json()
-    return [item.get('name') for item in items]
+    """List all files in S3 bucket."""
+    try:
+        response = _S3_CLIENT.list_objects_v2(Bucket=_BUCKET)
+        if 'Contents' not in response:
+            return []
+        return [obj['Key'] for obj in response['Contents']]
+    except ClientError as e:
+        logging.error(f"Failed to list S3 bucket {_BUCKET}: {e}")
+        return []
 
 def open_gefs(file_name):
     # Cache whichgefs locally to reduce connection pool pressure (status checks every 5 seconds)
-    # Use separate status session to avoid blocking on large file downloads
+    # Use separate status client to avoid blocking on large file downloads
     if file_name == 'whichgefs':
         now = time.time()
         
@@ -157,16 +157,17 @@ def open_gefs(file_name):
                 now - _whichgefs_cache["timestamp"] < _whichgefs_cache["ttl"]):
                 return io.StringIO(_whichgefs_cache["value"])
             
-            # Cache miss or expired - download from Supabase using status session
-            # Status session has its own connection pool (4 connections) separate from main pool
+            # Cache miss or expired - download from S3 using status client
+            # Status client has its own connection pool (4 connections) separate from main pool
             # Use shorter timeout for status requests (10s instead of 60s)
-            resp = _STATUS_SESSION.get(
-                _object_url(f"{_BUCKET}/{file_name}"),
-                headers=_COMMON_HEADERS,
-                timeout=(3, 10),  # 3s connect, 10s read (shorter for faster failure)
-            )
-            resp.raise_for_status()
-            content = resp.content.decode("utf-8")
+            try:
+                response = _STATUS_S3_CLIENT.get_object(Bucket=_BUCKET, Key=file_name)
+                content = response['Body'].read().decode("utf-8")
+            except ClientError as e:
+                if e.response['Error']['Code'] == 'NoSuchKey':
+                    logging.warning(f"File not found in S3: {file_name}")
+                    return io.StringIO("")
+                raise
             
             # Update cache
             _whichgefs_cache["value"] = content
@@ -176,17 +177,18 @@ def open_gefs(file_name):
         finally:
             _whichgefs_lock.release()
     
-    # Non-whichgefs files: download directly using main session (no caching needed)
-    resp = _SESSION.get(
-        _object_url(f"{_BUCKET}/{file_name}"),
-        headers=_COMMON_HEADERS,
-        timeout=_DEFAULT_TIMEOUT,
-    )
-    resp.raise_for_status()
-    return io.StringIO(resp.content.decode("utf-8"))
+    # Non-whichgefs files: download directly using main client (no caching needed)
+    try:
+        response = _S3_CLIENT.get_object(Bucket=_BUCKET, Key=file_name)
+        content = response['Body'].read().decode("utf-8")
+        return io.StringIO(content)
+    except ClientError as e:
+        if e.response['Error']['Code'] == 'NoSuchKey':
+            raise FileNotFoundError(f"File not found in S3: {file_name}")
+        raise
 
 def load_gefs(file_name):
-    """Load GEFS file from cache or download from Supabase.
+    """Load GEFS file from cache or download from S3.
     Returns path to cached file for memory-mapped access."""
     load_start = time.time()
     
@@ -199,13 +201,13 @@ def load_gefs(file_name):
             logging.debug(f"[PERF] load_gefs(): {file_name}, time={load_time:.3f}s")
         return result
 
-    resp = _SESSION.get(
-        _object_url(f"{_BUCKET}/{file_name}"),
-        headers=_COMMON_HEADERS,
-        timeout=_DEFAULT_TIMEOUT,
-    )
-    resp.raise_for_status()
-    return io.BytesIO(resp.content)
+    try:
+        response = _S3_CLIENT.get_object(Bucket=_BUCKET, Key=file_name)
+        return io.BytesIO(response['Body'].read())
+    except ClientError as e:
+        if e.response['Error']['Code'] == 'NoSuchKey':
+            raise FileNotFoundError(f"File not found in S3: {file_name}")
+        raise
 
 def download_gefs(file_name):
     if _should_cache(file_name):
@@ -213,13 +215,13 @@ def download_gefs(file_name):
         with open(path, 'rb') as fp:
             return fp.read()
 
-    resp = _SESSION.get(
-        _object_url(f"{_BUCKET}/{file_name}"),
-        headers=_COMMON_HEADERS,
-        timeout=_DEFAULT_TIMEOUT,
-    )
-    resp.raise_for_status()
-    return resp.content
+    try:
+        response = _S3_CLIENT.get_object(Bucket=_BUCKET, Key=file_name)
+        return response['Body'].read()
+    except ClientError as e:
+        if e.response['Error']['Code'] == 'NoSuchKey':
+            raise FileNotFoundError(f"File not found in S3: {file_name}")
+        raise
 
 
 def _should_cache(file_name: str) -> bool:
@@ -332,7 +334,7 @@ def _ensure_cached(file_name: str) -> Path:
                 expected_size = 451008128  # Expected size for worldelev.npy
                 if file_size == expected_size:
                     cache_path.touch()  # Update access time
-                    logging.debug(f"File cache HIT: {file_name} (no Supabase egress)")
+                    logging.debug(f"File cache HIT: {file_name} (no S3 egress)")
                     return cache_path
                 else:
                     # File exists but is wrong size - delete it and re-download
@@ -361,7 +363,7 @@ def _ensure_cached(file_name: str) -> Path:
         else:
             # Update access time to mark as recently used
             cache_path.touch()
-            logging.debug(f"[CACHE] HIT: {file_name} (no Supabase egress)")
+            logging.debug(f"[CACHE] HIT: {file_name} (no S3 egress)")
             return cache_path
 
     cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -451,20 +453,13 @@ def _ensure_cached(file_name: str) -> Path:
     # Semaphore allows max 4 concurrent downloads across all workers
     _download_semaphore.acquire()
     try:
-        # Log download attempt (this will use Supabase egress)
+        # Log download attempt (this will use S3 egress)
         download_start = time.time()
-        logging.info(f"[CACHE] MISS: {file_name} - downloading from Supabase (will use egress)")
+        logging.info(f"[CACHE] MISS: {file_name} - downloading from S3 (will use egress)")
         
         # Use longer timeout for large files
         # NPZ wind files are ~300MB, worldelev.npy is 451MB
-        # Calculate timeout: 10s connect + generous read timeout
         is_large_file = file_name == 'worldelev.npy' or file_name.endswith('.npz') or file_name.endswith('.npy')
-        if is_large_file:
-            # Use much longer timeout for large files (30 min read timeout)
-            # Increased from 20 to 30 minutes to handle Railway-Supabase network issues
-            download_timeout = (15, 1800)  # 15s connect, 1800s (30 min) read
-        else:
-            download_timeout = _DEFAULT_TIMEOUT
         
         # Retry logic for large file downloads (up to 5 attempts for NPZ files)
         # NPZ wind files often have network interruptions due to size (~300MB)
@@ -487,52 +482,50 @@ def _ensure_cached(file_name: str) -> Path:
                 temp_file_created = False
                 
                 try:
-                    resp = _SESSION.get(
-                        _object_url(f"{_BUCKET}/{file_name}"),
-                        headers=_COMMON_HEADERS,
-                        stream=True,
-                        timeout=download_timeout,
-                    )
+                    # Get object metadata first to check if it exists and get size
+                    try:
+                        head_response = _S3_CLIENT.head_object(Bucket=_BUCKET, Key=file_name)
+                        expected_size = head_response.get('ContentLength')
+                    except ClientError as e:
+                        if e.response['Error']['Code'] == '404' or e.response['Error']['Code'] == 'NoSuchKey':
+                            error_msg = f"File not found in S3: {file_name}"
+                            logging.error(error_msg)
+                            raise FileNotFoundError(f"{error_msg}. The model file may not have been uploaded yet, or the model timestamp may be incorrect. Check S3 storage or verify the model timestamp in 'whichgefs'.")
+                        raise
                     
-                    # Handle file not found errors with helpful message
-                    if resp.status_code == 400 or resp.status_code == 404:
-                        error_msg = f"File not found in Supabase: {file_name} (status {resp.status_code})"
-                        logging.error(error_msg)
-                        raise FileNotFoundError(f"{error_msg}. The model file may not have been uploaded yet, or the model timestamp may be incorrect. Check Supabase storage or verify the model timestamp in 'whichgefs'.")
-                    
-                    resp.raise_for_status()
-                    
-                    # Get expected content length if available
-                    expected_size = resp.headers.get('Content-Length')
-                    if expected_size:
-                        expected_size = int(expected_size)
+                    # Download file with streaming
+                    response = _S3_CLIENT.get_object(Bucket=_BUCKET, Key=file_name)
+                    body = response['Body']
                     
                     bytes_written = 0
                     last_chunk_time = time.time()
                     try:
                         with open(tmp_path, 'wb') as fh:
                             temp_file_created = True
-                            for chunk in _iter_content(resp):
+                            while True:
+                                chunk = body.read(_CHUNK_SIZE)
+                                if not chunk:
+                                    break
+                                
                                 current_time = time.time()
                                 
                                 # Check for connection timeout (no data for 120 seconds)
-                                # Increased from 60s to 120s to tolerate Railway-Supabase network slowness
+                                # Increased from 60s to 120s to tolerate network slowness
                                 if is_large_file and (current_time - last_chunk_time) > 120:
                                     raise IOError(f"Download stalled: no data received for 120 seconds")
                                 
-                                if chunk:
-                                    fh.write(chunk)
-                                    bytes_written += len(chunk)
-                                    last_chunk_time = current_time
-                                    
-                                    # For large files, log progress every 50MB
-                                    if is_large_file and bytes_written % (50 * 1024 * 1024) < _CHUNK_SIZE:
-                                        mb_written = bytes_written / (1024 * 1024)
-                                        if expected_size:
-                                            mb_total = expected_size / (1024 * 1024)
-                                            logging.info(f"Downloading {file_name}: {mb_written:.1f}MB / {mb_total:.1f}MB ({100 * bytes_written / expected_size:.1f}%)")
-                                        else:
-                                            logging.info(f"Downloading {file_name}: {mb_written:.1f}MB")
+                                fh.write(chunk)
+                                bytes_written += len(chunk)
+                                last_chunk_time = current_time
+                                
+                                # For large files, log progress every 50MB
+                                if is_large_file and bytes_written % (50 * 1024 * 1024) < _CHUNK_SIZE:
+                                    mb_written = bytes_written / (1024 * 1024)
+                                    if expected_size:
+                                        mb_total = expected_size / (1024 * 1024)
+                                        logging.info(f"Downloading {file_name}: {mb_written:.1f}MB / {mb_total:.1f}MB ({100 * bytes_written / expected_size:.1f}%)")
+                                    else:
+                                        logging.info(f"Downloading {file_name}: {mb_written:.1f}MB")
                     except Exception as write_error:
                         # If file was created but write failed, clean it up
                         if tmp_path.exists():
@@ -545,9 +538,9 @@ def _ensure_cached(file_name: str) -> Path:
                             raise IOError(f"Download failed: error writing {file_name} (wrote {bytes_written} bytes): {write_error}")
                         else:
                             raise IOError(f"Download failed: could not create temp file for {file_name}: {write_error}")
-                except (requests.exceptions.RequestException, requests.exceptions.Timeout, requests.exceptions.ConnectionError) as req_error:
+                except (ClientError, IOError) as req_error:
                     # Network/connection errors before file creation
-                    error_msg = f"Network error downloading {file_name}: {req_error}"
+                    error_msg = f"Error downloading {file_name}: {req_error}"
                     logging.warning(f"{error_msg} (attempt {attempt + 1}/{max_retries})")
                     raise IOError(error_msg)
                 
@@ -564,7 +557,7 @@ def _ensure_cached(file_name: str) -> Path:
                 
                 # Log successful download with size (for egress tracking)
                 size_mb = actual_size / (1024 * 1024)
-                logging.info(f"Downloaded {file_name} from Supabase: {size_mb:.2f} MB (egress used)")
+                logging.info(f"Downloaded {file_name} from S3: {size_mb:.2f} MB (egress used)")
                 
                 # Validate NPZ file structure before committing
                 if file_name.endswith('.npz'):
@@ -692,61 +685,42 @@ def _ensure_cached(file_name: str) -> Path:
         _download_semaphore.release()
 
 
-def _iter_content(resp: requests.Response) -> Iterator[bytes]:
-    for chunk in resp.iter_content(chunk_size=_CHUNK_SIZE):
-        if chunk:
-            yield chunk
-
-
 def upload_gefs(file_path: Path, file_name: str) -> bool:
-    """Upload a file to Supabase storage bucket.
+    """Upload a file to S3 bucket.
     
     Args:
         file_path: Local path to file to upload
-        file_name: Name to store file as in bucket
+        file_name: Name to store file as in bucket (S3 key)
         
     Returns:
         True if successful, False otherwise
     """
     try:
-        file_size = file_path.stat().st_size
-        # For large files, use streaming upload
-        with open(file_path, 'rb') as f:
-            # Supabase storage uses PUT for uploads
-            resp = _SESSION.put(
-                _object_url(f"{_BUCKET}/{file_name}"),
-                headers={
-                    **_COMMON_HEADERS,
-                    "Content-Type": "application/octet-stream",
-                    "Content-Length": str(file_size),
-                },
-                data=f,
-                timeout=(10, 600),  # Longer timeout for large uploads (10 min)
-            )
-            resp.raise_for_status()
-            return True
+        # Use upload_file which automatically handles multipart uploads for large files
+        _S3_CLIENT.upload_file(
+            str(file_path),
+            _BUCKET,
+            file_name,
+            ExtraArgs={'ContentType': 'application/octet-stream'}
+        )
+        return True
     except Exception as e:
-        logging.error(f"Failed to upload {file_name}: {e}")
+        logging.error(f"Failed to upload {file_name} to S3: {e}")
         return False
 
 
 def delete_gefs(file_name: str) -> bool:
-    """Delete a file from Supabase storage bucket.
+    """Delete a file from S3 bucket.
     
     Args:
-        file_name: Name of file to delete from bucket
+        file_name: Name of file to delete from bucket (S3 key)
         
     Returns:
         True if successful, False otherwise
     """
     try:
-        resp = _SESSION.delete(
-            _object_url(f"{_BUCKET}/{file_name}"),
-            headers=_COMMON_HEADERS,
-            timeout=_DEFAULT_TIMEOUT,
-        )
-        resp.raise_for_status()
+        _S3_CLIENT.delete_object(Bucket=_BUCKET, Key=file_name)
         return True
     except Exception as e:
-        logging.warning(f"Failed to delete {file_name}: {e}")
+        logging.warning(f"Failed to delete {file_name} from S3: {e}")
         return False

@@ -8,7 +8,7 @@ This is an offshoot of the prediction server developed for the Stanford Space In
 
 1. **User Interface**: Web UI (`www/`) allows users to set launch parameters and visualize predictions
 2. **API Server**: Flask application (`app.py`, deployed on Railway) receives requests and coordinates simulations
-3. **Wind Data**: GEFS (Global Ensemble Forecast System) weather files from Supabase are cached locally (`gefs.py`)
+3. **Wind Data**: GEFS (Global Ensemble Forecast System) weather files from AWS S3 are cached locally (`gefs.py`)
 4. **Simulation**: Physics engine (`simulate.py`) calculates balloon trajectory using wind data
 5. **Results**: JSON trajectory data is returned to browser and rendered on Google Maps
 
@@ -45,8 +45,8 @@ This is an offshoot of the prediction server developed for the Stanford Space In
   - `Trajectory`: Time-series container for path points
 
 ### Data Pipeline
-- **`gefs.py`** - GEFS file downloader with LRU cache and Supabase integration
-  - Downloads from Supabase Storage via REST API
+- **`gefs.py`** - GEFS file downloader with LRU cache and AWS S3 integration
+  - Downloads from AWS S3 bucket via boto3 SDK
   - LRU eviction policy: max 25 weather files (~7.7GB), `worldelev.npy` (451MB) always kept
   - Files cached on disk with access-time tracking
   - Automatic cleanup before new downloads when limit exceeded
@@ -60,11 +60,11 @@ This is an offshoot of the prediction server developed for the Stanford Space In
 
 ### Automation & Scripts (`scripts/`)
 - **`scripts/auto_downloader.py`** - Automated GEFS downloader daemon
-  - Downloads 21 GEFS models every 6 hours and uploads to Supabase
+  - Downloads 21 GEFS models every 6 hours and uploads to AWS S3
   - Configurable via `downloader.DOWNLOAD_CONTROL` and `downloader.NUM_PERTURBED_MEMBERS` (currently 21 models: 0-20)
   - Runs via GitHub Actions (scheduled every 6 hours) or as a background daemon
   - Test mode: `python3 scripts/auto_downloader.py --test`
-  - Cleans up old model files from Supabase automatically
+  - Cleans up old model files from S3 automatically
 
 - **`downloader.py`** - GEFS data pipeline script
   - Fetches GRIB2 files (Gridded Binary format) from NOAA NOMADS, converts to `.npz` format
@@ -119,7 +119,7 @@ This is an offshoot of the prediction server developed for the Stanford Space In
 
 - **`requirements.txt`** - Python package dependencies
   - `flask==3.0.2`, `flask-cors==4.0.0`, `flask-compress==1.15` (Gzip compression)
-  - `numpy==1.26.4` (numerical computing), `requests==2.32.3` (HTTP library), `gunicorn==22.0.0`
+  - `numpy==1.26.4` (numerical computing), `requests==2.32.3` (HTTP library), `gunicorn==22.0.0`, `boto3==1.35.0` (AWS S3 SDK)
 
 - **`vercel.json`** - Vercel deployment configuration
   - Routes `/sim/*` → Python build (`app.py`), `/*` → static files (`www/`)
@@ -134,12 +134,12 @@ This is an offshoot of the prediction server developed for the Stanford Space In
 
 ## Data Storage
 
-### Supabase Storage (Cloud)
-- **Location**: Supabase Storage bucket (`habsim`)
+### AWS S3 Storage (Cloud)
+- **Location**: AWS S3 bucket (`habsim-storage`)
 - **Files**: 21 model `.npz` files per forecast cycle + `whichgefs` timestamp file
 - **Purpose**: Long-term storage, source of truth for weather datasets
-- **Access pattern**: First request per worker per model hits Supabase; subsequent accesses come from CDN cache or local disk
-- **Cached egress**: Supabase reports CDN-served bytes as "cached egress". Large values usually mean many workers warmed the same files (or downloads resumed after stalls), not repeated origin downloads
+- **Access pattern**: First request per worker per model hits S3; subsequent accesses come from local disk cache
+- **Authentication**: Uses AWS IAM credentials (access key ID and secret access key) for secure access
 
 ### Railway Instance (Local Disk Cache)
 - **Location**: `/app/data/gefs` on Railway (persistent volume if mounted, otherwise ephemeral storage)
@@ -151,7 +151,7 @@ This is an offshoot of the prediction server developed for the Stanford Space In
 - **Idle effect**: Idle worker cleanup does not delete disk cache; simulators are rebuilt from these on next request
 - **Persistent Volume**: When mounted to `/app/data`, files persist across restarts and are shared across all workers. 
 Benefits:
-  - Lower Supabase egress (one shared download per forecast cycle)
+  - Lower S3 egress (one shared download per forecast cycle)
   - Faster warmups after deploys/restarts
   - Consistent performance across workers
   - To enable: mount Railway persistent volume at `/app/data`
@@ -160,7 +160,7 @@ Benefits:
 
 **Old Version (Client Library):** Python package making HTTP requests to `habsim.org` API. Installed via pip, called functions like `util.predict()`.
 
-**Current Version (Self-Contained Server):** Self-hosted web application (built with Flask framework, deployed on Railway hosting platform) hosting the UI, REST API endpoints, and running simulations locally with GEFS data from Supabase.
+**Current Version (Self-Contained Server):** Self-hosted web application (built with Flask framework, deployed on Railway hosting platform) hosting the UI, REST API endpoints, and running simulations locally with GEFS data from AWS S3.
 
 **Benefits:** Independence from external services, non-technical users visit URL directly, full control over performance/caching.
 

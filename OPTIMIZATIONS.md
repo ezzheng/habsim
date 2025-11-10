@@ -116,7 +116,7 @@ HABSIM uses a multi-layer caching strategy optimized for Railway (max 32GB RAM, 
 **Eviction**: LRU by file access time (`worldelev.npy` exempt)
 **Thread safety**: `_CACHE_LOCK` plus inter-process file locks stop duplicate downloads
 **Reliability**: Extended timeouts (30 min read), stall detection, resumable downloads, corruption checks, download progress logging
-**Persistent Volume Benefits**: Lower Supabase egress, faster warmups, shared cache across workers and restarts. Mount at `/app/data` to enable.
+**Persistent Volume Benefits**: Lower S3 egress, faster warmups, shared cache across workers and restarts. Mount at `/app/data` to enable.
 
 **Memory Usage**:  
 - 308MB per `.npz` file
@@ -284,7 +284,7 @@ HABSIM uses a multi-layer caching strategy optimized for Railway (max 32GB RAM, 
   - Monte Carlo adds trajectory computation overhead (~420KB-2MB for results)
 - **CPU**: High (32 ThreadPoolExecutor workers + 32 Gunicorn threads, CPU-bound with pre-loaded arrays)
 - **Process**: 
-  - Check if files exist on disk → download from Supabase if missing
+  - Check if files exist on disk → download from S3 if missing
   - Create simulators with pre-loaded arrays (ensemble mode) → cache in RAM
   - **Monte Carlo Generation**: Generate 20 parameter perturbations (random variations in launch conditions)
   - Run 21 ensemble paths + 420 Monte Carlo simulations in parallel (441 total)
@@ -303,5 +303,5 @@ HABSIM uses a multi-layer caching strategy optimized for Railway (max 32GB RAM, 
 ### After Ensemble Completes
 - **Trim window**: `_periodic_cache_trim()` collapses the cache back to 5 simulators once the 60 s ensemble timer expires (still capped at 5 min total).
 - **Idle cleanup**: If no further requests arrive for ~3 min, `_idle_memory_cleanup()` purges remaining simulators, runs multi-pass GC, and calls `malloc_trim(0)` so RSS returns close to cold-start levels.
-- **Disk cache**: Wind files stay on disk, so the next ensemble rebuilds simulators from local storage instead of redownloading from Supabase.
+- **Disk cache**: Wind files stay on disk, so the next ensemble rebuilds simulators from local storage instead of redownloading from S3.
 - **Maximum Duration**: Even with consecutive ensemble calls, cache will force trim after 5 minutes to prevent memory bloat
