@@ -34,19 +34,66 @@
         @media (prefers-color-scheme: dark){
             :root{ --bg:#0b0f14; --fg:#e5e7eb; --muted:#9ca3af; --line:#1f2937; --soft:#0f1520; --soft2:#0d131d; --brand:#93c5fd; --brand-600:#60a5fa; }
         }
-        html, body { height: 100%; margin: 0; padding: 0; }
+        html, body { 
+            height: 100%; 
+            margin: 0; 
+            padding: 0;
+            overflow-x: hidden;
+        }
+        html {
+            scroll-padding-top: 0;
+        }
         body {
             display: flex;
             flex-direction: column;
             font-family: 'Inter', system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
             color: var(--fg);
             background: var(--bg);
+            position: relative;
         }
         main {
             flex: 1;
             display: flex;
         }
-        #map{ flex: 1; height: 100%; width: 100%; margin: 0; padding: 0}
+        #map{ 
+            flex: 1; 
+            height: 100%; 
+            width: 100%; 
+            margin: 0; 
+            padding: 0;
+        }
+        /* Account for mobile browser UI bars at bottom - mobile only */
+        @media (max-width: 768px) {
+            @supports (padding: env(safe-area-inset-bottom)) {
+                #map {
+                    padding-bottom: env(safe-area-inset-bottom, 0px);
+                }
+                /* Ensure map controls aren't cut off */
+                .gm-style .gm-control-active,
+                .gm-style .gm-bundled-control {
+                    margin-bottom: env(safe-area-inset-bottom, 0px);
+                }
+            }
+        }
+        /* Hide Google Maps logo */
+        .gm-style-cc {
+            display: none !important;
+        }
+        .gm-style a[href*="google.com/maps"] {
+            display: none !important;
+        }
+        /* Make map type control dropdown open upward (since control is at bottom) */
+        /* Target all possible dropdown containers */
+        .gm-style .gm-bundled-control-on-bottom > div[style*="position: absolute"],
+        .gm-style .gm-bundled-control-on-bottom > div[style*="position:absolute"],
+        .gm-style .gm-bundled-control-on-bottom > div[style*="position:absolute;"],
+        .gm-style div[role="menu"],
+        .gm-style .gm-style-cc ~ div[style*="position"],
+        .gm-style .gm-control-wrapper > div[style*="position"] {
+            bottom: auto !important;
+            top: 0 !important;
+            transform: translateY(-100%) !important;
+        }
         /* Hide Google Maps InfoWindow close button */
         .gm-ui-hover-effect {
             display: none !important;
@@ -60,6 +107,7 @@
         }
         /* Top bar */
         #info {
+            position: relative;
             width: 100%;
             max-width: none !important;
             padding: 0 !important;
@@ -68,6 +116,7 @@
             background-color: transparent;
             border-bottom: none;
             box-shadow: none;
+            z-index: 1000;
         }
         .topbar {
             display: flex;
@@ -279,7 +328,7 @@
             box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
         }
         #param-panel.collapsed {
-            transform: translateY(calc(-100% - var(--nav-height, 0px)));
+            transform: translateY(-100%);
             pointer-events: none;
         }
         /* No motion block unnecessary now */
@@ -369,7 +418,7 @@
         }
         @keyframes ripple {
             to {
-                transform: scale(1.5);
+                transform: scale(2);
                 opacity: 0;
             }
         }
@@ -959,8 +1008,18 @@
         const main = document.getElementById('main-container');
         if (!nav || !main) return;
         const navHeight = nav.offsetHeight;
+        // Ensure nav is at the top
+        nav.style.position = 'relative';
+        nav.style.top = '0';
+        nav.style.left = '0';
+        nav.style.right = '0';
+        nav.style.zIndex = '1000';
+        // Set body padding to account for nav height
         document.body.style.paddingTop = navHeight + 'px';
-        main.style.height = `calc(100vh - ${navHeight}px)`;
+        // Account for mobile browser UI bars
+        const isMobile = window.innerWidth <= 768;
+        const bottomPadding = isMobile ? 20 : 0; // Extra padding on mobile to avoid browser UI
+        main.style.height = `calc(100vh - ${navHeight}px - ${bottomPadding}px)`;
         // Set CSS variable for param-panel top offset
         document.documentElement.style.setProperty('--nav-height', navHeight + 'px');
     }
@@ -1261,7 +1320,7 @@
                 const wrapper = input.parentElement;
                 if (wrapper && wrapper.classList.contains('field-inputs')) {
                     wrapper.style.position = 'relative';
-                    wrapper.style.overflow = 'visible';
+                    wrapper.style.overflow = 'hidden';
                     
                     input.addEventListener('focus', function() {
                         const ripple = document.createElement('div');
