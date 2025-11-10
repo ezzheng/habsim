@@ -40,6 +40,11 @@ document.getElementById("mo").value = now.getUTCMonth() + 1
 document.getElementById("day").value = now.getUTCDate()
 document.getElementById("hr").value = now.getUTCHours()
 document.getElementById("mn").value = now.getUTCMinutes()
+// Sync mobile time inputs
+const hrMobile = document.getElementById("hr-mobile");
+const mnMobile = document.getElementById("mn-mobile");
+if(hrMobile) hrMobile.value = now.getUTCHours();
+if(mnMobile) mnMobile.value = now.getUTCMinutes();
 
 /*document.getElementById("yr").value = 2020
 document.getElementById("mo").value = 9
