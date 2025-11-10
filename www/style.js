@@ -35,16 +35,21 @@ $(function() {
 });
 
 var now = new Date(Date.now());
-document.getElementById("yr").value = now.getUTCFullYear()
-document.getElementById("mo").value = now.getUTCMonth() + 1
-document.getElementById("day").value = now.getUTCDate()
-document.getElementById("hr").value = now.getUTCHours()
-document.getElementById("mn").value = now.getUTCMinutes()
+document.getElementById("yr").value = now.getFullYear()
+document.getElementById("mo").value = now.getMonth() + 1
+document.getElementById("day").value = now.getDate()
+document.getElementById("hr").value = now.getHours()
+document.getElementById("mn").value = now.getMinutes()
 // Sync mobile time inputs
 const hrMobile = document.getElementById("hr-mobile");
 const mnMobile = document.getElementById("mn-mobile");
-if(hrMobile) hrMobile.value = now.getUTCHours();
-if(mnMobile) mnMobile.value = now.getUTCMinutes();
+if(hrMobile) hrMobile.value = now.getHours();
+if(mnMobile) mnMobile.value = now.getMinutes();
+
+// Set default values for ascent rate, burst altitude, and descent rate (same way as Date/Time)
+document.querySelectorAll('#asc').forEach(el => el.value = 4);
+document.querySelectorAll('#equil').forEach(el => el.value = 30000);
+document.querySelectorAll('#desc').forEach(el => el.value = 8);
 
 /*document.getElementById("yr").value = 2020
 document.getElementById("mo").value = 9
