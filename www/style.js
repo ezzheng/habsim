@@ -164,15 +164,13 @@ function setMode(mode){
         if (gtimer) gtimer.style.display = "flex";
         if (eqbtn) eqbtn.style.visibility = "visible";
         // Only set defaults if fields are empty (don't overwrite user changes)
-        document.querySelectorAll('#asc').forEach(el => {
-            if (!el.value || el.value.trim() === "") el.value = 4;
-        });
-        document.querySelectorAll('#equil').forEach(el => {
-            if (!el.value || el.value.trim() === "") el.value = 30000;
-        });
-        document.querySelectorAll('#desc').forEach(el => {
-            if (!el.value || el.value.trim() === "") el.value = 8;
-        });
+        // Set on desktop inputs (mobile will sync via event listeners)
+        const ascEl = document.getElementById('asc');
+        const equilEl = document.getElementById('equil');
+        const descEl = document.getElementById('desc');
+        if (ascEl && (!ascEl.value || ascEl.value.trim() === "")) ascEl.value = 4;
+        if (equilEl && (!equilEl.value || equilEl.value.trim() === "")) equilEl.value = 30000;
+        if (descEl && (!descEl.value || descEl.value.trim() === "")) descEl.value = 8;
         var remain = document.getElementById("timeremain");
         if (remain) remain.style.visibility = "visible";
     } else if (mode === "ZPB"){
