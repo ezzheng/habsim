@@ -7,7 +7,10 @@ var map = new google.maps.Map(element, {
     zoomControl: false,
     gestureHandling: 'greedy',
     mapTypeControl: false, // Disable default control - we'll use custom
-    fullscreenControl: false, // Disable default control - we'll use custom
+    fullscreenControl: true,
+    fullscreenControlOptions: {
+        position: google.maps.ControlPosition.BOTTOM_RIGHT
+    },
     streetViewControl: false
 });
 var clickMarker = null;
@@ -177,128 +180,6 @@ google.maps.event.addListener(map, 'click', function (event) {
     });
 })();
 
-// Custom fullscreen control
-(function() {
-    // Wait for map to be ready
-    google.maps.event.addListenerOnce(map, 'idle', function() {
-        // Create custom control container
-        const fullscreenDiv = document.createElement('div');
-        fullscreenDiv.style.cssText = 'margin: 10px; position: absolute; bottom: 0; right: 0; z-index: 1000;';
-        
-        // Create fullscreen button
-        const fullscreenButton = document.createElement('button');
-        fullscreenButton.type = 'button';
-        fullscreenButton.style.cssText = `
-            background-color: white;
-            border: none;
-            border-radius: 2px;
-            box-shadow: 0 1px 4px rgba(0,0,0,0.3);
-            cursor: pointer;
-            padding: 0;
-            width: 40px;
-            height: 40px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 18px;
-            color: #5B5B5B;
-            transition: background-color 0.1s;
-            font-family: Roboto, Arial, sans-serif;
-        `;
-        fullscreenButton.innerHTML = '⛶';
-        fullscreenButton.title = 'Toggle fullscreen';
-        
-        // Check if fullscreen is supported
-        function isFullscreenSupported() {
-            return !!(document.fullscreenEnabled || 
-                     document.webkitFullscreenEnabled || 
-                     document.mozFullScreenEnabled || 
-                     document.msFullscreenEnabled);
-        }
-        
-        // Get fullscreen element
-        function getFullscreenElement() {
-            return document.fullscreenElement || 
-                   document.webkitFullscreenElement || 
-                   document.mozFullScreenElement || 
-                   document.msFullscreenElement;
-        }
-        
-        // Enter fullscreen
-        function enterFullscreen() {
-            const mapElement = document.getElementById('map');
-            if (!mapElement) return;
-            
-            if (mapElement.requestFullscreen) {
-                mapElement.requestFullscreen();
-            } else if (mapElement.webkitRequestFullscreen) {
-                mapElement.webkitRequestFullscreen();
-            } else if (mapElement.mozRequestFullScreen) {
-                mapElement.mozRequestFullScreen();
-            } else if (mapElement.msRequestFullscreen) {
-                mapElement.msRequestFullscreen();
-            }
-        }
-        
-        // Exit fullscreen
-        function exitFullscreen() {
-            if (document.exitFullscreen) {
-                document.exitFullscreen();
-            } else if (document.webkitExitFullscreen) {
-                document.webkitExitFullscreen();
-            } else if (document.mozCancelFullScreen) {
-                document.mozCancelFullScreen();
-            } else if (document.msExitFullscreen) {
-                document.msExitFullscreen();
-            }
-        }
-        
-        // Update button icon based on fullscreen state
-        function updateFullscreenIcon() {
-            const isFullscreen = !!getFullscreenElement();
-            // Use better fullscreen icons
-            fullscreenButton.innerHTML = isFullscreen ? '⛶' : '⛶';
-            fullscreenButton.title = isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen';
-        }
-        
-        // Toggle fullscreen
-        fullscreenButton.onclick = function(e) {
-            e.stopPropagation();
-            if (!isFullscreenSupported()) {
-                console.warn('Fullscreen not supported');
-                return;
-            }
-            
-            const isFullscreen = !!getFullscreenElement();
-            if (isFullscreen) {
-                exitFullscreen();
-            } else {
-                enterFullscreen();
-            }
-        };
-        
-        // Hover effect
-        fullscreenButton.onmouseenter = function() {
-            this.style.backgroundColor = '#f5f5f5';
-        };
-        fullscreenButton.onmouseleave = function() {
-            this.style.backgroundColor = 'white';
-        };
-        
-        // Listen for fullscreen changes
-        const fullscreenEvents = ['fullscreenchange', 'webkitfullscreenchange', 'mozfullscreenchange', 'MSFullscreenChange'];
-        fullscreenEvents.forEach(function(event) {
-            document.addEventListener(event, updateFullscreenIcon);
-        });
-        
-        // Add to map
-        fullscreenDiv.appendChild(fullscreenButton);
-        map.controls[google.maps.ControlPosition.BOTTOM_RIGHT].push(fullscreenDiv);
-        
-        // Initialize icon
-        updateFullscreenIcon();
-    });
-})();
 //Define OSM map type pointing at the OpenStreetMap tile server
 map.mapTypes.set("OSM", new google.maps.ImageMapType({
     getTileUrl: function(coord, zoom) {
