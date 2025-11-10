@@ -12,7 +12,21 @@ from windfile import WindFile
 from habsim import Simulator, Balloon
 from gefs import open_gefs, load_gefs
 
+# Try to import psutil for memory monitoring (optional)
+try:
+    import psutil
+    _PSUTIL_AVAILABLE = True
+except ImportError:
+    _PSUTIL_AVAILABLE = False
+
 # Optimized version with memory-efficient caching and performance improvements
+# 
+# Memory Management Improvements:
+# - Added RSS memory monitoring to track actual memory release
+# - Improved reference breaking to ensure simulators are fully unreferenced
+# - Added delayed cleanup queue to safely release simulators only after they're definitely not in use
+# - Enhanced logging to show memory before/after cleanup operations
+# - Ensured deterministic cleanup timing when ensemble mode expires
 
 EARTH_RADIUS = float(6.371e6)
 DATA_STEP = 6 # hrs
@@ -40,6 +54,12 @@ _IDLE_CLEAN_COOLDOWN = 120.0  # minimum delay between idle cleanups (reduced fro
 _last_activity_timestamp = time.time()
 _last_idle_cleanup = 0.0
 _idle_cleanup_lock = threading.Lock()
+
+# Delayed cleanup queue: simulators scheduled for cleanup after a safety delay
+# This ensures simulators are only cleaned up after they're definitely not in use
+_cleanup_queue = {}  # {model_id: (simulator, cleanup_timestamp)}
+_cleanup_queue_lock = threading.Lock()
+_CLEANUP_DELAY = 5.0  # Wait 5 seconds after eviction before actually cleaning up
 
 # Prediction cache - increased for 32GB RAM
 _prediction_cache = {}
@@ -156,11 +176,19 @@ def record_activity():
 
 def _idle_memory_cleanup(idle_duration):
     """Deep cleanup when the worker has been idle for a while."""
-    global _current_max_cache, _ensemble_mode_until, _ensemble_mode_started, elevation_cache, currgefs
+    global _current_max_cache, _ensemble_mode_until, _ensemble_mode_started, elevation_cache, currgefs, _cleanup_queue
     if not _idle_cleanup_lock.acquire(blocking=False):
         return
     try:
-        logging.info(f"Idle memory cleanup triggered after {idle_duration:.1f}s without requests")
+        rss_before = _get_rss_memory_mb()
+        if rss_before is not None:
+            logging.info(f"Idle memory cleanup triggered after {idle_duration:.1f}s without requests (RSS: {rss_before:.1f} MB)")
+        else:
+            logging.info(f"Idle memory cleanup triggered after {idle_duration:.1f}s without requests")
+        
+        # Process any pending cleanups first
+        _process_cleanup_queue()
+        
         with _cache_lock:
             simulators = list(_simulator_cache.values())
             _simulator_cache.clear()
@@ -169,27 +197,20 @@ def _idle_memory_cleanup(idle_duration):
             _ensemble_mode_until = 0
             _ensemble_mode_started = 0
         
+        # Clear cleanup queue and clean up any pending simulators
+        with _cleanup_queue_lock:
+            for model_id, (simulator, _) in _cleanup_queue.items():
+                _cleanup_simulator_safely(simulator)
+                del simulator
+            _cleanup_queue.clear()
+        
         # Clean up simulator resources outside the cache lock
         evicted = 0
         for simulator in simulators:
             if simulator is None:
                 continue
             try:
-                if hasattr(simulator, 'wind_file') and simulator.wind_file:
-                    wind_file = simulator.wind_file
-                    try:
-                        if hasattr(wind_file, 'cleanup'):
-                            wind_file.cleanup()
-                        else:
-                            if hasattr(wind_file, 'data') and wind_file.data is not None:
-                                if isinstance(wind_file.data, np.ndarray) and not hasattr(wind_file.data, 'filename'):
-                                    del wind_file.data
-                                    wind_file.data = None
-                            if hasattr(wind_file, 'levels') and isinstance(wind_file.levels, np.ndarray):
-                                del wind_file.levels
-                                wind_file.levels = None
-                    finally:
-                        simulator.wind_file = None
+                _cleanup_simulator_safely(simulator)
                 evicted += 1
             except Exception as cleanup_error:
                 logging.debug(f"Idle cleanup: simulator cleanup error: {cleanup_error}", exc_info=True)
@@ -221,7 +242,12 @@ def _idle_memory_cleanup(idle_duration):
         except Exception as trim_error:
             logging.debug(f"Idle cleanup: malloc_trim not available: {trim_error}")
 
-        logging.info(f"Idle cleanup complete: released {evicted} simulator(s); cache and elevation reset to baseline")
+        rss_after = _get_rss_memory_mb()
+        if rss_after is not None and rss_before is not None:
+            rss_delta = rss_before - rss_after
+            logging.info(f"Idle cleanup complete: released {evicted} simulator(s); RSS: {rss_after:.1f} MB (released {rss_delta:.1f} MB)")
+        else:
+            logging.info(f"Idle cleanup complete: released {evicted} simulator(s); cache and elevation reset to baseline")
     finally:
         _idle_cleanup_lock.release()
 
@@ -335,9 +361,98 @@ def _is_ensemble_mode():
     now = time.time()
     return _ensemble_mode_until > 0 and now < _ensemble_mode_until
 
+def _get_rss_memory_mb():
+    """Get current RSS memory usage in MB (if psutil available)"""
+    if _PSUTIL_AVAILABLE:
+        try:
+            process = psutil.Process()
+            return process.memory_info().rss / (1024 * 1024)
+        except:
+            pass
+    return None
+
+def _cleanup_simulator_safely(simulator):
+    """Safely clean up a simulator object, breaking all references to numpy arrays.
+    This is called after a delay to ensure the simulator is definitely not in use."""
+    if simulator is None:
+        return
+    try:
+        # Clear WindFile data (pre-loaded arrays are the main memory consumers)
+        if hasattr(simulator, 'wind_file') and simulator.wind_file:
+            wind_file = simulator.wind_file
+            try:
+                if hasattr(wind_file, 'cleanup'):
+                    wind_file.cleanup()
+                else:
+                    # Manual cleanup fallback - explicitly break all references
+                    if hasattr(wind_file, 'data') and wind_file.data is not None:
+                        if isinstance(wind_file.data, np.ndarray):
+                            # Explicitly clear the array
+                            wind_file.data.setflags(write=True)
+                            wind_file.data = None
+                    if hasattr(wind_file, 'levels') and isinstance(wind_file.levels, np.ndarray):
+                        wind_file.levels.setflags(write=True)
+                        wind_file.levels = None
+                    # Clear any other numpy array attributes
+                    for attr_name in dir(wind_file):
+                        if not attr_name.startswith('_'):
+                            attr = getattr(wind_file, attr_name, None)
+                            if isinstance(attr, np.ndarray):
+                                try:
+                                    attr.setflags(write=True)
+                                    setattr(wind_file, attr_name, None)
+                                except:
+                                    pass
+            finally:
+                # Break all references
+                simulator.wind_file = None
+                del wind_file
+        # Clear any other references in simulator
+        if hasattr(simulator, 'elevation_file'):
+            simulator.elevation_file = None
+    except Exception as cleanup_error:
+        logging.debug(f"Simulator cleanup error (non-critical): {cleanup_error}")
+
+def _process_cleanup_queue():
+    """Process delayed cleanup queue - actually clean up simulators that were evicted."""
+    global _cleanup_queue
+    now = time.time()
+    to_cleanup = []
+    
+    with _cleanup_queue_lock:
+        # Find simulators ready for cleanup
+        for model_id, (simulator, cleanup_time) in list(_cleanup_queue.items()):
+            if now >= cleanup_time:
+                to_cleanup.append((model_id, simulator))
+                del _cleanup_queue[model_id]
+    
+    # Clean up outside the lock
+    for model_id, simulator in to_cleanup:
+        # Double-check model is not in use
+        with _in_use_lock:
+            if model_id in _in_use_models:
+                # Still in use - reschedule cleanup
+                with _cleanup_queue_lock:
+                    _cleanup_queue[model_id] = (simulator, now + _CLEANUP_DELAY)
+                continue
+        
+        # Clean up the simulator (it's already removed from cache)
+        _cleanup_simulator_safely(simulator)
+        
+        # Explicitly break reference
+        del simulator
+
 def _trim_cache_to_normal():
-    """Trim cache back to normal size, keeping most recently used models"""
-    global _current_max_cache, _simulator_cache, _simulator_access_times, _ensemble_mode_until, _ensemble_mode_started
+    """Trim cache back to normal size, keeping most recently used models.
+    Uses delayed cleanup queue to ensure simulators are only cleaned up after they're definitely not in use."""
+    global _current_max_cache, _simulator_cache, _simulator_access_times, _ensemble_mode_until, _ensemble_mode_started, _cleanup_queue
+    
+    # Process any pending cleanups first
+    _process_cleanup_queue()
+    
+    # Get memory before cleanup (for logging)
+    rss_before = _get_rss_memory_mb()
+    
     now = time.time()
     
     with _cache_lock:
@@ -372,53 +487,29 @@ def _trim_cache_to_normal():
                 models_to_evict = {m for m in models_to_evict if m not in _in_use_models}
             evicted_count = len(models_to_evict)
             
-            # Explicitly clear WindFile objects and all their data before deleting simulators
-            # This is critical for pre-loaded arrays (ensemble mode) which can be 100-200MB each
+            # Remove from cache immediately, but schedule delayed cleanup
+            # This ensures simulators are only cleaned up after they're definitely not in use
+            simulators_to_cleanup = []
             for model_id in models_to_evict:
                 simulator = _simulator_cache.get(model_id)
                 if simulator:
-                    # Clear WindFile data (pre-loaded arrays are the main memory consumers)
-                    if hasattr(simulator, 'wind_file') and simulator.wind_file:
-                        wind_file = simulator.wind_file
-                        # Use WindFile's cleanup method if available, otherwise manual cleanup
-                        if hasattr(wind_file, 'cleanup'):
-                            wind_file.cleanup()
-                        else:
-                            # Manual cleanup fallback
-                            if hasattr(wind_file, 'data') and wind_file.data is not None:
-                                if isinstance(wind_file.data, np.ndarray) and not hasattr(wind_file.data, 'filename'):
-                                    del wind_file.data
-                                    wind_file.data = None
-                            if hasattr(wind_file, 'levels') and isinstance(wind_file.levels, np.ndarray):
-                                del wind_file.levels
-                                wind_file.levels = None
-                        # Break reference to WindFile
-                        del wind_file
-                        simulator.wind_file = None
-                    # Break reference to Simulator
-                    del simulator
+                    simulators_to_cleanup.append((model_id, simulator))
                 del _simulator_cache[model_id]
-                del _simulator_access_times[model_id]
+                if model_id in _simulator_access_times:
+                    del _simulator_access_times[model_id]
+            
+            # Schedule delayed cleanup for evicted simulators
+            # Keep references to simulators in cleanup queue to prevent GC before cleanup
+            cleanup_time = now + _CLEANUP_DELAY
+            with _cleanup_queue_lock:
+                for model_id, simulator in simulators_to_cleanup:
+                    _cleanup_queue[model_id] = (simulator, cleanup_time)
             
             if evicted_count > 0:
-                # Aggressive memory cleanup - critical for ensemble mode with large arrays
-                # Multiple GC passes to ensure memory is freed
-                # Python's GC may need multiple passes to fully reclaim large numpy arrays
-                for _ in range(5):  # Increased from 3 to 5 passes
-                    gc.collect()
-                    gc.collect(generation=2)  # Force full collection including all generations
-                
-                # Force Python to release memory back to OS
-                try:
-                    import ctypes
-                    libc = ctypes.CDLL("libc.so.6")
-                    libc.malloc_trim(0)  # Release free memory back to OS (Linux only)
-                    logging.info("malloc_trim(0) executed to release memory to OS")
-                except Exception as e:
-                    logging.debug(f"malloc_trim not available (non-Linux): {e}")
-                
-                logging.info(f"Trimmed cache: evicted {evicted_count} simulators (cleared pre-loaded arrays), keeping {len(_simulator_cache)} (limit: {_current_max_cache})")
-                logging.info(f"Memory cleanup: performed 5 GC passes + malloc_trim to maximize memory release")
+                logging.info(f"Trimmed cache: evicted {evicted_count} simulators, keeping {len(_simulator_cache)} (limit: {_current_max_cache})")
+                if rss_before is not None:
+                    logging.info(f"Memory before trim: {rss_before:.1f} MB RSS")
+                logging.info(f"Scheduled {evicted_count} simulators for delayed cleanup (will process after {_CLEANUP_DELAY}s)")
 
 def _periodic_cache_trim():
     """Background thread that periodically trims cache when ensemble mode expires.
@@ -491,11 +582,24 @@ def _periodic_cache_trim():
             
             if (ensemble_expired or ensemble_exceeded_max) and cache_size > MAX_SIMULATOR_CACHE_NORMAL:
                 # Ensemble mode expired but cache still large - trim immediately and aggressively
-                logging.info(f"Ensemble mode expired/exceeded, trimming cache from {cache_size} to {MAX_SIMULATOR_CACHE_NORMAL}")
+                rss_before = _get_rss_memory_mb()
+                if rss_before is not None:
+                    logging.info(f"Ensemble mode expired/exceeded, trimming cache from {cache_size} to {MAX_SIMULATOR_CACHE_NORMAL} (RSS: {rss_before:.1f} MB)")
+                else:
+                    logging.info(f"Ensemble mode expired/exceeded, trimming cache from {cache_size} to {MAX_SIMULATOR_CACHE_NORMAL}")
+                
                 _trim_cache_to_normal()
+                
+                # Wait for delayed cleanup to process (simulators are cleaned up after _CLEANUP_DELAY)
+                time.sleep(_CLEANUP_DELAY + 1)  # Wait slightly longer than cleanup delay
+                
+                # Process cleanup queue to actually free memory
+                _process_cleanup_queue()
+                
                 # Force additional GC passes to ensure memory is released
                 for _ in range(3):
                     gc.collect()
+                    gc.collect(generation=2)
                 try:
                     import ctypes
                     libc = ctypes.CDLL("libc.so.6")
@@ -503,12 +607,19 @@ def _periodic_cache_trim():
                     logging.info("Forced malloc_trim after cache trim")
                 except:
                     pass
+                
                 # Check immediately after trimming to see if it worked
                 with _cache_lock:
                     new_size = len(_simulator_cache)
+                rss_after = _get_rss_memory_mb()
+                
                 if new_size > MAX_SIMULATOR_CACHE_NORMAL:
                     consecutive_trim_failures += 1
-                    logging.warning(f"Cache trim didn't reduce size enough: {new_size} > {MAX_SIMULATOR_CACHE_NORMAL} (failure #{consecutive_trim_failures})")
+                    if rss_after is not None and rss_before is not None:
+                        rss_delta = rss_before - rss_after
+                        logging.warning(f"Cache trim didn't reduce size enough: {new_size} > {MAX_SIMULATOR_CACHE_NORMAL} (failure #{consecutive_trim_failures}, RSS: {rss_after:.1f} MB, released: {rss_delta:.1f} MB)")
+                    else:
+                        logging.warning(f"Cache trim didn't reduce size enough: {new_size} > {MAX_SIMULATOR_CACHE_NORMAL} (failure #{consecutive_trim_failures})")
                     if consecutive_trim_failures > 2:  # Reduced from 3 to 2 for faster response
                         # Force more aggressive trimming
                         logging.warning("Multiple trim failures, forcing aggressive cleanup")
@@ -516,9 +627,14 @@ def _periodic_cache_trim():
                         consecutive_trim_failures = 0
                 else:
                     consecutive_trim_failures = 0
+                    if rss_after is not None and rss_before is not None:
+                        rss_delta = rss_before - rss_after
+                        logging.info(f"Cache trim successful: {new_size} simulators (RSS: {rss_after:.1f} MB, released: {rss_delta:.1f} MB)")
                 time.sleep(3)  # Check even more frequently (reduced from 5s) when trim failing
             else:
                 # Normal check interval - always call trim to handle edge cases
+                # Also process cleanup queue periodically
+                _process_cleanup_queue()
                 _trim_cache_to_normal()
                 consecutive_trim_failures = 0
                 time.sleep(20)  # Check more frequently (reduced from 30s)
