@@ -51,6 +51,13 @@
         .gm-ui-hover-effect {
             display: none !important;
         }
+        /* Hide Google Maps logo */
+        .gm-style-cc {
+            display: none !important;
+        }
+        .gm-style a[href*="google.com/maps"] {
+            display: none !important;
+        }
         /* Top bar */
         #info {
             width: 100%;
@@ -272,7 +279,7 @@
             box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
         }
         #param-panel.collapsed {
-            transform: translateY(calc(-100% - var(--nav-height, 0px)));
+            transform: translateY(100%);
             pointer-events: none;
         }
         /* No motion block unnecessary now */
@@ -347,23 +354,6 @@
         @media (prefers-color-scheme: dark) {
             .field-input:focus {
                 box-shadow: 0 0 0 3px rgba(147, 197, 253, 0.1), 0 0 20px rgba(147, 197, 253, 0.15);
-            }
-        }
-        /* Ripple effect - will be added via JavaScript */
-        .field-input-ripple {
-            position: absolute;
-            border-radius: 50%;
-            background: rgba(17, 24, 39, 0.15);
-            transform: scale(0);
-            animation: ripple 0.5s ease-out;
-            pointer-events: none;
-            z-index: 0;
-            will-change: transform, opacity;
-        }
-        @keyframes ripple {
-            to {
-                transform: scale(1.5);
-                opacity: 0;
             }
         }
         .field-sep {
@@ -1247,29 +1237,6 @@
             window.addEventListener('afterprint', restoreTitleAfterPrint);
         })();
 
-        // Ripple effect for input fields on focus
-        (function() {
-            const inputs = document.querySelectorAll('.field-input');
-            inputs.forEach(input => {
-                const wrapper = input.parentElement;
-                if (wrapper && wrapper.classList.contains('field-inputs')) {
-                    wrapper.style.position = 'relative';
-                    wrapper.style.overflow = 'visible';
-                    
-                    input.addEventListener('focus', function() {
-                        const ripple = document.createElement('div');
-                        ripple.classList.add('field-input-ripple');
-                        const rect = wrapper.getBoundingClientRect();
-                        const size = Math.max(rect.width, rect.height);
-                        ripple.style.width = ripple.style.height = size + 'px';
-                        ripple.style.left = (rect.width / 2 - size / 2) + 'px';
-                        ripple.style.top = (rect.height / 2 - size / 2) + 'px';
-                        wrapper.appendChild(ripple);
-                        setTimeout(() => ripple.remove(), 500);
-                    });
-                }
-            });
-        })();
 
         // Keep the document title updated whenever key inputs change (improves PDF filename reliability)
         (function(){

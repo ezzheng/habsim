@@ -155,22 +155,6 @@
         .form-input::placeholder {
             color: var(--muted);
         }
-        .ripple-effect {
-            position: absolute;
-            border-radius: 50%;
-            background: rgba(17, 24, 39, 0.15);
-            transform: scale(0);
-            animation: ripple 0.5s ease-out;
-            pointer-events: none;
-            z-index: 0;
-            will-change: transform, opacity;
-        }
-        @keyframes ripple {
-            to {
-                transform: scale(1.5);
-                opacity: 0;
-            }
-        }
         /* Password toggle icon */
         .password-toggle {
             position: absolute;
@@ -393,19 +377,6 @@
             }
         });
         
-        // Ripple effect on focus
-        const inputWrapper = passwordInput.closest('.form-input-wrapper');
-        passwordInput.addEventListener('focus', function(e) {
-            const ripple = document.createElement('div');
-            ripple.classList.add('ripple-effect');
-            const rect = inputWrapper.getBoundingClientRect();
-            const size = Math.max(rect.width, rect.height);
-            ripple.style.width = ripple.style.height = size + 'px';
-            ripple.style.left = (rect.width / 2 - size / 2) + 'px';
-            ripple.style.top = (rect.height / 2 - size / 2) + 'px';
-            inputWrapper.appendChild(ripple);
-            setTimeout(() => ripple.remove(), 500);
-        });
         
         // Password toggle functionality
         const passwordToggle = document.getElementById('passwordToggle');
