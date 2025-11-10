@@ -159,10 +159,16 @@ function setMode(mode){
         gstep.style.display = "none";
         if (gtimer) gtimer.style.display = "flex";
         if (eqbtn) eqbtn.style.visibility = "visible";
-        // Set values on all elements with these IDs (handles duplicate IDs for mobile/desktop)
-        document.querySelectorAll('#asc').forEach(el => el.value = 4);
-        document.querySelectorAll('#equil').forEach(el => el.value = 30000);
-        document.querySelectorAll('#desc').forEach(el => el.value = 8);
+        // Only set defaults if fields are empty (don't overwrite user changes)
+        document.querySelectorAll('#asc').forEach(el => {
+            if (!el.value || el.value.trim() === "") el.value = 4;
+        });
+        document.querySelectorAll('#equil').forEach(el => {
+            if (!el.value || el.value.trim() === "") el.value = 30000;
+        });
+        document.querySelectorAll('#desc').forEach(el => {
+            if (!el.value || el.value.trim() === "") el.value = 8;
+        });
         var remain = document.getElementById("timeremain");
         if (remain) remain.style.visibility = "visible";
     } else if (mode === "ZPB"){
@@ -172,12 +178,18 @@ function setMode(mode){
         gstep.style.display = "none";
         if (gtimer) gtimer.style.display = "flex";
         if (eqbtn) eqbtn.style.visibility = "visible";
-        // Set values on all elements with these IDs (handles duplicate IDs for mobile/desktop)
-        document.querySelectorAll('#asc').forEach(el => el.value = 4);
-        document.querySelectorAll('#equil').forEach(el => el.value = 30000);
-        document.querySelectorAll('#desc').forEach(el => el.value = 8);
+        // Only set defaults if fields are empty (don't overwrite user changes)
+        document.querySelectorAll('#asc').forEach(el => {
+            if (!el.value || el.value.trim() === "") el.value = 4;
+        });
+        document.querySelectorAll('#equil').forEach(el => {
+            if (!el.value || el.value.trim() === "") el.value = 30000;
+        });
+        document.querySelectorAll('#desc').forEach(el => {
+            if (!el.value || el.value.trim() === "") el.value = 8;
+        });
         const eqtimeEl = document.getElementById("eqtime");
-        if (eqtimeEl) eqtimeEl.value = 1;
+        if (eqtimeEl && (!eqtimeEl.value || eqtimeEl.value.trim() === "")) eqtimeEl.value = 1;
         var remain = document.getElementById("timeremain");
         if (remain) remain.style.visibility = "visible";
     } else { // FLOAT
@@ -187,16 +199,22 @@ function setMode(mode){
         gstep.style.display = "flex";
         if (gtimer) gtimer.style.display = "none";
         if (eqbtn) eqbtn.style.visibility = "hidden";
-        // Set values on all elements with these IDs (handles duplicate IDs for mobile/desktop)
-        document.querySelectorAll('#asc').forEach(el => el.value = 4);
-        document.querySelectorAll('#equil').forEach(el => el.value = 30000);
-        document.querySelectorAll('#desc').forEach(el => el.value = 8);
+        // Only set defaults if fields are empty (don't overwrite user changes)
+        document.querySelectorAll('#asc').forEach(el => {
+            if (!el.value || el.value.trim() === "") el.value = 4;
+        });
+        document.querySelectorAll('#equil').forEach(el => {
+            if (!el.value || el.value.trim() === "") el.value = 30000;
+        });
+        document.querySelectorAll('#desc').forEach(el => {
+            if (!el.value || el.value.trim() === "") el.value = 8;
+        });
         const coeffEl = document.getElementById("coeff");
         const durEl = document.getElementById("dur");
         const stepEl = document.getElementById("step");
-        if (coeffEl) coeffEl.value = 0.5;
-        if (durEl) durEl.value = 48;
-        if (stepEl) stepEl.value = 240;
+        if (coeffEl && (!coeffEl.value || coeffEl.value.trim() === "")) coeffEl.value = 0.5;
+        if (durEl && (!durEl.value || durEl.value.trim() === "")) durEl.value = 48;
+        if (stepEl && (!stepEl.value || stepEl.value.trim() === "")) stepEl.value = 240;
         var remain = document.getElementById("timeremain");
         if (remain) remain.style.visibility = "hidden";
     }

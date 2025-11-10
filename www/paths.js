@@ -998,12 +998,26 @@ async function simulate() {
         var url = "";
         allValues.push(time,alt);
         var equil, eqtime, asc, desc; // Declare variables for use in spaceshot URL
+        // Helper to get value from visible element (handles duplicate IDs)
+        function getVisibleValue(id) {
+            const elements = document.querySelectorAll(`#${id}`);
+            // Find the visible element (not hidden by CSS)
+            for (const el of elements) {
+                const style = window.getComputedStyle(el);
+                if (style.display !== 'none' && style.visibility !== 'hidden') {
+                    return el.value.trim();
+                }
+            }
+            // Fallback to first element if none visible
+            return elements[0] ? elements[0].value.trim() : '';
+        }
+        
         switch(btype) {
             case 'STANDARD':
-                equil = document.getElementById('equil').value.trim();
+                equil = getVisibleValue('equil');
                 eqtime = 0; // STANDARD mode uses 0 for eqtime
-                asc = document.getElementById('asc').value.trim();
-                desc = document.getElementById('desc').value.trim();
+                asc = getVisibleValue('asc');
+                desc = getVisibleValue('desc');
                 
                 // Validate that values are not empty
                 if (!asc || asc === "" || parseFloat(asc) <= 0) {
@@ -1024,10 +1038,10 @@ async function simulate() {
                 allValues.push(equil,asc,desc);
                 break;
             case 'ZPB':
-                equil = document.getElementById('equil').value.trim();
+                equil = getVisibleValue('equil');
                 eqtime = document.getElementById('eqtime').value.trim();
-                asc = document.getElementById('asc').value.trim();
-                desc = document.getElementById('desc').value.trim();
+                asc = getVisibleValue('asc');
+                desc = getVisibleValue('desc');
                 
                 // Validate that values are not empty
                 if (!asc || asc === "" || parseFloat(asc) <= 0) {
@@ -1188,37 +1202,37 @@ async function simulate() {
                 }
             } else {
                 // Sequential mode: loop through models one by one (for single model or FLOAT mode)
-                for (const modelId of modelIds) {
-                    const urlWithModel = url + "&model=" + modelId;
-                    console.log(urlWithModel);
-                    try {
+            for (const modelId of modelIds) {
+                const urlWithModel = url + "&model=" + modelId;
+                console.log(urlWithModel);
+                try {
                         const response = await fetch(urlWithModel, { signal: window.__simAbort.signal });
-                        const payload = await response.json();
+                    const payload = await response.json();
 
-                        if (payload === "error") {
-                            if (onlyonce) {
-                                alert("Simulation failed on the server. Please verify inputs or try again in a few minutes.");
-                                onlyonce = false;
-                            }
+                    if (payload === "error") {
+                        if (onlyonce) {
+                            alert("Simulation failed on the server. Please verify inputs or try again in a few minutes.");
+                            onlyonce = false;
                         }
-                        else if (payload === "alt error") {
-                            if (onlyonce) {
-                                alert("ERROR: Please make sure your entire flight altitude is within 45km.");
-                                onlyonce = false;
-                            }
+                    }
+                    else if (payload === "alt error") {
+                        if (onlyonce) {
+                            alert("ERROR: Please make sure your entire flight altitude is within 45km.");
+                            onlyonce = false;
                         }
-                        else {
+                    }
+                    else {
                             showpath(payload, modelId);
-                        }
-                    } catch (error) {
+                    }
+                } catch (error) {
                         if (error && (error.name === 'AbortError' || error.message === 'The operation was aborted.')) {
                             // Cancelled: stop processing further models, keep what is already drawn
                             break;
                         }
-                        console.error('Simulation fetch failed', error);
-                        if (onlyonce) {
-                            alert('Failed to contact simulation server. Please try again later.');
-                            onlyonce = false;
+                    console.error('Simulation fetch failed', error);
+                    if (onlyonce) {
+                        alert('Failed to contact simulation server. Please try again later.');
+                        onlyonce = false;
                         }
                     }
                 }
