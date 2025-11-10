@@ -1,6 +1,9 @@
 var btype = "STANDARD"
+var _isInitialLoad = true; // Track if this is the first time setMode is called
+
 $(document).ready(function() {
     $('input[name="optradio"]').on('change', function () {
+        _isInitialLoad = false; // User is switching modes, not initial load
         if ($(this).val() === "standardbln") setMode("STANDARD");
         else if ($(this).val() === "zpbbln") setMode("ZPB");
         else if ($(this).val() === "floatbln") setMode("FLOAT");
@@ -14,6 +17,7 @@ $(document).ready(function() {
 
     // initialize defaults and visibility
     setMode("STANDARD");
+    _isInitialLoad = false; // After initial setup, mark as not initial load
 });
 
 var waypointsToggle = false;
@@ -154,13 +158,19 @@ function setMode(mode){
         gstep.style.display = "none";
         if (gtimer) gtimer.style.display = "flex";
         if (eqbtn) eqbtn.style.visibility = "visible";
-        // Don't reset user's values - only set defaults if empty
         const ascEl = document.getElementById("asc");
         const equilEl = document.getElementById("equil");
         const descEl = document.getElementById("desc");
-        if (ascEl && (!ascEl.value || ascEl.value.trim() === "")) ascEl.value = 4;
-        if (equilEl && (!equilEl.value || equilEl.value.trim() === "")) equilEl.value = 30000;
-        if (descEl && (!descEl.value || descEl.value.trim() === "")) descEl.value = 8;
+        // On initial load, set defaults unconditionally. Otherwise, only set if empty.
+        if (_isInitialLoad) {
+            if (ascEl) ascEl.value = 4;
+            if (equilEl) equilEl.value = 30000;
+            if (descEl) descEl.value = 8;
+        } else {
+            if (ascEl && (!ascEl.value || ascEl.value.trim() === "")) ascEl.value = 4;
+            if (equilEl && (!equilEl.value || equilEl.value.trim() === "")) equilEl.value = 30000;
+            if (descEl && (!descEl.value || descEl.value.trim() === "")) descEl.value = 8;
+        }
         var remain = document.getElementById("timeremain");
         if (remain) remain.style.visibility = "visible";
     } else if (mode === "ZPB"){
@@ -170,15 +180,22 @@ function setMode(mode){
         gstep.style.display = "none";
         if (gtimer) gtimer.style.display = "flex";
         if (eqbtn) eqbtn.style.visibility = "visible";
-        // Don't reset user's values - only set defaults if empty
         const ascEl = document.getElementById("asc");
         const equilEl = document.getElementById("equil");
         const eqtimeEl = document.getElementById("eqtime");
         const descEl = document.getElementById("desc");
-        if (ascEl && (!ascEl.value || ascEl.value.trim() === "")) ascEl.value = 4;
-        if (equilEl && (!equilEl.value || equilEl.value.trim() === "")) equilEl.value = 30000;
-        if (eqtimeEl && (!eqtimeEl.value || eqtimeEl.value.trim() === "")) eqtimeEl.value = 1;
-        if (descEl && (!descEl.value || descEl.value.trim() === "")) descEl.value = 8;
+        // On initial load, set defaults unconditionally. Otherwise, only set if empty.
+        if (_isInitialLoad) {
+            if (ascEl) ascEl.value = 4;
+            if (equilEl) equilEl.value = 30000;
+            if (eqtimeEl) eqtimeEl.value = 1;
+            if (descEl) descEl.value = 8;
+        } else {
+            if (ascEl && (!ascEl.value || ascEl.value.trim() === "")) ascEl.value = 4;
+            if (equilEl && (!equilEl.value || equilEl.value.trim() === "")) equilEl.value = 30000;
+            if (eqtimeEl && (!eqtimeEl.value || eqtimeEl.value.trim() === "")) eqtimeEl.value = 1;
+            if (descEl && (!descEl.value || descEl.value.trim() === "")) descEl.value = 8;
+        }
         var remain = document.getElementById("timeremain");
         if (remain) remain.style.visibility = "visible";
     } else { // FLOAT
@@ -188,19 +205,28 @@ function setMode(mode){
         gstep.style.display = "flex";
         if (gtimer) gtimer.style.display = "none";
         if (eqbtn) eqbtn.style.visibility = "hidden";
-        // Don't reset user's values - only set defaults if empty
         const ascEl = document.getElementById("asc");
         const equilEl = document.getElementById("equil");
         const descEl = document.getElementById("desc");
         const coeffEl = document.getElementById("coeff");
         const durEl = document.getElementById("dur");
         const stepEl = document.getElementById("step");
-        if (ascEl && (!ascEl.value || ascEl.value.trim() === "")) ascEl.value = 4;
-        if (equilEl && (!equilEl.value || equilEl.value.trim() === "")) equilEl.value = 30000;
-        if (descEl && (!descEl.value || descEl.value.trim() === "")) descEl.value = 8;
-        if (coeffEl && (!coeffEl.value || coeffEl.value.trim() === "")) coeffEl.value = 0.5;
-        if (durEl && (!durEl.value || durEl.value.trim() === "")) durEl.value = 48;
-        if (stepEl && (!stepEl.value || stepEl.value.trim() === "")) stepEl.value = 240;
+        // On initial load, set defaults unconditionally. Otherwise, only set if empty.
+        if (_isInitialLoad) {
+            if (ascEl) ascEl.value = 4;
+            if (equilEl) equilEl.value = 30000;
+            if (descEl) descEl.value = 8;
+            if (coeffEl) coeffEl.value = 0.5;
+            if (durEl) durEl.value = 48;
+            if (stepEl) stepEl.value = 240;
+        } else {
+            if (ascEl && (!ascEl.value || ascEl.value.trim() === "")) ascEl.value = 4;
+            if (equilEl && (!equilEl.value || equilEl.value.trim() === "")) equilEl.value = 30000;
+            if (descEl && (!descEl.value || descEl.value.trim() === "")) descEl.value = 8;
+            if (coeffEl && (!coeffEl.value || coeffEl.value.trim() === "")) coeffEl.value = 0.5;
+            if (durEl && (!durEl.value || durEl.value.trim() === "")) durEl.value = 48;
+            if (stepEl && (!stepEl.value || stepEl.value.trim() === "")) stepEl.value = 240;
+        }
         var remain = document.getElementById("timeremain");
         if (remain) remain.style.visibility = "hidden";
     }
