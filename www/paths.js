@@ -1000,19 +1000,53 @@ async function simulate() {
         var equil, eqtime, asc, desc; // Declare variables for use in spaceshot URL
         switch(btype) {
             case 'STANDARD':
-                equil = document.getElementById('equil').value;
+                equil = document.getElementById('equil').value.trim();
                 eqtime = 0; // STANDARD mode uses 0 for eqtime
-                asc = document.getElementById('asc').value;
-                desc = document.getElementById('desc').value;
+                asc = document.getElementById('asc').value.trim();
+                desc = document.getElementById('desc').value.trim();
+                
+                // Validate that values are not empty
+                if (!asc || asc === "" || parseFloat(asc) <= 0) {
+                    alert("Ascent rate must be a positive number");
+                    throw new Error("Invalid ascent rate");
+                }
+                if (!equil || equil === "" || parseFloat(equil) <= 0) {
+                    alert("Burst altitude must be a positive number");
+                    throw new Error("Invalid burst altitude");
+                }
+                if (!desc || desc === "" || parseFloat(desc) <= 0) {
+                    alert("Descent rate must be a positive number");
+                    throw new Error("Invalid descent rate");
+                }
+                
                 url = URL_ROOT + "/singlezpb?timestamp="
                     + time + "&lat=" + lat + "&lon=" + lon + "&alt=" + alt + "&equil=" + equil + "&eqtime=" + eqtime + "&asc=" + asc + "&desc=" + desc;
                 allValues.push(equil,asc,desc);
                 break;
             case 'ZPB':
-                equil = document.getElementById('equil').value;
-                eqtime = document.getElementById('eqtime').value;
-                asc = document.getElementById('asc').value;
-                desc = document.getElementById('desc').value;
+                equil = document.getElementById('equil').value.trim();
+                eqtime = document.getElementById('eqtime').value.trim();
+                asc = document.getElementById('asc').value.trim();
+                desc = document.getElementById('desc').value.trim();
+                
+                // Validate that values are not empty
+                if (!asc || asc === "" || parseFloat(asc) <= 0) {
+                    alert("Ascent rate must be a positive number");
+                    throw new Error("Invalid ascent rate");
+                }
+                if (!equil || equil === "" || parseFloat(equil) <= 0) {
+                    alert("Burst altitude must be a positive number");
+                    throw new Error("Invalid burst altitude");
+                }
+                if (!desc || desc === "" || parseFloat(desc) <= 0) {
+                    alert("Descent rate must be a positive number");
+                    throw new Error("Invalid descent rate");
+                }
+                if (!eqtime || eqtime === "" || parseFloat(eqtime) < 0) {
+                    alert("Equilibrium time must be a non-negative number");
+                    throw new Error("Invalid equilibrium time");
+                }
+                
                 url = URL_ROOT + "/singlezpb?timestamp="
                     + time + "&lat=" + lat + "&lon=" + lon + "&alt=" + alt + "&equil=" + equil + "&eqtime=" + eqtime + "&asc=" + asc + "&desc=" + desc
                 allValues.push(equil,eqtime,asc,desc);

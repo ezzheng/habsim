@@ -109,20 +109,28 @@ function setDefaultValues() {
     const eqtimeEl = document.getElementById("eqtime");
     
     // Only set defaults if fields are empty (first load)
-    if (ascEl && !ascEl.value) ascEl.value = 4;
-    if (equilEl && !equilEl.value) equilEl.value = 30000;
-    if (descEl && !descEl.value) descEl.value = 8;
-    if (coeffEl && !coeffEl.value) coeffEl.value = 0.5;
-    if (durEl && !durEl.value) durEl.value = 48;
-    if (stepEl && !stepEl.value) stepEl.value = 240;
-    if (eqtimeEl && !eqtimeEl.value) eqtimeEl.value = 1;
+    // Check for empty string, null, or undefined
+    if (ascEl && (!ascEl.value || ascEl.value.trim() === "")) ascEl.value = 4;
+    if (equilEl && (!equilEl.value || equilEl.value.trim() === "")) equilEl.value = 30000;
+    if (descEl && (!descEl.value || descEl.value.trim() === "")) descEl.value = 8;
+    if (coeffEl && (!coeffEl.value || coeffEl.value.trim() === "")) coeffEl.value = 0.5;
+    if (durEl && (!durEl.value || durEl.value.trim() === "")) durEl.value = 48;
+    if (stepEl && (!stepEl.value || stepEl.value.trim() === "")) stepEl.value = 240;
+    if (eqtimeEl && (!eqtimeEl.value || eqtimeEl.value.trim() === "")) eqtimeEl.value = 1;
 }
 
 // Set defaults when DOM is ready (only on first load)
-if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', setDefaultValues);
-} else {
+// Use multiple strategies to ensure it runs
+function initializeDefaults() {
     setDefaultValues();
+    // Also try after a short delay in case elements aren't ready yet
+    setTimeout(setDefaultValues, 100);
+}
+
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initializeDefaults);
+} else {
+    initializeDefaults();
 }
 
 
@@ -150,9 +158,9 @@ function setMode(mode){
         const ascEl = document.getElementById("asc");
         const equilEl = document.getElementById("equil");
         const descEl = document.getElementById("desc");
-        if (ascEl && !ascEl.value) ascEl.value = 4;
-        if (equilEl && !equilEl.value) equilEl.value = 30000;
-        if (descEl && !descEl.value) descEl.value = 8;
+        if (ascEl && (!ascEl.value || ascEl.value.trim() === "")) ascEl.value = 4;
+        if (equilEl && (!equilEl.value || equilEl.value.trim() === "")) equilEl.value = 30000;
+        if (descEl && (!descEl.value || descEl.value.trim() === "")) descEl.value = 8;
         var remain = document.getElementById("timeremain");
         if (remain) remain.style.visibility = "visible";
     } else if (mode === "ZPB"){
@@ -167,10 +175,10 @@ function setMode(mode){
         const equilEl = document.getElementById("equil");
         const eqtimeEl = document.getElementById("eqtime");
         const descEl = document.getElementById("desc");
-        if (ascEl && !ascEl.value) ascEl.value = 4;
-        if (equilEl && !equilEl.value) equilEl.value = 30000;
-        if (eqtimeEl && !eqtimeEl.value) eqtimeEl.value = 1;
-        if (descEl && !descEl.value) descEl.value = 8;
+        if (ascEl && (!ascEl.value || ascEl.value.trim() === "")) ascEl.value = 4;
+        if (equilEl && (!equilEl.value || equilEl.value.trim() === "")) equilEl.value = 30000;
+        if (eqtimeEl && (!eqtimeEl.value || eqtimeEl.value.trim() === "")) eqtimeEl.value = 1;
+        if (descEl && (!descEl.value || descEl.value.trim() === "")) descEl.value = 8;
         var remain = document.getElementById("timeremain");
         if (remain) remain.style.visibility = "visible";
     } else { // FLOAT
@@ -187,12 +195,12 @@ function setMode(mode){
         const coeffEl = document.getElementById("coeff");
         const durEl = document.getElementById("dur");
         const stepEl = document.getElementById("step");
-        if (ascEl && !ascEl.value) ascEl.value = 4;
-        if (equilEl && !equilEl.value) equilEl.value = 30000;
-        if (descEl && !descEl.value) descEl.value = 8;
-        if (coeffEl && !coeffEl.value) coeffEl.value = 0.5;
-        if (durEl && !durEl.value) durEl.value = 48;
-        if (stepEl && !stepEl.value) stepEl.value = 240;
+        if (ascEl && (!ascEl.value || ascEl.value.trim() === "")) ascEl.value = 4;
+        if (equilEl && (!equilEl.value || equilEl.value.trim() === "")) equilEl.value = 30000;
+        if (descEl && (!descEl.value || descEl.value.trim() === "")) descEl.value = 8;
+        if (coeffEl && (!coeffEl.value || coeffEl.value.trim() === "")) coeffEl.value = 0.5;
+        if (durEl && (!durEl.value || durEl.value.trim() === "")) durEl.value = 48;
+        if (stepEl && (!stepEl.value || stepEl.value.trim() === "")) stepEl.value = 240;
         var remain = document.getElementById("timeremain");
         if (remain) remain.style.visibility = "hidden";
     }
