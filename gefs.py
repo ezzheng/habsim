@@ -494,14 +494,25 @@ def _ensure_cached(file_name: str) -> Path:
                         raise
                     
                     # Download file with streaming
+                    # Use streaming mode to handle large files efficiently
                     response = _S3_CLIENT.get_object(Bucket=_BUCKET, Key=file_name)
                     body = response['Body']
+                    # Ensure body is in streaming mode (it should be by default)
+                    if hasattr(body, 'set_socket_timeout'):
+                        # Set socket timeout for large files
+                        body.set_socket_timeout(1800)  # 30 minutes
                     
                     bytes_written = 0
                     last_chunk_time = time.time()
+                    temp_file_created = False
+                    fh = None
                     try:
-                        with open(tmp_path, 'wb') as fh:
-                            temp_file_created = True
+                        # Create temp file first to ensure we can write
+                        tmp_path.parent.mkdir(parents=True, exist_ok=True)
+                        fh = open(tmp_path, 'wb')
+                        temp_file_created = True
+                        
+                        try:
                             while True:
                                 chunk = body.read(_CHUNK_SIZE)
                                 if not chunk:
@@ -518,6 +529,10 @@ def _ensure_cached(file_name: str) -> Path:
                                 bytes_written += len(chunk)
                                 last_chunk_time = current_time
                                 
+                                # Flush periodically for large files to ensure data is written
+                                if is_large_file and bytes_written % (10 * 1024 * 1024) < _CHUNK_SIZE:
+                                    fh.flush()
+                                
                                 # For large files, log progress every 50MB
                                 if is_large_file and bytes_written % (50 * 1024 * 1024) < _CHUNK_SIZE:
                                     mb_written = bytes_written / (1024 * 1024)
@@ -526,6 +541,12 @@ def _ensure_cached(file_name: str) -> Path:
                                         logging.info(f"Downloading {file_name}: {mb_written:.1f}MB / {mb_total:.1f}MB ({100 * bytes_written / expected_size:.1f}%)")
                                     else:
                                         logging.info(f"Downloading {file_name}: {mb_written:.1f}MB")
+                        finally:
+                            # Always close and sync the file handle, even on error
+                            if fh is not None:
+                                fh.flush()
+                                os.fsync(fh.fileno())
+                                fh.close()
                     except Exception as write_error:
                         # If file was created but write failed, clean it up
                         if tmp_path.exists():
