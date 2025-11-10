@@ -23,35 +23,76 @@ google.maps.event.addListener(map, 'click', function (event) {
 });
 
 // Make map type control dropdown open upward instead of downward
-// Use MutationObserver to detect when dropdown is opened and modify its position
+// Use multiple strategies to catch the dropdown
 (function() {
-    const observer = new MutationObserver(function(mutations) {
-        // Find map type control dropdown menu
-        const dropdowns = document.querySelectorAll('.gm-style div[role="menu"], .gm-bundled-control-on-bottom > div[style*="position: absolute"]');
-        dropdowns.forEach(function(dropdown) {
-            const rect = dropdown.getBoundingClientRect();
-            const mapRect = document.getElementById('map').getBoundingClientRect();
-            // If dropdown is near bottom of screen, flip it upward
-            if (rect.bottom > mapRect.bottom - 50) {
-                dropdown.style.bottom = 'auto';
-                dropdown.style.top = '0';
-                dropdown.style.transform = 'translateY(-100%)';
+    function fixDropdown() {
+        // Strategy 1: Find by role="menu"
+        const menus = document.querySelectorAll('.gm-style div[role="menu"]');
+        menus.forEach(function(menu) {
+            const style = window.getComputedStyle(menu);
+            if (style.display !== 'none' && style.visibility !== 'hidden') {
+                menu.style.bottom = 'auto';
+                menu.style.top = '0';
+                menu.style.transform = 'translateY(-100%)';
             }
         });
+        
+        // Strategy 2: Find by position absolute in bottom control
+        const bottomControls = document.querySelectorAll('.gm-bundled-control-on-bottom');
+        bottomControls.forEach(function(control) {
+            const children = control.querySelectorAll('div[style*="position"]');
+            children.forEach(function(child) {
+                const rect = child.getBoundingClientRect();
+                const mapRect = document.getElementById('map').getBoundingClientRect();
+                // If it's positioned near bottom, flip it
+                if (rect.bottom > mapRect.bottom - 100 || child.style.bottom) {
+                    child.style.bottom = 'auto';
+                    child.style.top = '0';
+                    child.style.transform = 'translateY(-100%)';
+                }
+            });
+        });
+        
+        // Strategy 3: Find any div with inline style containing "bottom" in bottom control area
+        const allDivs = document.querySelectorAll('.gm-bundled-control-on-bottom div');
+        allDivs.forEach(function(div) {
+            if (div.style.position === 'absolute' || div.getAttribute('style')?.includes('position')) {
+                div.style.bottom = 'auto';
+                div.style.top = '0';
+                div.style.transform = 'translateY(-100%)';
+            }
+        });
+    }
+    
+    // Use MutationObserver with more aggressive observation
+    const observer = new MutationObserver(function(mutations) {
+        fixDropdown();
     });
     
-    // Start observing after map is loaded
+    // Also listen for clicks on map type control
     google.maps.event.addListenerOnce(map, 'idle', function() {
         const mapContainer = document.getElementById('map');
         if (mapContainer) {
+            // Observe the entire map container
             observer.observe(mapContainer, {
                 childList: true,
                 subtree: true,
                 attributes: true,
-                attributeFilter: ['style', 'class']
+                attributeFilter: ['style', 'class', 'role']
             });
+            
+            // Also listen for clicks anywhere in the map controls area
+            mapContainer.addEventListener('click', function(e) {
+                // Small delay to let Google Maps create the dropdown
+                setTimeout(fixDropdown, 10);
+                setTimeout(fixDropdown, 50);
+                setTimeout(fixDropdown, 100);
+            }, true); // Use capture phase
         }
     });
+    
+    // Also run periodically to catch any missed dropdowns
+    setInterval(fixDropdown, 200);
 })();
 //Define OSM map type pointing at the OpenStreetMap tile server
 map.mapTypes.set("OSM", new google.maps.ImageMapType({

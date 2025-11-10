@@ -38,6 +38,10 @@
             height: 100%; 
             margin: 0; 
             padding: 0;
+            overflow-x: hidden;
+        }
+        html {
+            scroll-padding-top: 0;
         }
         body {
             display: flex;
@@ -45,6 +49,7 @@
             font-family: 'Inter', system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
             color: var(--fg);
             background: var(--bg);
+            position: relative;
         }
         main {
             flex: 1;
@@ -78,8 +83,13 @@
             display: none !important;
         }
         /* Make map type control dropdown open upward (since control is at bottom) */
+        /* Target all possible dropdown containers */
         .gm-style .gm-bundled-control-on-bottom > div[style*="position: absolute"],
-        .gm-style .gm-bundled-control-on-bottom > div[style*="position:absolute"] {
+        .gm-style .gm-bundled-control-on-bottom > div[style*="position:absolute"],
+        .gm-style .gm-bundled-control-on-bottom > div[style*="position:absolute;"],
+        .gm-style div[role="menu"],
+        .gm-style .gm-style-cc ~ div[style*="position"],
+        .gm-style .gm-control-wrapper > div[style*="position"] {
             bottom: auto !important;
             top: 0 !important;
             transform: translateY(-100%) !important;
@@ -90,6 +100,7 @@
         }
         /* Top bar */
         #info {
+            position: relative;
             width: 100%;
             max-width: none !important;
             padding: 0 !important;
@@ -98,6 +109,7 @@
             background-color: transparent;
             border-bottom: none;
             box-shadow: none;
+            z-index: 1000;
         }
         .topbar {
             display: flex;
@@ -989,6 +1001,13 @@
         const main = document.getElementById('main-container');
         if (!nav || !main) return;
         const navHeight = nav.offsetHeight;
+        // Ensure nav is at the top
+        nav.style.position = 'relative';
+        nav.style.top = '0';
+        nav.style.left = '0';
+        nav.style.right = '0';
+        nav.style.zIndex = '1000';
+        // Set body padding to account for nav height
         document.body.style.paddingTop = navHeight + 'px';
         // Account for mobile browser UI bars
         const isMobile = window.innerWidth <= 768;
