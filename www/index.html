@@ -34,16 +34,8 @@
         @media (prefers-color-scheme: dark){
             :root{ --bg:#0b0f14; --fg:#e5e7eb; --muted:#9ca3af; --line:#1f2937; --soft:#0f1520; --soft2:#0d131d; --brand:#93c5fd; --brand-600:#60a5fa; }
         }
-        html { 
-            margin: 0; 
-            padding: 0;
-            overflow-x: hidden;
-        }
-        body { 
-            height: 100%; 
-            margin: 0; 
-            padding: 0;
-            overflow-x: hidden;
+        html, body { height: 100%; margin: 0; padding: 0; }
+        body {
             display: flex;
             flex-direction: column;
             font-family: 'Inter', system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
@@ -53,47 +45,22 @@
         main {
             flex: 1;
             display: flex;
-            margin-top: 0;
         }
-        #main-container {
-            flex: 1;
-            display: flex;
-            margin-top: 0;
-            min-height: 0;
-        }
-        #map{ 
-            flex: 1; 
-            height: 100%; 
-            width: 100%; 
-            margin: 0; 
-            padding: 0;
-            min-height: 0;
-        }
-        /* Hide Google Maps logo */
-        .gm-style-cc {
-            display: none !important;
-        }
-        .gm-style a[href*="google.com/maps"] {
-            display: none !important;
-        }
+        #map{ flex: 1; height: 100%; width: 100%; margin: 0; padding: 0}
         /* Hide Google Maps InfoWindow close button */
         .gm-ui-hover-effect {
             display: none !important;
         }
         /* Top bar */
         #info {
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
             width: 100%;
             max-width: none !important;
             padding: 0 !important;
             margin: 0 !important;
+            top: 0px;
             background-color: transparent;
             border-bottom: none;
             box-shadow: none;
-            z-index: 1000;
         }
         .topbar {
             display: flex;
@@ -305,7 +272,7 @@
             box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
         }
         #param-panel.collapsed {
-            transform: translateY(-100%);
+            transform: translateY(calc(-100% - var(--nav-height, 0px)));
             pointer-events: none;
         }
         /* No motion block unnecessary now */
@@ -395,7 +362,7 @@
         }
         @keyframes ripple {
             to {
-                transform: scale(2);
+                transform: scale(1.5);
                 opacity: 0;
             }
         }
@@ -983,26 +950,12 @@
     function adjustLayout() {
         const nav = document.getElementById('info');
         const main = document.getElementById('main-container');
-        const map = document.getElementById('map');
         if (!nav || !main) return;
         const navHeight = nav.offsetHeight;
         document.body.style.paddingTop = navHeight + 'px';
         main.style.height = `calc(100vh - ${navHeight}px)`;
-        main.style.marginTop = '0';
         // Set CSS variable for param-panel top offset
         document.documentElement.style.setProperty('--nav-height', navHeight + 'px');
-        // Trigger map resize if it exists
-        if (typeof google !== 'undefined' && google.maps && window.map) {
-            setTimeout(function() {
-                google.maps.event.trigger(window.map, 'resize');
-            }, 100);
-        }
-    }
-    // Run adjustLayout immediately and on events
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', adjustLayout);
-    } else {
-        adjustLayout();
     }
     window.addEventListener('load', adjustLayout);
     window.addEventListener('resize', adjustLayout);
@@ -1301,7 +1254,7 @@
                 const wrapper = input.parentElement;
                 if (wrapper && wrapper.classList.contains('field-inputs')) {
                     wrapper.style.position = 'relative';
-                    wrapper.style.overflow = 'hidden';
+                    wrapper.style.overflow = 'visible';
                     
                     input.addEventListener('focus', function() {
                         const ripple = document.createElement('div');

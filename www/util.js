@@ -1,65 +1,20 @@
-//Maps initialization - wait for layout to be ready
-function initMap() {
-    var element = document.getElementById("map");
-    if (!element) {
-        // Retry if element not ready
-        setTimeout(initMap, 100);
-        return;
-    }
-    var map = new google.maps.Map(element, {
-        center: new google.maps.LatLng(37.4, -121.5),
-        zoom: 9,
-        mapTypeId: "OSM",
-        zoomControl: false,
-        gestureHandling: 'greedy',
-        mapTypeControl: true,
-        mapTypeControlOptions: {
-            position: google.maps.ControlPosition.BOTTOM_LEFT
-        },
-        fullscreenControl: true,
-        fullscreenControlOptions: {
-            position: google.maps.ControlPosition.BOTTOM_RIGHT
-        },
-        streetViewControl: false
-    });
-    // Make map accessible globally
-    window.map = map;
-    
-    // Trigger resize after a short delay to ensure container has dimensions
-    setTimeout(function() {
-        google.maps.event.trigger(map, 'resize');
-    }, 200);
-    
-    return map;
-}
-
-// Initialize map when DOM is ready
-var map;
-if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', function() {
-        setTimeout(function() {
-            map = initMap();
-            setupMapListeners();
-        }, 100); // Small delay to let layout adjust
-    });
-} else {
-    setTimeout(function() {
-        map = initMap();
-        setupMapListeners();
-    }, 100); // Small delay to let layout adjust
-}
-
-function setupMapListeners() {
-    if (!map) return;
-    var clickMarker = null;
-    var heatmapLayer = null; // Global heatmap layer for Monte Carlo visualization
-    google.maps.event.addListener(map, 'click', function (event) {
-        displayCoordinates(event.latLng);
-    });
-    
-    //Define OSM map type pointing at the OpenStreetMap tile server
-    map.mapTypes.set("OSM", new google.maps.ImageMapType({
-        getTileUrl: function(coord, zoom) {
+//Maps initialization
+var element = document.getElementById("map");
+var map = new google.maps.Map(element, {
+    center: new google.maps.LatLng(37.4, -121.5),
+    zoom: 9,
+    mapTypeId: "OSM",
+    zoomControl: false,
+    gestureHandling: 'greedy'
+});
+var clickMarker = null;
+var heatmapLayer = null; // Global heatmap layer for Monte Carlo visualization
+google.maps.event.addListener(map, 'click', function (event) {
+    displayCoordinates(event.latLng);
+});
+//Define OSM map type pointing at the OpenStreetMap tile server
+map.mapTypes.set("OSM", new google.maps.ImageMapType({
+    getTileUrl: function(coord, zoom) {
         // "Wrap" x (longitude) at 180th meridian properly
         // NB: Don't touch coord.x: because coord param is by reference, and changing its x property breaks something in Google's lib
         var tilesPerGlobe = 1 << zoom;
