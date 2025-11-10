@@ -6,10 +6,7 @@ var map = new google.maps.Map(element, {
     mapTypeId: "OSM",
     zoomControl: false,
     gestureHandling: 'greedy',
-    mapTypeControl: true,
-    mapTypeControlOptions: {
-        position: google.maps.ControlPosition.BOTTOM_LEFT
-    },
+    mapTypeControl: false, // Disable default control - we'll use custom
     fullscreenControl: true,
     fullscreenControlOptions: {
         position: google.maps.ControlPosition.BOTTOM_RIGHT
@@ -22,65 +19,165 @@ google.maps.event.addListener(map, 'click', function (event) {
     displayCoordinates(event.latLng);
 });
 
-// Make map type control dropdown open upward instead of downward
-// Use MutationObserver to detect when dropdown is opened and modify its position
+// Custom map type control with drop-up menu
 (function() {
-    function fixDropdown() {
-        // Find map type control dropdown menu
-        const bottomControls = document.querySelectorAll('.gm-bundled-control-on-bottom');
-        bottomControls.forEach(function(control) {
-            const children = control.querySelectorAll('div[style*="position"]');
-            children.forEach(function(child) {
-                const rect = child.getBoundingClientRect();
-                const mapRect = document.getElementById('map').getBoundingClientRect();
-                // If it's positioned near bottom, flip it upward
-                if (rect.bottom > mapRect.bottom - 50 || child.style.bottom) {
-                    child.style.bottom = 'auto';
-                    child.style.top = '0';
-                    child.style.transform = 'translateY(-100%)';
+    // Wait for map to be ready
+    google.maps.event.addListenerOnce(map, 'idle', function() {
+        // Create custom control container
+        const controlDiv = document.createElement('div');
+        controlDiv.style.cssText = 'margin: 10px; position: absolute; bottom: 0; left: 0; z-index: 1000;';
+        
+        // Create control button (styled like Google Maps control)
+        const controlButton = document.createElement('button');
+        controlButton.type = 'button';
+        controlButton.style.cssText = `
+            background-color: white;
+            border: none;
+            border-radius: 2px;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+            cursor: pointer;
+            padding: 0;
+            width: 40px;
+            height: 40px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+            color: #5B5B5B;
+            transition: background-color 0.1s;
+            font-family: Roboto, Arial, sans-serif;
+        `;
+        controlButton.innerHTML = '🗺️';
+        controlButton.title = 'Map type';
+        
+        // Hover effect for button
+        controlButton.onmouseenter = function() {
+            this.style.backgroundColor = '#f5f5f5';
+        };
+        controlButton.onmouseleave = function() {
+            this.style.backgroundColor = 'white';
+        };
+        
+        // Create dropdown menu
+        const dropdownMenu = document.createElement('div');
+        dropdownMenu.id = 'custom-map-type-menu';
+        dropdownMenu.style.cssText = `
+            position: absolute;
+            bottom: 45px;
+            left: 0;
+            background-color: white;
+            border-radius: 2px;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+            min-width: 140px;
+            display: none;
+            flex-direction: column;
+            overflow: hidden;
+            z-index: 1001;
+            font-family: Roboto, Arial, sans-serif;
+        `;
+        
+        // Map type options
+        const mapTypes = [
+            { id: 'OSM', label: 'Map', icon: '🗺️' },
+            { id: 'roadmap', label: 'Roadmap', icon: '🛣️' },
+            { id: 'satellite', label: 'Satellite', icon: '🛰️' },
+            { id: 'hybrid', label: 'Hybrid', icon: '🌍' },
+            { id: 'terrain', label: 'Terrain', icon: '⛰️' }
+        ];
+        
+        // Create menu items
+        mapTypes.forEach(function(mapType) {
+            const menuItem = document.createElement('button');
+            menuItem.type = 'button';
+            menuItem.style.cssText = `
+                background-color: white;
+                border: none;
+                border-bottom: 1px solid #e0e0e0;
+                padding: 10px 16px;
+                text-align: left;
+                cursor: pointer;
+                font-size: 13px;
+                color: #5B5B5B;
+                display: flex;
+                align-items: center;
+                gap: 10px;
+                transition: background-color 0.1s;
+                font-family: Roboto, Arial, sans-serif;
+                width: 100%;
+            `;
+            menuItem.innerHTML = `<span>${mapType.icon}</span> <span>${mapType.label}</span>`;
+            
+            // Hover effect
+            menuItem.onmouseenter = function() {
+                this.style.backgroundColor = '#f5f5f5';
+            };
+            menuItem.onmouseleave = function() {
+                this.style.backgroundColor = 'white';
+            };
+            
+            // Click handler
+            menuItem.onclick = function() {
+                try {
+                    map.setMapTypeId(mapType.id);
+                    updateActiveMapType(mapType.id);
+                    dropdownMenu.style.display = 'none';
+                } catch(e) {
+                    console.warn('Map type not available:', mapType.id);
                 }
-            });
+            };
+            
+            dropdownMenu.appendChild(menuItem);
         });
         
-        // Also find by role="menu"
-        const menus = document.querySelectorAll('.gm-style div[role="menu"]');
-        menus.forEach(function(menu) {
-            const style = window.getComputedStyle(menu);
-            if (style.display !== 'none' && style.visibility !== 'hidden') {
-                menu.style.bottom = 'auto';
-                menu.style.top = '0';
-                menu.style.transform = 'translateY(-100%)';
+        // Remove border from last item
+        const lastItem = dropdownMenu.lastElementChild;
+        if (lastItem) {
+            lastItem.style.borderBottom = 'none';
+        }
+        
+        // Toggle dropdown on button click
+        controlButton.onclick = function(e) {
+            e.stopPropagation();
+            const isVisible = dropdownMenu.style.display === 'flex';
+            dropdownMenu.style.display = isVisible ? 'none' : 'flex';
+            
+            // Update active state
+            if (!isVisible) {
+                updateActiveMapType(map.getMapTypeId());
+            }
+        };
+        
+        // Close dropdown when clicking outside
+        document.addEventListener('click', function(e) {
+            if (!controlDiv.contains(e.target)) {
+                dropdownMenu.style.display = 'none';
             }
         });
-    }
-    
-    // Use MutationObserver to catch dropdown when it appears
-    const observer = new MutationObserver(function(mutations) {
-        fixDropdown();
-    });
-    
-    // Start observing after map is loaded
-    google.maps.event.addListenerOnce(map, 'idle', function() {
-        const mapContainer = document.getElementById('map');
-        if (mapContainer) {
-            observer.observe(mapContainer, {
-                childList: true,
-                subtree: true,
-                attributes: true,
-                attributeFilter: ['style', 'class', 'role']
+        
+        // Update active map type indicator
+        function updateActiveMapType(activeId) {
+            const items = dropdownMenu.querySelectorAll('button');
+            items.forEach(function(item, index) {
+                if (mapTypes[index].id === activeId) {
+                    item.style.backgroundColor = '#e8f0fe';
+                    item.style.color = '#1a73e8';
+                } else {
+                    item.style.backgroundColor = 'white';
+                    item.style.color = '#5B5B5B';
+                }
             });
-            
-            // Also listen for clicks on map controls
-            mapContainer.addEventListener('click', function(e) {
-                setTimeout(fixDropdown, 10);
-                setTimeout(fixDropdown, 50);
-                setTimeout(fixDropdown, 100);
-            }, true);
         }
+        
+        // Assemble control
+        controlDiv.appendChild(controlButton);
+        controlDiv.appendChild(dropdownMenu);
+        
+        // Add to map
+        map.controls[google.maps.ControlPosition.BOTTOM_LEFT].push(controlDiv);
+        
+        // Initialize active state
+        updateActiveMapType(map.getMapTypeId());
     });
-    
-    // Periodic check as fallback
-    setInterval(fixDropdown, 200);
 })();
 //Define OSM map type pointing at the OpenStreetMap tile server
 map.mapTypes.set("OSM", new google.maps.ImageMapType({
