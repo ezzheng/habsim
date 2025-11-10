@@ -892,7 +892,7 @@ def simulate(simtime, lat, lon, rate, step, max_duration, alt, model, coefficien
         logging.debug(f"[PERF] simulate() cache HIT: model={model}, time={cache_time:.3f}s")
         return cached_result
     
-    # Mark model as in use to prevent cleanup races
+    # Mark model as in use to prevent cleanup races (do this BEFORE getting simulator)
     with _in_use_lock:
         _in_use_models.add(model)
     try:
@@ -901,6 +901,13 @@ def simulate(simtime, lat, lon, rate, step, max_duration, alt, model, coefficien
         get_sim_time = time.time() - get_sim_start
         if get_sim_time > 1.0:
             logging.warning(f"[PERF] _get_simulator() slow: model={model}, time={get_sim_time:.2f}s")
+        
+        # CRITICAL: Verify simulator is still valid after getting it (race condition protection)
+        # Cleanup might have run between returning from _get_simulator() and here
+        if not hasattr(simulator, 'wind_file') or simulator.wind_file is None:
+            logging.error(f"Simulator {model} wind_file is None after retrieval - this indicates a race condition")
+            raise RuntimeError(f"Simulator {model} is invalid: wind_file is None (likely cleaned up during retrieval)")
+        
         balloon = Balloon(location=(lat, lon), alt=alt, time=simtime, ascent_rate=rate)
         traj = simulator.simulate(balloon, step, coefficient, elevation, dur=max_duration)
         
