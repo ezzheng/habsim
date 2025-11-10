@@ -25,7 +25,7 @@
     const dev = false; //
     const URL_ROOT = "https://habsim-production.up.railway.app/sim"
 </script>
-</script>
+    </script>
     <style type="text/css">
         :root{
             --bg:#ffffff; --fg:#111827; --muted:#6b7280; --line:#e5e7eb; --soft:#f3f4f6; --soft2:#fafafa; --brand:#111827; --brand-600:#0b1220;
@@ -370,6 +370,16 @@
             flex-direction: column;
             gap: var(--space-sm);
         }
+        /* Desktop: Show desktop-only fields, hide mobile-only fields */
+        .param-field-desktop {
+            display: grid;
+        }
+        .param-field-time-desktop {
+            display: grid;
+        }
+        .param-field-time-mobile {
+            display: none;
+        }
         .spinner {
             width: 14px;
             height: 14px;
@@ -531,11 +541,22 @@
             .param-extra { grid-template-columns: 1fr; }
             
             /* Mobile: Group related fields horizontally using flexbox
-             * - Date and Time on same line
+             * - Date only (Time moved to third column)
              * - Lat, Lon, Launch Altitude on same line  
-             * - Ascent Rate, Burst Altitude, Descent Rate on same line
+             * - Time (UTC), Ascent Rate, Burst Altitude, Descent Rate on same line
              * Desktop layout remains unchanged (fields stack vertically in columns)
              */
+            /* Hide desktop-only fields on mobile */
+            .param-field-desktop {
+                display: none;
+            }
+            .param-field-time-desktop {
+                display: none;
+            }
+            /* Show mobile Time field */
+            .param-field-time-mobile {
+                display: grid;
+            }
             .param-row-mobile {
                 flex-direction: row;
                 flex-wrap: wrap;
@@ -555,11 +576,15 @@
                 width: 100%;
                 max-width: 100%;
             }
-            /* Adjust input sizes for mobile to fit better */
+            /* Adjust input sizes for mobile to fit better - compact width for fields with units */
             .param-row-mobile .field-input-md {
                 width: 100%;
                 max-width: 100%;
                 box-sizing: border-box;
+            }
+            .param-row-mobile .field-input-compact {
+                max-width: 70px;
+                width: 70px;
             }
         }
         
@@ -700,13 +725,13 @@
             <div class="topbar-left-group">
                 <a href="https://www.stanfordssi.org/" target="_blank" rel="noopener noreferrer" class="brand">HABSIM</a>
                 <!-- Segmented mode selector - commented out for Standard-only version
-                <div class="segmented" role="group" aria-label="Mode">
-                    <button class="segment active" data-mode="standardbln">Standard</button>
-                    <div class="divider"></div>
-                    <button class="segment" data-mode="zpbbln">ZPB</button>
-                    <div class="divider"></div>
-                    <button class="segment" data-mode="floatbln">Float</button>
-                </div>
+            <div class="segmented" role="group" aria-label="Mode">
+                <button class="segment active" data-mode="standardbln">Standard</button>
+                <div class="divider"></div>
+                <button class="segment" data-mode="zpbbln">ZPB</button>
+                <div class="divider"></div>
+                <button class="segment" data-mode="floatbln">Float</button>
+            </div>
                 -->
             </div>
             <div class="topbar-center-group">
@@ -727,25 +752,26 @@
     <div id="param-panel" class="collapsed">
         <div class="param-grid">
             <div class="param-column">
-                <!-- Mobile: Date and Time grouped on same line -->
+                <!-- Mobile: Date only (Time moved to third column via CSS) -->
                 <div class="param-row-mobile">
-                    <div class="param-field param-field-date">
-                        <span class="field-label">Date</span>
-                        <div class="field-inputs">
-                            <input id="mo" class="field-input field-input-xs" type="text" name="mo">
-                            <span class="field-sep">/</span>
-                            <input id="day" class="field-input field-input-xs" type="text" name="day">
-                            <span class="field-sep">/</span>
+                <div class="param-field param-field-date">
+                    <span class="field-label">Date</span>
+                    <div class="field-inputs">
+                        <input id="mo" class="field-input field-input-xs" type="text" name="mo">
+                        <span class="field-sep">/</span>
+                        <input id="day" class="field-input field-input-xs" type="text" name="day">
+                        <span class="field-sep">/</span>
                             <input id="yr" class="field-input field-input-sm" type="text" name="yr">
                         </div>
                     </div>
-                    <div class="param-field param-field-time">
-                        <span class="field-label">Time (UTC)</span>
-                        <div class="field-inputs">
-                            <input id="hr" class="field-input field-input-xs" type="text" name="hr">
-                            <span class="field-sep">:</span>
-                            <input id="mn" class="field-input field-input-xs" type="text" name="mn">
-                        </div>
+                </div>
+                <!-- Desktop: Time stays in first column, hidden on mobile -->
+                <div class="param-field param-field-time param-field-time-desktop">
+                    <span class="field-label">Time (UTC)</span>
+                    <div class="field-inputs">
+                        <input id="hr" class="field-input field-input-xs" type="text" name="hr">
+                        <span class="field-sep">:</span>
+                        <input id="mn" class="field-input field-input-xs" type="text" name="mn">
                     </div>
                 </div>
                 <!-- ZPB mode field - commented out
@@ -770,50 +796,81 @@
             <div class="param-column center">
                 <!-- Mobile: Lat, Lon, and Launch Altitude grouped on same line -->
                 <div class="param-row-mobile">
-                    <div class="param-field">
-                        <span class="field-label">Lat</span>
-                        <div class="field-inputs">
-                            <input id="lat" class="field-input field-input-md" type="text" name="lat">
-                        </div>
+                <div class="param-field">
+                    <span class="field-label">Lat</span>
+                    <div class="field-inputs">
+                        <input id="lat" class="field-input field-input-md" type="text" name="lat">
                     </div>
-                    <div class="param-field">
-                        <span class="field-label">Lon</span>
-                        <div class="field-inputs">
-                            <input id="lon" class="field-input field-input-md" type="text" name="lon">
-                        </div>
+                </div>
+                <div class="param-field">
+                    <span class="field-label">Lon</span>
+                    <div class="field-inputs">
+                        <input id="lon" class="field-input field-input-md" type="text" name="lon">
                     </div>
-                    <div class="param-field">
-                        <span class="field-label">Launch altitude</span>
-                        <div class="field-inputs">
-                            <input id="alt" class="field-input field-input-md" type="text" name="alt">
-                            <span class="unit">m</span>
+                </div>
+                <div class="param-field">
+                    <span class="field-label">Launch altitude</span>
+                    <div class="field-inputs">
+                            <input id="alt" class="field-input field-input-md field-input-compact" type="text" name="alt">
+                        <span class="unit">m</span>
                         </div>
                     </div>
                 </div>
             </div>
             <div class="param-column right">
-                <!-- Mobile: Ascent Rate, Burst Altitude, and Descent Rate grouped on same line -->
+                <!-- Mobile: Time (UTC), Ascent Rate, Burst Altitude, and Descent Rate grouped on same line -->
                 <div class="param-row-mobile">
+                    <!-- Mobile: Time appears here (hidden on desktop) -->
+                    <div class="param-field param-field-time param-field-time-mobile">
+                        <span class="field-label">Time (UTC)</span>
+                        <div class="field-inputs">
+                            <input id="hr-mobile" class="field-input field-input-xs" type="text" name="hr-mobile">
+                            <span class="field-sep">:</span>
+                            <input id="mn-mobile" class="field-input field-input-xs" type="text" name="mn-mobile">
+                        </div>
+                    </div>
                     <div class="param-field">
                         <span class="field-label">Ascent rate</span>
                         <div class="field-inputs">
-                            <input id="asc" class="field-input field-input-md" type="text" name="asc">
+                            <input id="asc" class="field-input field-input-md field-input-compact" type="text" name="asc">
                             <span class="unit">m/s</span>
                         </div>
                     </div>
                     <div class="param-field">
                         <span class="field-label">Burst altitude</span>
                         <div class="field-inputs">
-                            <input id="equil" class="field-input field-input-md" type="text" name="equil">
+                            <input id="equil" class="field-input field-input-md field-input-compact" type="text" name="equil">
                             <span class="unit">m</span>
                         </div>
                     </div>
-                    <div class="param-field">
+                <div class="param-field">
                         <span class="field-label">Descent rate</span>
                         <div class="field-inputs">
-                            <input id="desc" class="field-input field-input-md" type="text" name="desc">
+                            <input id="desc" class="field-input field-input-md field-input-compact" type="text" name="desc">
                             <span class="unit">m/s</span>
                         </div>
+                    </div>
+                </div>
+                <!-- Desktop: Ascent Rate, Burst Altitude, and Descent Rate (Time hidden, shown in first column) -->
+                <div class="param-field param-field-desktop">
+                    <span class="field-label">Ascent rate</span>
+                    <div class="field-inputs">
+                        <input id="asc" class="field-input field-input-md" type="text" name="asc">
+                        <span class="unit">m/s</span>
+                    </div>
+                </div>
+                <div class="param-field param-field-desktop">
+                    <span class="field-label">Burst altitude</span>
+                    <div class="field-inputs">
+                        <input id="equil" class="field-input field-input-md" type="text" name="equil">
+                        <span class="unit">m</span>
+                    </div>
+                </div>
+                <div class="param-field param-field-desktop">
+                    <span class="field-label">Descent rate</span>
+                    <div class="field-inputs">
+                        <input id="desc" class="field-input field-input-md" type="text" name="desc">
+                        <span class="unit">m/s</span>
                     </div>
                 </div>
             </div>
@@ -883,6 +940,34 @@
             //         if (radio) { radio.checked = true; radio.dispatchEvent(new Event('change')); }
             //     });
             // });
+            // Sync mobile and desktop time inputs
+            const hrDesktop = document.getElementById('hr');
+            const mnDesktop = document.getElementById('mn');
+            const hrMobile = document.getElementById('hr-mobile');
+            const mnMobile = document.getElementById('mn-mobile');
+            
+            function syncTimeInputs(fromMobile) {
+                if (fromMobile) {
+                    if (hrMobile && hrDesktop) hrDesktop.value = hrMobile.value;
+                    if (mnMobile && mnDesktop) mnDesktop.value = mnMobile.value;
+                } else {
+                    if (hrDesktop && hrMobile) hrMobile.value = hrDesktop.value;
+                    if (mnDesktop && mnMobile) mnMobile.value = mnDesktop.value;
+                }
+            }
+            
+            if (hrDesktop && hrMobile) {
+                hrDesktop.addEventListener('input', () => syncTimeInputs(false));
+                hrMobile.addEventListener('input', () => syncTimeInputs(true));
+            }
+            if (mnDesktop && mnMobile) {
+                mnDesktop.addEventListener('input', () => syncTimeInputs(false));
+                mnMobile.addEventListener('input', () => syncTimeInputs(true));
+            }
+            // Initial sync
+            if (hrDesktop && hrMobile) syncTimeInputs(false);
+            if (mnDesktop && mnMobile) syncTimeInputs(false);
+            
             const collapseBtn = document.getElementById('collapse-toggle');
             const panel = document.getElementById('param-panel');
             collapseBtn.addEventListener('click', () => {
