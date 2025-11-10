@@ -24,6 +24,7 @@ google.maps.event.addListener(map, 'click', function (event) {
         const controlDiv = document.createElement('div');
         controlDiv.id = 'custom-map-type-control';
         controlDiv.style.cssText = 'margin: 10px; position: absolute; bottom: 0; left: 0; z-index: 1000;';
+        controlDiv.className = 'custom-map-type-container';
         
         // Create control button (styled like Google Maps control)
         const controlButton = document.createElement('button');
@@ -175,6 +176,105 @@ google.maps.event.addListener(map, 'click', function (event) {
         
         // Initialize active state
         updateActiveMapType(map.getMapTypeId());
+    });
+})();
+
+// Custom fullscreen control (desktop only)
+(function() {
+    // Wait for map to be ready
+    google.maps.event.addListenerOnce(map, 'idle', function() {
+        // Create controls container
+        const controlsContainer = document.createElement('div');
+        controlsContainer.id = 'custom-map-controls';
+        controlsContainer.className = 'custom-fullscreen-container';
+        
+        // Fullscreen button
+        const fullscreenButton = document.createElement('button');
+        fullscreenButton.type = 'button';
+        fullscreenButton.className = 'custom-fullscreen-button';
+        fullscreenButton.innerHTML = '⛶';
+        fullscreenButton.title = 'Toggle fullscreen';
+        
+        // Fullscreen functions
+        function isFullscreenSupported() {
+            return !!(document.fullscreenEnabled || 
+                     document.webkitFullscreenEnabled || 
+                     document.mozFullScreenEnabled || 
+                     document.msFullscreenEnabled);
+        }
+        
+        function getFullscreenElement() {
+            return document.fullscreenElement || 
+                   document.webkitFullscreenElement || 
+                   document.mozFullScreenElement || 
+                   document.msFullscreenElement;
+        }
+        
+        function enterFullscreen() {
+            const mapElement = document.getElementById('map');
+            if (!mapElement) return;
+            
+            if (mapElement.requestFullscreen) {
+                mapElement.requestFullscreen();
+            } else if (mapElement.webkitRequestFullscreen) {
+                mapElement.webkitRequestFullscreen();
+            } else if (mapElement.mozRequestFullScreen) {
+                mapElement.mozRequestFullScreen();
+            } else if (mapElement.msRequestFullscreen) {
+                mapElement.msRequestFullscreen();
+            }
+        }
+        
+        function exitFullscreen() {
+            if (document.exitFullscreen) {
+                document.exitFullscreen();
+            } else if (document.webkitExitFullscreen) {
+                document.webkitExitFullscreen();
+            } else if (document.mozCancelFullScreen) {
+                document.mozCancelFullScreen();
+            } else if (document.msExitFullscreen) {
+                document.msExitFullscreen();
+            }
+        }
+        
+        function updateFullscreenIcon() {
+            const isFullscreen = !!getFullscreenElement();
+            fullscreenButton.innerHTML = isFullscreen ? '⛶' : '⛶';
+            fullscreenButton.title = isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen';
+        }
+        
+        fullscreenButton.onclick = function(e) {
+            e.stopPropagation();
+            if (!isFullscreenSupported()) {
+                console.warn('Fullscreen not supported');
+                return;
+            }
+            
+            const isFullscreen = !!getFullscreenElement();
+            if (isFullscreen) {
+                exitFullscreen();
+            } else {
+                enterFullscreen();
+            }
+        };
+        
+        // Listen for fullscreen changes
+        const fullscreenEvents = ['fullscreenchange', 'webkitfullscreenchange', 'mozfullscreenchange', 'MSFullscreenChange'];
+        fullscreenEvents.forEach(function(event) {
+            document.addEventListener(event, updateFullscreenIcon);
+        });
+        
+        // Add fullscreen button
+        controlsContainer.appendChild(fullscreenButton);
+        
+        // Add to map container
+        const mapContainer = document.getElementById('map');
+        if (mapContainer) {
+            mapContainer.appendChild(controlsContainer);
+        }
+        
+        // Initialize fullscreen icon
+        updateFullscreenIcon();
     });
 })();
 
