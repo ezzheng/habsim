@@ -1089,6 +1089,19 @@ async function simulate() {
                     if (payloads.length !== modelIds.length) {
                         console.warn(`Spaceshot returned ${payloads.length} results but expected ${modelIds.length} models`);
                     }
+                    
+                    // Count failed models for better error messaging
+                    let failedCount = 0;
+                    let altErrorCount = 0;
+                    for (let i = 0; i < payloads.length && i < modelIds.length; i++) {
+                        const payload = payloads[i];
+                        if (payload === "error") {
+                            failedCount++;
+                        } else if (payload === "alt error") {
+                            altErrorCount++;
+                        }
+                    }
+                    
                     for (let i = 0; i < payloads.length && i < modelIds.length; i++) {
                         const payload = payloads[i];
                         const modelId = modelIds[i];
@@ -1096,7 +1109,13 @@ async function simulate() {
                         if (payload === "error") {
                             console.error(`Model ${modelId} returned error`);
                             if (onlyonce) {
-                                alert("Simulation failed on the server. Please verify inputs or try again in a few minutes.");
+                                if (failedCount === payloads.length) {
+                                    // All models failed
+                                    alert("Simulation failed on the server. Please verify inputs or try again in a few minutes.");
+                                } else {
+                                    // Some models failed
+                                    alert(`${failedCount} of ${modelIds.length} models failed to simulate. Some results may be incomplete.`);
+                                }
                                 onlyonce = false;
                             }
                         }

@@ -98,13 +98,31 @@ updateServerStatus();
 setInterval(updateServerStatus, 5000);
 
 // We need to keep this because standard code does not execute until you choose the button
-document.getElementById("asc").value = 4;
-document.getElementById("equil").value = 30000;
-document.getElementById("desc").value = 8;
-document.getElementById("coeff").value = 0.5;
-document.getElementById("dur").value = 48;
-document.getElementById("step").value = 240;
-document.getElementById("eqtime").value = 1;
+// Set defaults immediately - elements should exist by now
+function setDefaultValues() {
+    const ascEl = document.getElementById("asc");
+    const equilEl = document.getElementById("equil");
+    const descEl = document.getElementById("desc");
+    const coeffEl = document.getElementById("coeff");
+    const durEl = document.getElementById("dur");
+    const stepEl = document.getElementById("step");
+    const eqtimeEl = document.getElementById("eqtime");
+    
+    if (ascEl && !ascEl.value) ascEl.value = 4;
+    if (equilEl && !equilEl.value) equilEl.value = 30000;
+    if (descEl && !descEl.value) descEl.value = 8;
+    if (coeffEl && !coeffEl.value) coeffEl.value = 0.5;
+    if (durEl && !durEl.value) durEl.value = 48;
+    if (stepEl && !stepEl.value) stepEl.value = 240;
+    if (eqtimeEl && !eqtimeEl.value) eqtimeEl.value = 1;
+}
+
+// Set defaults when DOM is ready
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', setDefaultValues);
+} else {
+    setDefaultValues();
+}
 
 
 // Missions UI removed
