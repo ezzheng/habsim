@@ -553,10 +553,6 @@
             .param-field-time-desktop {
                 display: none;
             }
-            /* Show mobile Time field */
-            .param-field-time-mobile {
-                display: grid;
-            }
             .param-row-mobile {
                 flex-direction: row;
                 flex-wrap: wrap;
@@ -567,6 +563,19 @@
                 min-width: 0;
                 grid-template-columns: 1fr;
                 row-gap: 4px;
+            }
+            /* Date and Time row: Date spans 2 columns, Time spans 1 column */
+            .param-row-date-time {
+                display: grid;
+                grid-template-columns: 2fr 1fr;
+                gap: var(--space-sm);
+            }
+            .param-row-date-time .param-field-date-wide {
+                grid-column: 1;
+            }
+            .param-row-date-time .param-field-time-mobile {
+                grid-column: 2;
+                display: grid;
             }
             .param-row-mobile .param-field .field-label {
                 font-size: 11px;
@@ -752,16 +761,24 @@
     <div id="param-panel" class="collapsed">
         <div class="param-grid">
             <div class="param-column">
-                <!-- Mobile: Date only (Time moved to third column via CSS) -->
-                <div class="param-row-mobile">
-                <div class="param-field param-field-date">
-                    <span class="field-label">Date</span>
-                    <div class="field-inputs">
-                        <input id="mo" class="field-input field-input-xs" type="text" name="mo">
-                        <span class="field-sep">/</span>
-                        <input id="day" class="field-input field-input-xs" type="text" name="day">
-                        <span class="field-sep">/</span>
+                <!-- Mobile: Date and Time on same row, Date spans 2 columns -->
+                <div class="param-row-mobile param-row-date-time">
+                    <div class="param-field param-field-date param-field-date-wide">
+                        <span class="field-label">Date</span>
+                        <div class="field-inputs">
+                            <input id="mo" class="field-input field-input-xs" type="text" name="mo">
+                            <span class="field-sep">/</span>
+                            <input id="day" class="field-input field-input-xs" type="text" name="day">
+                            <span class="field-sep">/</span>
                             <input id="yr" class="field-input field-input-sm" type="text" name="yr">
+                        </div>
+                    </div>
+                    <div class="param-field param-field-time param-field-time-mobile">
+                        <span class="field-label">Time (UTC)</span>
+                        <div class="field-inputs">
+                            <input id="hr-mobile" class="field-input field-input-xs" type="text" name="hr-mobile">
+                            <span class="field-sep">:</span>
+                            <input id="mn-mobile" class="field-input field-input-xs" type="text" name="mn-mobile">
                         </div>
                     </div>
                 </div>
@@ -818,15 +835,6 @@
                 </div>
             </div>
             <div class="param-column right">
-                <!-- Mobile: Time (UTC) appears here, aligned with third column (hidden on desktop) -->
-                <div class="param-field param-field-time param-field-time-mobile">
-                    <span class="field-label">Time (UTC)</span>
-                    <div class="field-inputs">
-                        <input id="hr-mobile" class="field-input field-input-xs" type="text" name="hr-mobile">
-                        <span class="field-sep">:</span>
-                        <input id="mn-mobile" class="field-input field-input-xs" type="text" name="mn-mobile">
-                    </div>
-                </div>
                 <!-- Mobile: Ascent Rate, Burst Altitude, and Descent Rate grouped on same line -->
                 <div class="param-row-mobile">
                     <div class="param-field">
