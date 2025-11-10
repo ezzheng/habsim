@@ -208,13 +208,19 @@ function habmcshoweach(data2){
     var hourutc = parseInt(res2[0]) + 7;// Fix this for daylight savings...
     if(hourutc >= 24){
         document.getElementById("hr").value = hourutc - 24;
+        const hrMobile = document.getElementById("hr-mobile");
+        if(hrMobile) hrMobile.value = hourutc - 24;
         document.getElementById("day").value = parseInt(res[2]) + 1;
     }
     else{
         document.getElementById("hr").value = hourutc;
+        const hrMobile = document.getElementById("hr-mobile");
+        if(hrMobile) hrMobile.value = hourutc;
         document.getElementById("day").value = parseInt(res[2]);
     }
     document.getElementById("mn").value = parseInt(res2[1]);
+    const mnMobile = document.getElementById("mn-mobile");
+    if(mnMobile) mnMobile.value = parseInt(res2[1]);
 
     console.log(res2);
 
