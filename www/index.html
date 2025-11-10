@@ -523,6 +523,40 @@
                 flex-wrap: wrap;
             }
             .param-extra { grid-template-columns: 1fr; }
+            
+            /* Mobile: Group related fields horizontally using flexbox
+             * - Date and Time on same line
+             * - Lat, Lon, Launch Altitude on same line  
+             * - Ascent Rate, Burst Altitude, Descent Rate on same line
+             * Desktop layout remains unchanged (fields stack vertically in columns)
+             */
+            .param-row-mobile {
+                display: flex;
+                flex-direction: row;
+                flex-wrap: wrap;
+                gap: var(--space-sm);
+                align-items: flex-start;
+            }
+            .param-row-mobile .param-field {
+                flex: 1 1 0;
+                min-width: 0;
+                grid-template-columns: 1fr;
+                row-gap: 4px;
+            }
+            .param-row-mobile .param-field .field-label {
+                font-size: 11px;
+                white-space: nowrap;
+            }
+            .param-row-mobile .param-field .field-inputs {
+                width: 100%;
+                max-width: 100%;
+            }
+            /* Adjust input sizes for mobile to fit better */
+            .param-row-mobile .field-input-md {
+                width: 100%;
+                max-width: 100%;
+                box-sizing: border-box;
+            }
         }
         
         /* Print styles for PDF export */
@@ -689,22 +723,25 @@
     <div id="param-panel" class="collapsed">
         <div class="param-grid">
             <div class="param-column">
-                <div class="param-field param-field-date">
-                    <span class="field-label">Date</span>
-                    <div class="field-inputs">
-                        <input id="mo" class="field-input field-input-xs" type="text" name="mo">
-                        <span class="field-sep">/</span>
-                        <input id="day" class="field-input field-input-xs" type="text" name="day">
-                        <span class="field-sep">/</span>
-                        <input id="yr" class="field-input field-input-sm" type="text" name="yr">
+                <!-- Mobile: Date and Time grouped on same line -->
+                <div class="param-row-mobile">
+                    <div class="param-field param-field-date">
+                        <span class="field-label">Date</span>
+                        <div class="field-inputs">
+                            <input id="mo" class="field-input field-input-xs" type="text" name="mo">
+                            <span class="field-sep">/</span>
+                            <input id="day" class="field-input field-input-xs" type="text" name="day">
+                            <span class="field-sep">/</span>
+                            <input id="yr" class="field-input field-input-sm" type="text" name="yr">
+                        </div>
                     </div>
-                </div>
-                <div class="param-field param-field-time">
-                    <span class="field-label">Time (UTC)</span>
-                    <div class="field-inputs">
-                        <input id="hr" class="field-input field-input-xs" type="text" name="hr">
-                        <span class="field-sep">:</span>
-                        <input id="mn" class="field-input field-input-xs" type="text" name="mn">
+                    <div class="param-field param-field-time">
+                        <span class="field-label">Time (UTC)</span>
+                        <div class="field-inputs">
+                            <input id="hr" class="field-input field-input-xs" type="text" name="hr">
+                            <span class="field-sep">:</span>
+                            <input id="mn" class="field-input field-input-xs" type="text" name="mn">
+                        </div>
                     </div>
                 </div>
                 <!-- ZPB mode field - commented out
@@ -727,46 +764,52 @@
                 -->
             </div>
             <div class="param-column center">
-                <div class="param-field">
-                    <span class="field-label">Lat</span>
-                    <div class="field-inputs">
-                        <input id="lat" class="field-input field-input-md" type="text" name="lat">
+                <!-- Mobile: Lat, Lon, and Launch Altitude grouped on same line -->
+                <div class="param-row-mobile">
+                    <div class="param-field">
+                        <span class="field-label">Lat</span>
+                        <div class="field-inputs">
+                            <input id="lat" class="field-input field-input-md" type="text" name="lat">
+                        </div>
                     </div>
-                </div>
-                <div class="param-field">
-                    <span class="field-label">Lon</span>
-                    <div class="field-inputs">
-                        <input id="lon" class="field-input field-input-md" type="text" name="lon">
+                    <div class="param-field">
+                        <span class="field-label">Lon</span>
+                        <div class="field-inputs">
+                            <input id="lon" class="field-input field-input-md" type="text" name="lon">
+                        </div>
                     </div>
-                </div>
-                <div class="param-field">
-                    <span class="field-label">Launch altitude</span>
-                    <div class="field-inputs">
-                        <input id="alt" class="field-input field-input-md" type="text" name="alt">
-                        <span class="unit">m</span>
+                    <div class="param-field">
+                        <span class="field-label">Launch altitude</span>
+                        <div class="field-inputs">
+                            <input id="alt" class="field-input field-input-md" type="text" name="alt">
+                            <span class="unit">m</span>
+                        </div>
                     </div>
                 </div>
             </div>
             <div class="param-column right">
-                <div class="param-field">
-                    <span class="field-label">Ascent rate</span>
-                    <div class="field-inputs">
-                        <input id="asc" class="field-input field-input-md" type="text" name="asc">
-                        <span class="unit">m/s</span>
+                <!-- Mobile: Ascent Rate, Burst Altitude, and Descent Rate grouped on same line -->
+                <div class="param-row-mobile">
+                    <div class="param-field">
+                        <span class="field-label">Ascent rate</span>
+                        <div class="field-inputs">
+                            <input id="asc" class="field-input field-input-md" type="text" name="asc">
+                            <span class="unit">m/s</span>
+                        </div>
                     </div>
-                </div>
-                <div class="param-field">
-                    <span class="field-label">Burst altitude</span>
-                    <div class="field-inputs">
-                        <input id="equil" class="field-input field-input-md" type="text" name="equil">
-                        <span class="unit">m</span>
+                    <div class="param-field">
+                        <span class="field-label">Burst altitude</span>
+                        <div class="field-inputs">
+                            <input id="equil" class="field-input field-input-md" type="text" name="equil">
+                            <span class="unit">m</span>
+                        </div>
                     </div>
-                </div>
-                <div class="param-field">
-                    <span class="field-label">Descent rate</span>
-                    <div class="field-inputs">
-                        <input id="desc" class="field-input field-input-md" type="text" name="desc">
-                        <span class="unit">m/s</span>
+                    <div class="param-field">
+                        <span class="field-label">Descent rate</span>
+                        <div class="field-inputs">
+                            <input id="desc" class="field-input field-input-md" type="text" name="desc">
+                            <span class="unit">m/s</span>
+                        </div>
                     </div>
                 </div>
             </div>
