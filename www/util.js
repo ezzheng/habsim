@@ -190,32 +190,7 @@ google.maps.event.addListener(map, 'click', function (event) {
             bottom: 10px;
             right: 10px;
             z-index: 1000;
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
         `;
-        
-        // Zoom In button
-        const zoomInButton = document.createElement('button');
-        zoomInButton.type = 'button';
-        zoomInButton.className = 'custom-zoom-button';
-        zoomInButton.innerHTML = '+';
-        zoomInButton.title = 'Zoom in';
-        zoomInButton.onclick = function(e) {
-            e.stopPropagation();
-            map.setZoom(map.getZoom() + 1);
-        };
-        
-        // Zoom Out button
-        const zoomOutButton = document.createElement('button');
-        zoomOutButton.type = 'button';
-        zoomOutButton.className = 'custom-zoom-button';
-        zoomOutButton.innerHTML = '−';
-        zoomOutButton.title = 'Zoom out';
-        zoomOutButton.onclick = function(e) {
-            e.stopPropagation();
-            map.setZoom(map.getZoom() - 1);
-        };
         
         // Fullscreen button
         const fullscreenButton = document.createElement('button');
@@ -293,9 +268,7 @@ google.maps.event.addListener(map, 'click', function (event) {
             document.addEventListener(event, updateFullscreenIcon);
         });
         
-        // Assemble controls
-        controlsContainer.appendChild(zoomInButton);
-        controlsContainer.appendChild(zoomOutButton);
+        // Add fullscreen button
         controlsContainer.appendChild(fullscreenButton);
         
         // Add to map container
