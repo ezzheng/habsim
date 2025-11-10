@@ -16,6 +16,8 @@ var map = new google.maps.Map(element, {
     },
     streetViewControl: false
 });
+// Make map accessible globally
+window.map = map;
 var clickMarker = null;
 var heatmapLayer = null; // Global heatmap layer for Monte Carlo visualization
 google.maps.event.addListener(map, 'click', function (event) {

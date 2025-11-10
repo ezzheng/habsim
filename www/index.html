@@ -53,6 +53,13 @@
         main {
             flex: 1;
             display: flex;
+            margin-top: 0;
+        }
+        #main-container {
+            flex: 1;
+            display: flex;
+            margin-top: 0;
+            min-height: 0;
         }
         #map{ 
             flex: 1; 
@@ -60,6 +67,7 @@
             width: 100%; 
             margin: 0; 
             padding: 0;
+            min-height: 0;
         }
         /* Hide Google Maps logo */
         .gm-style-cc {
@@ -74,10 +82,10 @@
         }
         /* Top bar */
         #info {
-            position: fixed !important;
-            top: 0 !important;
-            left: 0 !important;
-            right: 0 !important;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
             width: 100%;
             max-width: none !important;
             padding: 0 !important;
@@ -975,12 +983,26 @@
     function adjustLayout() {
         const nav = document.getElementById('info');
         const main = document.getElementById('main-container');
+        const map = document.getElementById('map');
         if (!nav || !main) return;
         const navHeight = nav.offsetHeight;
         document.body.style.paddingTop = navHeight + 'px';
         main.style.height = `calc(100vh - ${navHeight}px)`;
+        main.style.marginTop = '0';
         // Set CSS variable for param-panel top offset
         document.documentElement.style.setProperty('--nav-height', navHeight + 'px');
+        // Trigger map resize if it exists
+        if (typeof google !== 'undefined' && google.maps && window.map) {
+            setTimeout(function() {
+                google.maps.event.trigger(window.map, 'resize');
+            }, 100);
+        }
+    }
+    // Run adjustLayout immediately and on events
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', adjustLayout);
+    } else {
+        adjustLayout();
     }
     window.addEventListener('load', adjustLayout);
     window.addEventListener('resize', adjustLayout);
