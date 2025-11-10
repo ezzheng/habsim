@@ -58,6 +58,13 @@
         .gm-style a[href*="google.com/maps"] {
             display: none !important;
         }
+        /* Make map type control dropdown open upward (since control is at bottom) */
+        .gm-style .gm-bundled-control-on-bottom > div[style*="position: absolute"],
+        .gm-style .gm-bundled-control-on-bottom > div[style*="position:absolute"] {
+            bottom: auto !important;
+            top: 0 !important;
+            transform: translateY(-100%) !important;
+        }
         /* Top bar */
         #info {
             width: 100%;
@@ -279,7 +286,7 @@
             box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
         }
         #param-panel.collapsed {
-            transform: translateY(100%);
+            transform: translateY(-100%);
             pointer-events: none;
         }
         /* No motion block unnecessary now */
@@ -676,7 +683,10 @@
             .gm-bundled-control,
             .gm-bundled-control-on-bottom,
             .gm-style a[href*="google.com/maps"],
-            .gm-style a[href*="terms"] {
+            .gm-style a[href*="terms"],
+            .gm-style-cc *,
+            .gm-style .gm-style-cc,
+            div[class*="gm-style-cc"] {
                 display: none !important;
                 visibility: hidden !important;
                 height: 0 !important;

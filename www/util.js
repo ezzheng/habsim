@@ -21,6 +21,67 @@ var heatmapLayer = null; // Global heatmap layer for Monte Carlo visualization
 google.maps.event.addListener(map, 'click', function (event) {
     displayCoordinates(event.latLng);
 });
+
+// Make map type control dropdown open upward instead of downward
+// Use MutationObserver to detect when dropdown is opened and modify its position
+(function() {
+    function fixDropdown() {
+        // Find map type control dropdown menu
+        const bottomControls = document.querySelectorAll('.gm-bundled-control-on-bottom');
+        bottomControls.forEach(function(control) {
+            const children = control.querySelectorAll('div[style*="position"]');
+            children.forEach(function(child) {
+                const rect = child.getBoundingClientRect();
+                const mapRect = document.getElementById('map').getBoundingClientRect();
+                // If it's positioned near bottom, flip it upward
+                if (rect.bottom > mapRect.bottom - 50 || child.style.bottom) {
+                    child.style.bottom = 'auto';
+                    child.style.top = '0';
+                    child.style.transform = 'translateY(-100%)';
+                }
+            });
+        });
+        
+        // Also find by role="menu"
+        const menus = document.querySelectorAll('.gm-style div[role="menu"]');
+        menus.forEach(function(menu) {
+            const style = window.getComputedStyle(menu);
+            if (style.display !== 'none' && style.visibility !== 'hidden') {
+                menu.style.bottom = 'auto';
+                menu.style.top = '0';
+                menu.style.transform = 'translateY(-100%)';
+            }
+        });
+    }
+    
+    // Use MutationObserver to catch dropdown when it appears
+    const observer = new MutationObserver(function(mutations) {
+        fixDropdown();
+    });
+    
+    // Start observing after map is loaded
+    google.maps.event.addListenerOnce(map, 'idle', function() {
+        const mapContainer = document.getElementById('map');
+        if (mapContainer) {
+            observer.observe(mapContainer, {
+                childList: true,
+                subtree: true,
+                attributes: true,
+                attributeFilter: ['style', 'class', 'role']
+            });
+            
+            // Also listen for clicks on map controls
+            mapContainer.addEventListener('click', function(e) {
+                setTimeout(fixDropdown, 10);
+                setTimeout(fixDropdown, 50);
+                setTimeout(fixDropdown, 100);
+            }, true);
+        }
+    });
+    
+    // Periodic check as fallback
+    setInterval(fixDropdown, 200);
+})();
 //Define OSM map type pointing at the OpenStreetMap tile server
 map.mapTypes.set("OSM", new google.maps.ImageMapType({
     getTileUrl: function(coord, zoom) {
