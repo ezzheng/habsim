@@ -424,19 +424,82 @@ def singlepredict():
 
 
 def singlezpb(timestamp, lat, lon, alt, equil, eqtime, asc, desc, model):
+    """
+    Simulate a zero-pressure balloon (ZPB) flight in three phases: ascent, coast/float, and descent.
+    
+    Parameters:
+    - timestamp: Launch time (datetime object)
+    - lat, lon: Launch location coordinates
+    - alt: Launch altitude (meters)
+    - equil: Burst/equilibrium altitude (meters) - balloon reaches this altitude and floats
+    - eqtime: Equilibrium time (hours) - how long balloon floats at burst altitude before descent
+    - asc: Ascent rate (m/s) - vertical velocity during ascent phase
+    - desc: Descent rate (m/s) - vertical velocity during descent phase (positive value, will be negated)
+    - model: GEFS weather model number (0-20)
+    
+    Returns:
+    - Tuple of (rise, coast, fall) - three trajectory arrays for each flight phase
+    """
     try:
         # Note: refresh() is now called by _get_simulator() with 5-minute throttle
+        
+        # ========================================================================
+        # PHASE 1: ASCENT - From launch altitude to burst altitude
+        # ========================================================================
+        # Calculate ascent duration: time to climb from launch (alt) to burst (equil)
+        # Formula: distance / rate / 3600 (convert seconds to hours)
+        # If already at burst altitude, duration is 0
         dur = 0 if equil == alt else (equil - alt) / asc / 3600
+        
+        # Simulate ascent phase:
+        # - timestamp, lat, lon: Starting position and time
+        # - asc: Ascent rate (positive, m/s)
+        # - 240: Step size (seconds) - simulation time interval
+        # - dur: Maximum duration (hours) - stops when burst altitude reached
+        # - alt: Starting altitude (meters)
+        # - model: Weather model to use
+        # - elevation=False: Don't use elevation data during ascent
         rise = simulate.simulate(timestamp, lat, lon, asc, 240, dur, alt, model, elevation=False)
+        
+        # Extract final position from ascent phase to use as starting point for coast
         if len(rise) > 0:
             timestamp, lat, lon, alt, __, __, __, __= rise[-1]
             timestamp = datetime.utcfromtimestamp(timestamp).replace(tzinfo=timezone.utc)
+        
+        # ========================================================================
+        # PHASE 2: COAST/FLOAT - Balloon floats at burst altitude
+        # ========================================================================
+        # Simulate coast/floating phase:
+        # - timestamp, lat, lon, alt: Final position from ascent (at burst altitude)
+        # - 0: Vertical rate (m/s) - zero means floating, no vertical movement
+        # - 240: Step size (seconds) - same as ascent
+        # - eqtime: Duration (hours) - how long to float at equilibrium
+        # - alt: Current altitude (burst altitude, stays constant)
+        # - model: Same weather model
         coast = simulate.simulate(timestamp, lat, lon, 0, 240, eqtime, alt, model)
+        
+        # Extract final position from coast phase to use as starting point for descent
         if len(coast) > 0:
             timestamp, lat, lon, alt, __, __, __, __ = coast[-1]
             timestamp = datetime.utcfromtimestamp(timestamp).replace(tzinfo=timezone.utc)
+        
+        # ========================================================================
+        # PHASE 3: DESCENT - From burst altitude to ground
+        # ========================================================================
+        # Calculate descent duration: time to fall from burst altitude to ground
+        # Formula: altitude / descent_rate / 3600 (convert seconds to hours)
         dur = (alt) / desc / 3600
+        
+        # Simulate descent phase:
+        # - timestamp, lat, lon: Final position from coast phase
+        # - -desc: Descent rate (negative, m/s) - negative because descending
+        # - 240: Step size (seconds) - same as other phases
+        # - dur: Maximum duration (hours) - stops when ground is reached
+        # - alt: Starting altitude (burst altitude)
+        # - model: Same weather model
         fall = simulate.simulate(timestamp, lat, lon, -desc, 240, dur, alt, model)
+        
+        # Return all three trajectory phases
         return (rise, coast, fall)
     except FileNotFoundError as e:
         # File not found in S3 - model may not exist yet
