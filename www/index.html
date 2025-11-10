@@ -782,7 +782,7 @@
                         </div>
                     </div>
                     <div class="param-field param-field-time param-field-time-mobile">
-                        <span class="field-label">Time (UTC)</span>
+                        <span class="field-label" id="time-label-mobile">Time (UTC)</span>
                         <div class="field-inputs">
                             <input id="hr-mobile" class="field-input field-input-xs" type="text" name="hr-mobile">
                             <span class="field-sep">:</span>
@@ -792,7 +792,7 @@
                 </div>
                 <!-- Desktop: Time stays in first column, hidden on mobile -->
                 <div class="param-field param-field-time param-field-time-desktop">
-                    <span class="field-label">Time (UTC)</span>
+                    <span class="field-label" id="time-label-desktop">Time (UTC)</span>
                     <div class="field-inputs">
                         <input id="hr" class="field-input field-input-xs" type="text" name="hr">
                         <span class="field-sep">:</span>
@@ -834,59 +834,52 @@
                     </div>
                 </div>
                 <div class="param-field">
-                    <span class="field-label">Launch altitude</span>
+                    <span class="field-label">Launch altitude (m)</span>
                     <div class="field-inputs">
-                            <input id="alt" class="field-input field-input-md field-input-compact" type="text" name="alt">
-                        <span class="unit">m</span>
-                        </div>
+                        <input id="alt" class="field-input field-input-md" type="text" name="alt">
                     </div>
+                </div>
                 </div>
             </div>
             <div class="param-column right">
                 <!-- Mobile: Ascent Rate, Burst Altitude, and Descent Rate grouped on same line -->
                 <div class="param-row-mobile">
                     <div class="param-field">
-                        <span class="field-label">Ascent rate</span>
+                        <span class="field-label">Ascent rate (m/s)</span>
                         <div class="field-inputs">
-                            <input id="asc" class="field-input field-input-md field-input-compact" type="text" name="asc">
-                            <span class="unit">m/s</span>
+                            <input id="asc" class="field-input field-input-md" type="text" name="asc">
                         </div>
                     </div>
                     <div class="param-field">
-                        <span class="field-label">Burst altitude</span>
+                        <span class="field-label">Burst altitude (m)</span>
                         <div class="field-inputs">
-                            <input id="equil" class="field-input field-input-md field-input-compact" type="text" name="equil">
-                            <span class="unit">m</span>
+                            <input id="equil" class="field-input field-input-md" type="text" name="equil">
                         </div>
                     </div>
                     <div class="param-field">
-                        <span class="field-label">Descent rate</span>
+                        <span class="field-label">Descent rate (m/s)</span>
                         <div class="field-inputs">
-                            <input id="desc" class="field-input field-input-md field-input-compact" type="text" name="desc">
-                            <span class="unit">m/s</span>
+                            <input id="desc" class="field-input field-input-md" type="text" name="desc">
                         </div>
                     </div>
                 </div>
                 <!-- Desktop: Ascent Rate, Burst Altitude, and Descent Rate (Time hidden, shown in first column) -->
                 <div class="param-field param-field-desktop">
-                    <span class="field-label">Ascent rate</span>
+                    <span class="field-label">Ascent rate (m/s)</span>
                     <div class="field-inputs">
                         <input id="asc" class="field-input field-input-md" type="text" name="asc">
-                        <span class="unit">m/s</span>
                     </div>
                 </div>
                 <div class="param-field param-field-desktop">
-                    <span class="field-label">Burst altitude</span>
+                    <span class="field-label">Burst altitude (m)</span>
                     <div class="field-inputs">
                         <input id="equil" class="field-input field-input-md" type="text" name="equil">
-                        <span class="unit">m</span>
                     </div>
                 </div>
                 <div class="param-field param-field-desktop">
-                    <span class="field-label">Descent rate</span>
+                    <span class="field-label">Descent rate (m/s)</span>
                     <div class="field-inputs">
                         <input id="desc" class="field-input field-input-md" type="text" name="desc">
-                        <span class="unit">m/s</span>
                     </div>
                 </div>
             </div>
@@ -956,6 +949,33 @@
             //         if (radio) { radio.checked = true; radio.dispatchEvent(new Event('change')); }
             //     });
             // });
+            // Detect timezone and update time labels (fast, synchronous operation)
+            function updateTimeLabels() {
+                try {
+                    // Get timezone abbreviation (e.g., "PST", "EST", "UTC")
+                    const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+                    // Convert IANA timezone to abbreviation
+                    const now = new Date();
+                    const formatter = new Intl.DateTimeFormat('en-US', {
+                        timeZone: timeZone,
+                        timeZoneName: 'short'
+                    });
+                    const parts = formatter.formatToParts(now);
+                    const tzAbbr = parts.find(part => part.type === 'timeZoneName')?.value || 'UTC';
+                    
+                    // Update both mobile and desktop labels
+                    const labelMobile = document.getElementById('time-label-mobile');
+                    const labelDesktop = document.getElementById('time-label-desktop');
+                    if (labelMobile) labelMobile.textContent = `Time (${tzAbbr})`;
+                    if (labelDesktop) labelDesktop.textContent = `Time (${tzAbbr})`;
+                } catch (e) {
+                    // Fallback to UTC if detection fails
+                    console.debug('Timezone detection failed, using UTC:', e);
+                }
+            }
+            // Update labels immediately (synchronous, fast)
+            updateTimeLabels();
+            
             // Sync mobile and desktop time inputs
             const hrDesktop = document.getElementById('hr');
             const mnDesktop = document.getElementById('mn');
