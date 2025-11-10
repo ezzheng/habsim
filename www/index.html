@@ -818,17 +818,17 @@
                 </div>
             </div>
             <div class="param-column right">
-                <!-- Mobile: Time (UTC), Ascent Rate, Burst Altitude, and Descent Rate grouped on same line -->
-                <div class="param-row-mobile">
-                    <!-- Mobile: Time appears here (hidden on desktop) -->
-                    <div class="param-field param-field-time param-field-time-mobile">
-                        <span class="field-label">Time (UTC)</span>
-                        <div class="field-inputs">
-                            <input id="hr-mobile" class="field-input field-input-xs" type="text" name="hr-mobile">
-                            <span class="field-sep">:</span>
-                            <input id="mn-mobile" class="field-input field-input-xs" type="text" name="mn-mobile">
-                        </div>
+                <!-- Mobile: Time (UTC) appears here, aligned with third column (hidden on desktop) -->
+                <div class="param-field param-field-time param-field-time-mobile">
+                    <span class="field-label">Time (UTC)</span>
+                    <div class="field-inputs">
+                        <input id="hr-mobile" class="field-input field-input-xs" type="text" name="hr-mobile">
+                        <span class="field-sep">:</span>
+                        <input id="mn-mobile" class="field-input field-input-xs" type="text" name="mn-mobile">
                     </div>
+                </div>
+                <!-- Mobile: Ascent Rate, Burst Altitude, and Descent Rate grouped on same line -->
+                <div class="param-row-mobile">
                     <div class="param-field">
                         <span class="field-label">Ascent rate</span>
                         <div class="field-inputs">
@@ -843,7 +843,7 @@
                             <span class="unit">m</span>
                         </div>
                     </div>
-                <div class="param-field">
+                    <div class="param-field">
                         <span class="field-label">Descent rate</span>
                         <div class="field-inputs">
                             <input id="desc" class="field-input field-input-md field-input-compact" type="text" name="desc">
