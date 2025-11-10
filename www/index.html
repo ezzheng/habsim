@@ -254,7 +254,7 @@
         /* Parameter panel - overlay that slides down from top */
         #param-panel {
             position: fixed;
-            top: 0;
+            top: var(--nav-height, 0px);
             left: 0;
             right: 0;
             padding: 20px 24px 24px 24px;
@@ -266,29 +266,13 @@
             box-sizing: border-box;
             z-index: 1001;
             -webkit-overflow-scrolling: touch;
-            will-change: transform, max-height, padding, opacity;
-            opacity: 1;
+            will-change: transform;
             transform: translateY(0);
-            transition:
-                transform 300ms cubic-bezier(0.2, 0.8, 0.2, 1),
-                max-height 220ms cubic-bezier(0.2, 0.8, 0.2, 1),
-                padding 180ms cubic-bezier(0.2, 0.8, 0.2, 1),
-                opacity 160ms ease-out,
-                background-color 160ms ease-out;
+            transition: transform 300ms cubic-bezier(0.2, 0.8, 0.2, 1);
             box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
         }
-        /* Account for top bar */
-        #param-panel:not(.collapsed) {
-            top: var(--nav-height, 0px);
-        }
         #param-panel.collapsed {
-            transform: translateY(-100%);
-            max-height: 0;
-            padding-top: 0;
-            padding-bottom: 0;
-            opacity: 0;
-            overflow: hidden;
-            background: transparent;
+            transform: translateY(calc(-100% - var(--nav-height, 0px)));
             pointer-events: none;
         }
         /* No motion block unnecessary now */
@@ -359,7 +343,6 @@
             outline: none;
             border-color: var(--brand-600);
             box-shadow: 0 0 0 3px rgba(17, 24, 39, 0.1), 0 0 20px rgba(17, 24, 39, 0.15);
-            transform: scale(1.02);
         }
         @media (prefers-color-scheme: dark) {
             .field-input:focus {
@@ -1271,7 +1254,7 @@
                 const wrapper = input.parentElement;
                 if (wrapper && wrapper.classList.contains('field-inputs')) {
                     wrapper.style.position = 'relative';
-                    wrapper.style.overflow = 'hidden';
+                    wrapper.style.overflow = 'visible';
                     
                     input.addEventListener('focus', function() {
                         const ripple = document.createElement('div');
