@@ -642,7 +642,7 @@
         /* Print styles for PDF export */
         @media print {
             /* Hide UI elements */
-            #info, nav, .topbar, #param-panel, .param-grid, .param-column, #sim-spinner {
+            #info, nav, .topbar, #param-panel, .param-grid, .param-column, #sim-spinner, #custom-map-type-control, #custom-map-type-menu {
                 display: none !important;
             }
             
@@ -702,7 +702,9 @@
             .gm-style a[href*="terms"],
             .gm-style-cc *,
             .gm-style .gm-style-cc,
-            div[class*="gm-style-cc"] {
+            div[class*="gm-style-cc"],
+            #custom-map-type-control,
+            #custom-map-type-menu {
                 display: none !important;
                 visibility: hidden !important;
                 height: 0 !important;

@@ -25,6 +25,7 @@ google.maps.event.addListener(map, 'click', function (event) {
     google.maps.event.addListenerOnce(map, 'idle', function() {
         // Create custom control container
         const controlDiv = document.createElement('div');
+        controlDiv.id = 'custom-map-type-control';
         controlDiv.style.cssText = 'margin: 10px; position: absolute; bottom: 0; left: 0; z-index: 1000;';
         
         // Create control button (styled like Google Maps control)
