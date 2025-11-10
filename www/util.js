@@ -5,7 +5,16 @@ var map = new google.maps.Map(element, {
     zoom: 9,
     mapTypeId: "OSM",
     zoomControl: false,
-    gestureHandling: 'greedy'
+    gestureHandling: 'greedy',
+    mapTypeControl: true,
+    mapTypeControlOptions: {
+        position: google.maps.ControlPosition.BOTTOM_LEFT
+    },
+    fullscreenControl: true,
+    fullscreenControlOptions: {
+        position: google.maps.ControlPosition.BOTTOM_RIGHT
+    },
+    streetViewControl: false
 });
 var clickMarker = null;
 var heatmapLayer = null; // Global heatmap layer for Monte Carlo visualization
