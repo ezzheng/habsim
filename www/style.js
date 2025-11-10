@@ -98,93 +98,31 @@ updateServerStatus();
 setInterval(updateServerStatus, 5000);
 
 // We need to keep this because standard code does not execute until you choose the button
-// Set defaults immediately - elements should exist by now
+// Set defaults ONLY on initial page load - don't reset user's changes
 function setDefaultValues() {
-    // Desktop inputs (primary)
     const ascEl = document.getElementById("asc");
     const equilEl = document.getElementById("equil");
     const descEl = document.getElementById("desc");
-    // Mobile inputs (secondary)
-    const ascMobileEl = document.getElementById("asc-mobile");
-    const equilMobileEl = document.getElementById("equil-mobile");
-    const descMobileEl = document.getElementById("desc-mobile");
-    // Other fields
     const coeffEl = document.getElementById("coeff");
     const durEl = document.getElementById("dur");
     const stepEl = document.getElementById("step");
     const eqtimeEl = document.getElementById("eqtime");
     
-    // Set defaults (always set, not just if empty)
-    if (ascEl) ascEl.value = 4;
-    if (equilEl) equilEl.value = 30000;
-    if (descEl) descEl.value = 8;
-    // Sync mobile inputs with desktop
-    if (ascMobileEl) ascMobileEl.value = 4;
-    if (equilMobileEl) equilMobileEl.value = 30000;
-    if (descMobileEl) descMobileEl.value = 8;
-    
+    // Only set defaults if fields are empty (first load)
+    if (ascEl && !ascEl.value) ascEl.value = 4;
+    if (equilEl && !equilEl.value) equilEl.value = 30000;
+    if (descEl && !descEl.value) descEl.value = 8;
     if (coeffEl && !coeffEl.value) coeffEl.value = 0.5;
     if (durEl && !durEl.value) durEl.value = 48;
     if (stepEl && !stepEl.value) stepEl.value = 240;
     if (eqtimeEl && !eqtimeEl.value) eqtimeEl.value = 1;
 }
 
-// Set defaults when DOM is ready
+// Set defaults when DOM is ready (only on first load)
 if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', setDefaultValues);
 } else {
     setDefaultValues();
-}
-
-// Sync mobile and desktop inputs bidirectionally
-function syncInputs() {
-    const ascDesktop = document.getElementById("asc");
-    const equilDesktop = document.getElementById("equil");
-    const descDesktop = document.getElementById("desc");
-    const ascMobile = document.getElementById("asc-mobile");
-    const equilMobile = document.getElementById("equil-mobile");
-    const descMobile = document.getElementById("desc-mobile");
-    
-    function syncAsc(fromMobile) {
-        if (fromMobile && ascMobile && ascDesktop) {
-            ascDesktop.value = ascMobile.value;
-        } else if (!fromMobile && ascDesktop && ascMobile) {
-            ascMobile.value = ascDesktop.value;
-        }
-    }
-    
-    function syncEquil(fromMobile) {
-        if (fromMobile && equilMobile && equilDesktop) {
-            equilDesktop.value = equilMobile.value;
-        } else if (!fromMobile && equilDesktop && equilMobile) {
-            equilMobile.value = equilDesktop.value;
-        }
-    }
-    
-    function syncDesc(fromMobile) {
-        if (fromMobile && descMobile && descDesktop) {
-            descDesktop.value = descMobile.value;
-        } else if (!fromMobile && descDesktop && descMobile) {
-            descMobile.value = descDesktop.value;
-        }
-    }
-    
-    // Desktop to mobile
-    if (ascDesktop) ascDesktop.addEventListener('input', () => syncAsc(false));
-    if (equilDesktop) equilDesktop.addEventListener('input', () => syncEquil(false));
-    if (descDesktop) descDesktop.addEventListener('input', () => syncDesc(false));
-    
-    // Mobile to desktop
-    if (ascMobile) ascMobile.addEventListener('input', () => syncAsc(true));
-    if (equilMobile) equilMobile.addEventListener('input', () => syncEquil(true));
-    if (descMobile) descMobile.addEventListener('input', () => syncDesc(true));
-}
-
-// Setup syncing when DOM is ready
-if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', syncInputs);
-} else {
-    syncInputs();
 }
 
 
@@ -208,19 +146,13 @@ function setMode(mode){
         gstep.style.display = "none";
         if (gtimer) gtimer.style.display = "flex";
         if (eqbtn) eqbtn.style.visibility = "visible";
+        // Don't reset user's values - only set defaults if empty
         const ascEl = document.getElementById("asc");
         const equilEl = document.getElementById("equil");
         const descEl = document.getElementById("desc");
-        const ascMobileEl = document.getElementById("asc-mobile");
-        const equilMobileEl = document.getElementById("equil-mobile");
-        const descMobileEl = document.getElementById("desc-mobile");
-        if (ascEl) ascEl.value = 4;
-        if (equilEl) equilEl.value = 30000;
-        if (descEl) descEl.value = 8;
-        // Sync mobile inputs
-        if (ascMobileEl) ascMobileEl.value = 4;
-        if (equilMobileEl) equilMobileEl.value = 30000;
-        if (descMobileEl) descMobileEl.value = 8;
+        if (ascEl && !ascEl.value) ascEl.value = 4;
+        if (equilEl && !equilEl.value) equilEl.value = 30000;
+        if (descEl && !descEl.value) descEl.value = 8;
         var remain = document.getElementById("timeremain");
         if (remain) remain.style.visibility = "visible";
     } else if (mode === "ZPB"){
@@ -230,21 +162,15 @@ function setMode(mode){
         gstep.style.display = "none";
         if (gtimer) gtimer.style.display = "flex";
         if (eqbtn) eqbtn.style.visibility = "visible";
+        // Don't reset user's values - only set defaults if empty
         const ascEl = document.getElementById("asc");
         const equilEl = document.getElementById("equil");
         const eqtimeEl = document.getElementById("eqtime");
         const descEl = document.getElementById("desc");
-        const ascMobileEl = document.getElementById("asc-mobile");
-        const equilMobileEl = document.getElementById("equil-mobile");
-        const descMobileEl = document.getElementById("desc-mobile");
-        if (ascEl) ascEl.value = 4;
-        if (equilEl) equilEl.value = 30000;
-        if (eqtimeEl) eqtimeEl.value = 1;
-        if (descEl) descEl.value = 8;
-        // Sync mobile inputs
-        if (ascMobileEl) ascMobileEl.value = 4;
-        if (equilMobileEl) equilMobileEl.value = 30000;
-        if (descMobileEl) descMobileEl.value = 8;
+        if (ascEl && !ascEl.value) ascEl.value = 4;
+        if (equilEl && !equilEl.value) equilEl.value = 30000;
+        if (eqtimeEl && !eqtimeEl.value) eqtimeEl.value = 1;
+        if (descEl && !descEl.value) descEl.value = 8;
         var remain = document.getElementById("timeremain");
         if (remain) remain.style.visibility = "visible";
     } else { // FLOAT
@@ -254,25 +180,19 @@ function setMode(mode){
         gstep.style.display = "flex";
         if (gtimer) gtimer.style.display = "none";
         if (eqbtn) eqbtn.style.visibility = "hidden";
+        // Don't reset user's values - only set defaults if empty
         const ascEl = document.getElementById("asc");
         const equilEl = document.getElementById("equil");
         const descEl = document.getElementById("desc");
         const coeffEl = document.getElementById("coeff");
         const durEl = document.getElementById("dur");
         const stepEl = document.getElementById("step");
-        const ascMobileEl = document.getElementById("asc-mobile");
-        const equilMobileEl = document.getElementById("equil-mobile");
-        const descMobileEl = document.getElementById("desc-mobile");
-        if (ascEl) ascEl.value = 4;
-        if (equilEl) equilEl.value = 30000;
-        if (descEl) descEl.value = 8;
-        if (coeffEl) coeffEl.value = 0.5;
-        if (durEl) durEl.value = 48;
-        if (stepEl) stepEl.value = 240;
-        // Sync mobile inputs
-        if (ascMobileEl) ascMobileEl.value = 4;
-        if (equilMobileEl) equilMobileEl.value = 30000;
-        if (descMobileEl) descMobileEl.value = 8;
+        if (ascEl && !ascEl.value) ascEl.value = 4;
+        if (equilEl && !equilEl.value) equilEl.value = 30000;
+        if (descEl && !descEl.value) descEl.value = 8;
+        if (coeffEl && !coeffEl.value) coeffEl.value = 0.5;
+        if (durEl && !durEl.value) durEl.value = 48;
+        if (stepEl && !stepEl.value) stepEl.value = 240;
         var remain = document.getElementById("timeremain");
         if (remain) remain.style.visibility = "hidden";
     }
