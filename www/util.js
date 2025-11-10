@@ -37,16 +37,26 @@ function initMap() {
 var map;
 if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', function() {
-        setTimeout(initMap, 100); // Small delay to let layout adjust
+        setTimeout(function() {
+            map = initMap();
+            setupMapListeners();
+        }, 100); // Small delay to let layout adjust
     });
 } else {
-    setTimeout(initMap, 100); // Small delay to let layout adjust
+    setTimeout(function() {
+        map = initMap();
+        setupMapListeners();
+    }, 100); // Small delay to let layout adjust
 }
-var clickMarker = null;
-var heatmapLayer = null; // Global heatmap layer for Monte Carlo visualization
-google.maps.event.addListener(map, 'click', function (event) {
-    displayCoordinates(event.latLng);
-});
+
+function setupMapListeners() {
+    if (!map) return;
+    var clickMarker = null;
+    var heatmapLayer = null; // Global heatmap layer for Monte Carlo visualization
+    google.maps.event.addListener(map, 'click', function (event) {
+        displayCoordinates(event.latLng);
+    });
+}
 
 //Define OSM map type pointing at the OpenStreetMap tile server
 map.mapTypes.set("OSM", new google.maps.ImageMapType({
