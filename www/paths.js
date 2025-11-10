@@ -998,26 +998,12 @@ async function simulate() {
         var url = "";
         allValues.push(time,alt);
         var equil, eqtime, asc, desc; // Declare variables for use in spaceshot URL
-        // Helper to get value from visible element (handles duplicate IDs)
-        function getVisibleValue(id) {
-            const elements = document.querySelectorAll(`#${id}`);
-            // Find the visible element (not hidden by CSS)
-            for (const el of elements) {
-                const style = window.getComputedStyle(el);
-                if (style.display !== 'none' && style.visibility !== 'hidden') {
-                    return el.value.trim();
-                }
-            }
-            // Fallback to first element if none visible
-            return elements[0] ? elements[0].value.trim() : '';
-        }
-        
         switch(btype) {
             case 'STANDARD':
-                equil = getVisibleValue('equil');
+                equil = document.getElementById('equil').value.trim();
                 eqtime = 0; // STANDARD mode uses 0 for eqtime
-                asc = getVisibleValue('asc');
-                desc = getVisibleValue('desc');
+                asc = document.getElementById('asc').value.trim();
+                desc = document.getElementById('desc').value.trim();
                 
                 // Validate that values are not empty
                 if (!asc || asc === "" || parseFloat(asc) <= 0) {
@@ -1038,10 +1024,10 @@ async function simulate() {
                 allValues.push(equil,asc,desc);
                 break;
             case 'ZPB':
-                equil = getVisibleValue('equil');
+                equil = document.getElementById('equil').value.trim();
                 eqtime = document.getElementById('eqtime').value.trim();
-                asc = getVisibleValue('asc');
-                desc = getVisibleValue('desc');
+                asc = document.getElementById('asc').value.trim();
+                desc = document.getElementById('desc').value.trim();
                 
                 // Validate that values are not empty
                 if (!asc || asc === "" || parseFloat(asc) <= 0) {

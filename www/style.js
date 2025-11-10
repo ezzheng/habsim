@@ -47,9 +47,13 @@ if(hrMobile) hrMobile.value = now.getHours();
 if(mnMobile) mnMobile.value = now.getMinutes();
 
 // Set default values for ascent rate, burst altitude, and descent rate (same way as Date/Time)
-document.querySelectorAll('#asc').forEach(el => el.value = 4);
-document.querySelectorAll('#equil').forEach(el => el.value = 30000);
-document.querySelectorAll('#desc').forEach(el => el.value = 8);
+// Set on desktop inputs (mobile will sync via event listeners)
+const ascEl = document.getElementById('asc');
+const equilEl = document.getElementById('equil');
+const descEl = document.getElementById('desc');
+if (ascEl) ascEl.value = 4;
+if (equilEl) equilEl.value = 30000;
+if (descEl) descEl.value = 8;
 
 /*document.getElementById("yr").value = 2020
 document.getElementById("mo").value = 9
@@ -179,15 +183,13 @@ function setMode(mode){
         if (gtimer) gtimer.style.display = "flex";
         if (eqbtn) eqbtn.style.visibility = "visible";
         // Only set defaults if fields are empty (don't overwrite user changes)
-        document.querySelectorAll('#asc').forEach(el => {
-            if (!el.value || el.value.trim() === "") el.value = 4;
-        });
-        document.querySelectorAll('#equil').forEach(el => {
-            if (!el.value || el.value.trim() === "") el.value = 30000;
-        });
-        document.querySelectorAll('#desc').forEach(el => {
-            if (!el.value || el.value.trim() === "") el.value = 8;
-        });
+        // Set on desktop inputs (mobile will sync via event listeners)
+        const ascEl = document.getElementById('asc');
+        const equilEl = document.getElementById('equil');
+        const descEl = document.getElementById('desc');
+        if (ascEl && (!ascEl.value || ascEl.value.trim() === "")) ascEl.value = 4;
+        if (equilEl && (!equilEl.value || equilEl.value.trim() === "")) equilEl.value = 30000;
+        if (descEl && (!descEl.value || descEl.value.trim() === "")) descEl.value = 8;
         const eqtimeEl = document.getElementById("eqtime");
         if (eqtimeEl && (!eqtimeEl.value || eqtimeEl.value.trim() === "")) eqtimeEl.value = 1;
         var remain = document.getElementById("timeremain");
@@ -200,15 +202,13 @@ function setMode(mode){
         if (gtimer) gtimer.style.display = "none";
         if (eqbtn) eqbtn.style.visibility = "hidden";
         // Only set defaults if fields are empty (don't overwrite user changes)
-        document.querySelectorAll('#asc').forEach(el => {
-            if (!el.value || el.value.trim() === "") el.value = 4;
-        });
-        document.querySelectorAll('#equil').forEach(el => {
-            if (!el.value || el.value.trim() === "") el.value = 30000;
-        });
-        document.querySelectorAll('#desc').forEach(el => {
-            if (!el.value || el.value.trim() === "") el.value = 8;
-        });
+        // Set on desktop inputs (mobile will sync via event listeners)
+        const ascEl = document.getElementById('asc');
+        const equilEl = document.getElementById('equil');
+        const descEl = document.getElementById('desc');
+        if (ascEl && (!ascEl.value || ascEl.value.trim() === "")) ascEl.value = 4;
+        if (equilEl && (!equilEl.value || equilEl.value.trim() === "")) equilEl.value = 30000;
+        if (descEl && (!descEl.value || descEl.value.trim() === "")) descEl.value = 8;
         const coeffEl = document.getElementById("coeff");
         const durEl = document.getElementById("dur");
         const stepEl = document.getElementById("step");

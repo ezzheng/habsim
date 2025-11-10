@@ -843,19 +843,19 @@
                     <div class="param-field">
                         <span class="field-label">Ascent rate (m/s)</span>
                         <div class="field-inputs">
-                            <input id="asc" class="field-input field-input-md" type="text" name="asc">
+                            <input id="asc-mobile" class="field-input field-input-md" type="text" name="asc-mobile">
                         </div>
                     </div>
                     <div class="param-field">
                         <span class="field-label">Burst altitude (m)</span>
                         <div class="field-inputs">
-                            <input id="equil" class="field-input field-input-md" type="text" name="equil">
+                            <input id="equil-mobile" class="field-input field-input-md" type="text" name="equil-mobile">
                         </div>
                     </div>
                     <div class="param-field">
                         <span class="field-label">Descent rate (m/s)</span>
                         <div class="field-inputs">
-                            <input id="desc" class="field-input field-input-md" type="text" name="desc">
+                            <input id="desc-mobile" class="field-input field-input-md" type="text" name="desc-mobile">
                         </div>
                     </div>
                 </div>
@@ -999,6 +999,43 @@
             // Initial sync
             if (hrDesktop && hrMobile) syncTimeInputs(false);
             if (mnDesktop && mnMobile) syncTimeInputs(false);
+            
+            // Sync mobile and desktop ascent/descent/burst inputs (same pattern as time)
+            const ascDesktop = document.getElementById('asc');
+            const equilDesktop = document.getElementById('equil');
+            const descDesktop = document.getElementById('desc');
+            const ascMobile = document.getElementById('asc-mobile');
+            const equilMobile = document.getElementById('equil-mobile');
+            const descMobile = document.getElementById('desc-mobile');
+            
+            function syncAscEquilDesc(fromMobile) {
+                if (fromMobile) {
+                    if (ascMobile && ascDesktop) ascDesktop.value = ascMobile.value;
+                    if (equilMobile && equilDesktop) equilDesktop.value = equilMobile.value;
+                    if (descMobile && descDesktop) descDesktop.value = descMobile.value;
+                } else {
+                    if (ascDesktop && ascMobile) ascMobile.value = ascDesktop.value;
+                    if (equilDesktop && equilMobile) equilMobile.value = equilDesktop.value;
+                    if (descDesktop && descMobile) descMobile.value = descDesktop.value;
+                }
+            }
+            
+            if (ascDesktop && ascMobile) {
+                ascDesktop.addEventListener('input', () => syncAscEquilDesc(false));
+                ascMobile.addEventListener('input', () => syncAscEquilDesc(true));
+            }
+            if (equilDesktop && equilMobile) {
+                equilDesktop.addEventListener('input', () => syncAscEquilDesc(false));
+                equilMobile.addEventListener('input', () => syncAscEquilDesc(true));
+            }
+            if (descDesktop && descMobile) {
+                descDesktop.addEventListener('input', () => syncAscEquilDesc(false));
+                descMobile.addEventListener('input', () => syncAscEquilDesc(true));
+            }
+            // Initial sync
+            if (ascDesktop && ascMobile) syncAscEquilDesc(false);
+            if (equilDesktop && equilMobile) syncAscEquilDesc(false);
+            if (descDesktop && descMobile) syncAscEquilDesc(false);
             
             const collapseBtn = document.getElementById('collapse-toggle');
             const panel = document.getElementById('param-panel');
