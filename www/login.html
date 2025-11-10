@@ -47,7 +47,28 @@
             align-items: center;
             justify-content: center;
             padding: 20px;
-            background: linear-gradient(135deg, var(--soft) 0%, var(--bg) 100%);
+            position: relative;
+            overflow: hidden;
+            /* Slow-moving gradient background */
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 25%, #f093fb 50%, #4facfe 75%, #667eea 100%);
+            background-size: 400% 400%;
+            animation: gradientShift 45s ease infinite;
+        }
+        @keyframes gradientShift {
+            0% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+            100% { background-position: 0% 50%; }
+        }
+        /* Particle network canvas */
+        #particleCanvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 0;
+            opacity: 0.15;
+            pointer-events: none;
         }
         .login-container {
             width: 100%;
@@ -57,6 +78,8 @@
             box-shadow: 0 4px 24px rgba(0, 0, 0, 0.1);
             padding: 40px 32px;
             border: 1px solid var(--line);
+            position: relative;
+            z-index: 1;
         }
         .login-header {
             text-align: center;
@@ -112,29 +135,77 @@
             font-weight: 500;
             color: var(--fg);
         }
+        .form-input-wrapper {
+            position: relative;
+            width: 100%;
+            overflow: hidden;
+        }
         .form-input {
             width: 100%;
-            padding: 12px 16px;
+            padding: 12px 44px 12px 16px;
             font-size: 15px;
             font-family: inherit;
             color: var(--fg);
             background: var(--bg);
             border: 2px solid var(--line);
             border-radius: 8px;
-            transition: all 0.2s;
+            transition: all 0.3s ease;
+            position: relative;
+            z-index: 1;
         }
         .form-input:focus {
             outline: none;
             border-color: var(--brand);
-            box-shadow: 0 0 0 3px rgba(17, 24, 39, 0.1);
+            box-shadow: 0 0 0 3px rgba(17, 24, 39, 0.1), 0 0 20px rgba(17, 24, 39, 0.15);
+            transform: scale(1.01);
         }
         @media (prefers-color-scheme: dark) {
             .form-input:focus {
-                box-shadow: 0 0 0 3px rgba(147, 197, 253, 0.1);
+                box-shadow: 0 0 0 3px rgba(147, 197, 253, 0.1), 0 0 20px rgba(147, 197, 253, 0.15);
             }
         }
         .form-input::placeholder {
             color: var(--muted);
+        }
+        .ripple-effect {
+            position: absolute;
+            border-radius: 50%;
+            background: rgba(17, 24, 39, 0.15);
+            transform: scale(0);
+            animation: ripple 0.6s ease-out;
+            pointer-events: none;
+            z-index: 0;
+        }
+        @keyframes ripple {
+            to {
+                transform: scale(4);
+                opacity: 0;
+            }
+        }
+        /* Password toggle icon */
+        .password-toggle {
+            position: absolute;
+            right: 12px;
+            top: 50%;
+            transform: translateY(-50%);
+            background: none;
+            border: none;
+            cursor: pointer;
+            padding: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--muted);
+            transition: color 0.2s;
+            z-index: 2;
+        }
+        .password-toggle:hover {
+            color: var(--fg);
+        }
+        .password-toggle svg {
+            width: 20px;
+            height: 20px;
+            stroke-width: 2;
         }
         .error-message {
             display: none;
@@ -218,22 +289,33 @@
             <div class="error-message" id="errorMessage"></div>
             <div class="form-group">
                 <label for="password" class="form-label">Password</label>
-                <input 
-                    type="password" 
-                    id="password" 
-                    name="password" 
-                    class="form-input" 
-                    placeholder="Enter password"
-                    autocomplete="current-password"
-                    required
-                    autofocus
-                >
+                <div class="form-input-wrapper">
+                    <input 
+                        type="password" 
+                        id="password" 
+                        name="password" 
+                        class="form-input" 
+                        autocomplete="current-password"
+                        required
+                        autofocus
+                    >
+                    <button type="button" class="password-toggle" id="passwordToggle" aria-label="Toggle password visibility">
+                        <svg id="eyeIcon" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path>
+                        </svg>
+                        <svg id="eyeOffIcon" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" style="display: none;">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.29 3.29m13.42 13.42l-3.29-3.29M3 3l13.42 13.42"></path>
+                        </svg>
+                    </button>
+                </div>
             </div>
             <button type="submit" class="login-button" id="loginButton">
                 <span id="buttonText">Log In</span>
             </button>
         </form>
     </div>
+    <canvas id="particleCanvas"></canvas>
     <script>
         // If already authenticated, redirect to main page
         if (sessionStorage.getItem('authenticated')) {
@@ -322,6 +404,122 @@
                 errorMessage.classList.remove('show');
             }
         });
+        
+        // Ripple effect on focus
+        const inputWrapper = passwordInput.closest('.form-input-wrapper');
+        passwordInput.addEventListener('focus', function(e) {
+            const ripple = document.createElement('div');
+            ripple.classList.add('ripple-effect');
+            const rect = inputWrapper.getBoundingClientRect();
+            const size = Math.max(rect.width, rect.height);
+            ripple.style.width = ripple.style.height = size + 'px';
+            ripple.style.left = (rect.width / 2 - size / 2) + 'px';
+            ripple.style.top = (rect.height / 2 - size / 2) + 'px';
+            inputWrapper.appendChild(ripple);
+            setTimeout(() => ripple.remove(), 600);
+        });
+        
+        // Password toggle functionality
+        const passwordToggle = document.getElementById('passwordToggle');
+        const eyeIcon = document.getElementById('eyeIcon');
+        const eyeOffIcon = document.getElementById('eyeOffIcon');
+        
+        passwordToggle.addEventListener('click', function() {
+            const type = passwordInput.getAttribute('type') === 'password' ? 'text' : 'password';
+            passwordInput.setAttribute('type', type);
+            
+            if (type === 'text') {
+                eyeIcon.style.display = 'none';
+                eyeOffIcon.style.display = 'block';
+            } else {
+                eyeIcon.style.display = 'block';
+                eyeOffIcon.style.display = 'none';
+            }
+        });
+        
+        // Particle network animation
+        const canvas = document.getElementById('particleCanvas');
+        const ctx = canvas.getContext('2d');
+        let particles = [];
+        let mouseX = 0;
+        let mouseY = 0;
+        
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+        resizeCanvas();
+        window.addEventListener('resize', resizeCanvas);
+        
+        // Create particles
+        const particleCount = 30;
+        for (let i = 0; i < particleCount; i++) {
+            particles.push({
+                x: Math.random() * canvas.width,
+                y: Math.random() * canvas.height,
+                vx: (Math.random() - 0.5) * 0.5,
+                vy: (Math.random() - 0.5) * 0.5,
+                radius: Math.random() * 2 + 1
+            });
+        }
+        
+        // Mouse tracking for interactivity
+        document.addEventListener('mousemove', function(e) {
+            mouseX = e.clientX;
+            mouseY = e.clientY;
+        });
+        
+        function drawParticles() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Update and draw particles
+            particles.forEach((particle, i) => {
+                // Update position
+                particle.x += particle.vx;
+                particle.y += particle.vy;
+                
+                // Wrap around edges
+                if (particle.x < 0) particle.x = canvas.width;
+                if (particle.x > canvas.width) particle.x = 0;
+                if (particle.y < 0) particle.y = canvas.height;
+                if (particle.y > canvas.height) particle.y = 0;
+                
+                // Subtle mouse interaction
+                const dx = mouseX - particle.x;
+                const dy = mouseY - particle.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                if (distance < 150) {
+                    particle.vx += (dx / distance) * 0.01;
+                    particle.vy += (dy / distance) * 0.01;
+                }
+                
+                // Draw particle
+                ctx.beginPath();
+                ctx.arc(particle.x, particle.y, particle.radius, 0, Math.PI * 2);
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
+                ctx.fill();
+                
+                // Draw connections
+                particles.slice(i + 1).forEach(otherParticle => {
+                    const dx = otherParticle.x - particle.x;
+                    const dy = otherParticle.y - particle.y;
+                    const distance = Math.sqrt(dx * dx + dy * dy);
+                    
+                    if (distance < 120) {
+                        ctx.beginPath();
+                        ctx.moveTo(particle.x, particle.y);
+                        ctx.lineTo(otherParticle.x, otherParticle.y);
+                        ctx.strokeStyle = `rgba(255, 255, 255, ${0.2 * (1 - distance / 120)})`;
+                        ctx.lineWidth = 0.5;
+                        ctx.stroke();
+                    }
+                });
+            });
+            
+            requestAnimationFrame(drawParticles);
+        }
+        
+        drawParticles();
     </script>
 </body>
 </html>
