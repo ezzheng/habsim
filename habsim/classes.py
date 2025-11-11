@@ -155,7 +155,12 @@ class ElevationFile:
             
             # Convert to grid coordinates (continuous)
             # Use separate resolutions for latitude and longitude
+            # Formula: array covers -90 to +90 lat (180 degrees) and -180 to +180 lon (360 degrees)
+            # For latitude: 90 (north) -> index 0, -90 (south) -> index (height-1)
+            # For longitude: -180 -> index 0, +180 -> index (width-1)
             x_float = (lon + 180) * self.resolution_lon
+            # The -1 offset is needed: at lat=-90, (90-(-90))*58 = 10440, but max index is 10439
+            # So we subtract 1 to get the correct index range [0, 10439]
             y_float = (90 - lat) * self.resolution_lat - 1
             
             # Get integer indices and fractional parts for interpolation
