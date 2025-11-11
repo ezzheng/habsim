@@ -1,22 +1,20 @@
-import threading
-import warnings
 import numpy as np
+import threading
 from gefs import load_gefs
 
 _ELEV_DATA = None
 _ELEV_SHAPE = None
 _ELEV_LOCK = threading.Lock()
-_RESOLUTION_LAT = 58  # points per degree for latitude (10440 / 180)
-_RESOLUTION_LON = 60  # points per degree for longitude (21600 / 360)
 
 def _get_elev_data():
+    """Load elevation data once with memory mapping for efficiency."""
     global _ELEV_DATA, _ELEV_SHAPE
     if _ELEV_DATA is not None:
         return _ELEV_DATA, _ELEV_SHAPE
     with _ELEV_LOCK:
         if _ELEV_DATA is not None:
             return _ELEV_DATA, _ELEV_SHAPE
-        # Use memory-mapped read to avoid loading the whole array into RAM repeatedly
+        # Use load_gefs to handle S3 downloads and caching
         path = load_gefs('worldelev.npy')
         _ELEV_DATA = np.load(path, mmap_mode='r')
         _ELEV_SHAPE = _ELEV_DATA.shape
@@ -24,71 +22,46 @@ def _get_elev_data():
 
 def getElevation(lat, lon):
     """
-    Bilinear-interpolated elevation lookup that treats array pixels as CELL CENTERS.
-    
-    Works for arbitrary (h, w) shapes that span [-90..+90] lat and [-180..+180] lon.
-    
-    Returns elevation rounded to 2 decimals, min 0.
+    Returns interpolated elevation (in meters) for given lat/lon.
+    Uses bilinear interpolation. Clamps to [0, max elevation].
     """
     data, shape = _get_elev_data()
-    h, w = shape
     
-    # Diagnostic: compute and warn about coarse resolution
-    res_lat_deg = 180.0 / h  # degrees per pixel in latitude
-    res_lon_deg = 360.0 / w  # degrees per pixel in longitude
-    if (res_lat_deg > 1.0 or res_lon_deg > 1.0):
-        # warn once or log; using warnings.warn so it can be captured
-        warnings.warn(
-            f"Elevation grid is coarse: lat_res={res_lat_deg:.4f}°, lon_res={res_lon_deg:.4f}°. "
-            "Consider using higher-resolution elevation for accurate results."
-        )
-    
-    # Normalize inputs
-    lon = ((lon + 180.0) % 360.0) - 180.0
+    # Clamp latitude/longitude
     lat = max(-90.0, min(90.0, lat))
+    lon = ((lon + 180.0) % 360.0) - 180.0  # normalize to [-180, 180]
     
-    # Pixel-center mapping:
-    # Pixel centers are located at:
-    #   lon_center_i = -180 + (i + 0.5) * (360 / w)  for i in [0..w-1]
-    # So invert that mapping to get continuous index coordinate:
-    x_float = ( (lon + 180.0) / 360.0 ) * w - 0.5
-    y_float = ( (90.0 - lat) / 180.0 ) * h - 0.5
+    # Convert lat/lon to float pixel indices
+    y_float = (90.0 - lat) / 180.0 * (shape[0] - 1)   # 0=top (90N), max=bottom (-90S)
+    x_float = (lon + 180.0) / 360.0 * (shape[1] - 1)  # 0=left (-180), max=right (180)
     
-    # Now standard bilinear interpolation using floor indices
+    # Integer indices and fractional parts
     x0 = int(np.floor(x_float))
     y0 = int(np.floor(y_float))
+    x1 = min(x0 + 1, shape[1] - 1)
+    y1 = min(y0 + 1, shape[0] - 1)
     fx = x_float - x0
     fy = y_float - y0
     
-    # Neighbor indices (clamped)
-    x0_clamped = max(0, min(x0, w - 1))
-    y0_clamped = max(0, min(y0, h - 1))
-    x1_clamped = max(0, min(x0 + 1, w - 1))
-    y1_clamped = max(0, min(y0 + 1, h - 1))
-    
     try:
-        v00 = float(data[y0_clamped, x0_clamped])
-        v10 = float(data[y0_clamped, x1_clamped])
-        v01 = float(data[y1_clamped, x0_clamped])
-        v11 = float(data[y1_clamped, x1_clamped])
+        # Bilinear interpolation
+        v00 = float(data[y0, x0])  # top-left
+        v10 = float(data[y0, x1])  # top-right
+        v01 = float(data[y1, x0])  # bottom-left
+        v11 = float(data[y1, x1])  # bottom-right
         
-        # If original x0/y0 were out-of-bounds, fx/fy might be outside [0,1].
-        # Clamp interpolation fractions to [0,1] to avoid weird extrapolation.
-        fx = min(max(fx, 0.0), 1.0)
-        fy = min(max(fy, 0.0), 1.0)
+        # Interpolate along x
+        v_top = v00 * (1 - fx) + v10 * fx
+        v_bottom = v01 * (1 - fx) + v11 * fx
         
-        v0 = v00 * (1.0 - fx) + v10 * fx
-        v1 = v01 * (1.0 - fx) + v11 * fx
-        val = v0 * (1.0 - fy) + v1 * fy
+        # Interpolate along y
+        elev = v_top * (1 - fy) + v_bottom * fy
         
-        return max(0.0, round(float(val), 2))
+        return max(0.0, round(elev, 2))
     except Exception:
-        # Fallback to nearest neighbor
+        # fallback to nearest neighbor
         xi = int(round(x_float))
         yi = int(round(y_float))
-        xi = max(0, min(xi, w - 1))
-        yi = max(0, min(yi, h - 1))
-        try:
-            return max(0.0, round(float(data[yi, xi]), 2))
-        except Exception:
-            return 0.0
+        xi = max(0, min(shape[1] - 1, xi))
+        yi = max(0, min(shape[0] - 1, yi))
+        return max(0.0, float(data[yi, xi]))

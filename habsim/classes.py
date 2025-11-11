@@ -83,45 +83,32 @@ class Location(tuple): # subclass of tuple, override __iter__
         return EARTH_RADIUS * c
 
 class ElevationFile:
-    resolution_lat = 58  # points per degree for latitude (10440 / 180)
-    resolution_lon = 60  # points per degree for longitude (21600 / 360)
-
     def __init__(self, path): # store
         # Use memory-mapped read-only mode to avoid loading 430MB into RAM
         # This allows OS to manage page cache instead of Python holding full array
         self.data = np.load(path, mmap_mode='r')
-        self.resolution_lat = 58
-        self.resolution_lon = 60
 
     def elev(self, lat, lon): # return elevation
         """
-        Nearest-neighbor elevation lookup that treats array pixels as CELL CENTERS.
-        
-        Works for arbitrary (h, w) shapes that span [-90..+90] lat and [-180..+180] lon.
+        Returns elevation (in meters) for given lat/lon using nearest neighbor lookup.
         """
         shape = self.data.shape
-        h, w = shape
         
-        # Normalize inputs
-        lon = ((lon + 180.0) % 360.0) - 180.0
+        # Clamp latitude/longitude
         lat = max(-90.0, min(90.0, lat))
+        lon = ((lon + 180.0) % 360.0) - 180.0  # normalize to [-180, 180]
         
-        # Pixel-center mapping:
-        # Pixel centers are located at:
-        #   lon_center_i = -180 + (i + 0.5) * (360 / w)  for i in [0..w-1]
-        # So invert that mapping to get continuous index coordinate:
-        x_float = ( (lon + 180.0) / 360.0 ) * w - 0.5
-        y_float = ( (90.0 - lat) / 180.0 ) * h - 0.5
+        # Convert lat/lon to float pixel indices
+        y_float = (90.0 - lat) / 180.0 * (shape[0] - 1)   # 0=top (90N), max=bottom (-90S)
+        x_float = (lon + 180.0) / 360.0 * (shape[1] - 1)  # 0=left (-180), max=right (180)
         
         # Nearest neighbor lookup
-        x = int(round(x_float))
-        y = int(round(y_float))
+        xi = int(round(x_float))
+        yi = int(round(y_float))
+        xi = max(0, min(shape[1] - 1, xi))
+        yi = max(0, min(shape[0] - 1, yi))
         
-        # Clamp indices to valid array bounds
-        x = max(0, min(x, w - 1))
-        y = max(0, min(y, h - 1))
-        
-        return max(0, self.data[y, x])
+        return max(0, float(self.data[yi, xi]))
 
 class Balloon:
     def __init__(self, time=None, location=None, alt=0, ascent_rate=0, air_vector=(0,0), wind_vector=None, ground_elev=None):
