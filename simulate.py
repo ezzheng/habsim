@@ -950,6 +950,12 @@ def simulate(simtime, lat, lon, rate, step, max_duration, alt, model, coefficien
             raise RuntimeError(f"Simulator {model} is invalid: wind_file is None (likely cleaned up during retrieval)")
         
         balloon = Balloon(location=(lat, lon), alt=alt, time=simtime, ascent_rate=rate)
+        
+        # Additional defensive check right before use (double protection against race conditions)
+        if not hasattr(simulator, 'wind_file') or simulator.wind_file is None:
+            logging.error(f"Simulator {model} wind_file became None between retrieval and use - race condition")
+            raise RuntimeError(f"Simulator {model} is invalid: wind_file is None (cleaned up during use)")
+        
         traj = simulator.simulate(balloon, step, coefficient, elevation, dur=max_duration)
         
         # Pre-allocate list for better memory efficiency

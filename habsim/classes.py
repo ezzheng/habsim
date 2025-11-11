@@ -169,6 +169,9 @@ class Simulator:
         h = float(step_size)
 
         def sample_rates(lat, lon, alt, t):
+            # Defensive check: wind_file might be None if simulator was cleaned up
+            if self.wind_file is None:
+                raise RuntimeError("Simulator wind_file is None - simulator was cleaned up during use")
             # wind_file.get returns [u, v, du/dh, dv/dh, ...]; use u, v and include air_vector
             temp = self.wind_file.get(lat, lon, alt, t)
             u = float(temp[0])
