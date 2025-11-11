@@ -363,7 +363,7 @@ def set_ensemble_mode(duration_seconds=60):
             is_new_ensemble = True
             _ensemble_mode_started = now
             _ensemble_mode_until = now + duration_seconds
-            logging.info(f"[WORKER {worker_pid}] Ensemble mode ACTIVATED: cache_limit {old_cache_limit} -> {MAX_SIMULATOR_CACHE_ENSEMBLE}, expires at {_ensemble_mode_until:.1f} (in {duration_seconds}s)")
+            logging.warning(f"[WORKER {worker_pid}] Ensemble mode ACTIVATED: cache_limit {old_cache_limit} -> {MAX_SIMULATOR_CACHE_ENSEMBLE}, expires at {_ensemble_mode_until:.1f} (in {duration_seconds}s)")
         else:
             # Already in ensemble mode, check if we've exceeded max duration
             if now - _ensemble_mode_started >= MAX_ENSEMBLE_DURATION:

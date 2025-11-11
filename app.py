@@ -595,7 +595,16 @@ def spaceshot():
     more significant than parameter uncertainty (measurement/launch variations).
     Default: ensemble_weight = 2.0 (ensemble points count 2× in density calculation)
     """
-    app.logger.info("Ensemble run with Monte Carlo started: /sim/spaceshot endpoint called")
+    import sys
+    import os
+    worker_pid = os.getpid()
+    # CRITICAL: Log immediately at start of function - this proves the endpoint was called
+    app.logger.error(f"[WORKER {worker_pid}] ===== SPACESHOT ENDPOINT CALLED ===== (error level for visibility)")
+    sys.stdout.flush()
+    sys.stderr.flush()
+    app.logger.info(f"[WORKER {worker_pid}] Ensemble run with Monte Carlo started: /sim/spaceshot endpoint called")
+    sys.stdout.flush()
+    sys.stderr.flush()
     
     # Weighting factor for ensemble points relative to Monte Carlo points
     # Higher values give more weight to weather model uncertainty vs parameter uncertainty
@@ -633,9 +642,11 @@ def spaceshot():
     # Legacy /sim/montecarlo endpoint also does NOT extend ensemble mode.
     # This prevents memory bloat from non-ensemble requests.
     worker_pid = os.getpid()
-    app.logger.info(f"[WORKER {worker_pid}] /sim/spaceshot called - activating ensemble mode on THIS worker")
+    # Use ERROR level so it appears in Railway (gunicorn loglevel='warning' filters INFO)
+    app.logger.error(f"[WORKER {worker_pid}] /sim/spaceshot called - activating ensemble mode on THIS worker")
     import sys
     sys.stdout.flush()  # Ensure log appears immediately
+    sys.stderr.flush()
     
     # CRITICAL: Activate ensemble mode BEFORE any simulations start
     # This must happen synchronously before ThreadPoolExecutor begins
@@ -645,8 +656,9 @@ def spaceshot():
     with simulate._cache_lock:
         cache_limit_after = simulate._current_max_cache
         ensemble_until_after = simulate._ensemble_mode_until
-    app.logger.info(f"[WORKER {worker_pid}] Ensemble mode enabled: cache_limit={cache_limit_after}, expires_at={ensemble_until_after:.1f}")
+    app.logger.error(f"[WORKER {worker_pid}] Ensemble mode enabled: cache_limit={cache_limit_after}, expires_at={ensemble_until_after:.1f}")
     sys.stdout.flush()  # Ensure log appears immediately
+    sys.stderr.flush()
     
     # Build model list based on configuration
     model_ids = []
@@ -804,8 +816,9 @@ def spaceshot():
         if verify_cache_limit < simulate.MAX_SIMULATOR_CACHE_ENSEMBLE:
             app.logger.error(f"[WORKER {worker_pid}] WARNING: Starting simulations but cache_limit={verify_cache_limit} < {simulate.MAX_SIMULATOR_CACHE_ENSEMBLE}! Ensemble mode may not be active!")
         else:
-            app.logger.info(f"[WORKER {worker_pid}] Verified: cache_limit={verify_cache_limit}, ensemble_active={verify_ensemble_active} - ready to start simulations")
+            app.logger.error(f"[WORKER {worker_pid}] Verified: cache_limit={verify_cache_limit}, ensemble_active={verify_ensemble_active} - ready to start simulations")
         sys.stdout.flush()
+        sys.stderr.flush()
         
         # ========================================================================
         # PARALLEL EXECUTION: Ensemble + Monte Carlo Simulations
