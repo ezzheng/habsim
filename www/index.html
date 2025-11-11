@@ -1189,40 +1189,49 @@
                     pressTimer = setTimeout(completeLongPress, longPressMs);
                 };
                 // Support both mouse and touch events for mobile
+                let touchStarted = false;
                 ensembleBtn.addEventListener('mousedown', (e) => {
                     e.preventDefault(); // Prevent text selection
                     startLongPress();
                 });
                 ensembleBtn.addEventListener('touchstart', (e) => {
-                    e.preventDefault(); // Prevent scrolling/zooming
+                    touchStarted = true;
                     startLongPress();
                 });
                 ensembleBtn.addEventListener('mouseup', cancelTimer);
                 ensembleBtn.addEventListener('mouseleave', cancelTimer);
                 ensembleBtn.addEventListener('touchend', (e) => {
+                    touchStarted = false;
                     const timerWasRunning = pressTimer !== null;
                     cancelTimer();
-                    // If long press just completed, prevent the click event that follows
+                    // Only prevent click if long press actually completed (timer finished, flag set)
+                    // For quick taps, timer will be cancelled and flag will be false, so click fires normally
                     if (longPressJustCompleted) {
                         e.preventDefault();
-                    } else if (!timerWasRunning) {
-                        // Timer already completed (pressTimer is null), check flag after brief delay
-                        setTimeout(() => {
-                            if (longPressJustCompleted) {
-                                // Flag was set, but click might have already fired - that's handled in click handler
-                            }
-                        }, 50);
+                        // Reset flag after a delay to allow next interaction
+                        setTimeout(() => { longPressJustCompleted = false; }, 100);
                     }
+                    // If it was a quick tap (not long press), allow click event to fire normally
                 });
-                ensembleBtn.addEventListener('touchcancel', cancelTimer);
-                ensembleBtn.addEventListener('touchmove', cancelTimer);
+                ensembleBtn.addEventListener('touchcancel', (e) => {
+                    touchStarted = false;
+                    cancelTimer();
+                });
+                ensembleBtn.addEventListener('touchmove', (e) => {
+                    // Cancel long press if user moves finger
+                    cancelTimer();
+                });
                 // Click toggles activation (green border) - but ignore if long press just completed
                 ensembleBtn.addEventListener('click', (e) => {
+                    // On mobile, check if this was from a touch that completed a long press
                     if (longPressJustCompleted) {
                         e.preventDefault();
                         e.stopPropagation();
+                        // Reset flag immediately so next click works
+                        longPressJustCompleted = false;
                         return;
                     }
+                    // Toggle activation (works for both mouse and touch)
                     window.ensembleEnabled = !window.ensembleEnabled;
                     ensembleBtn.classList.toggle('on', window.ensembleEnabled);
                     // If enabling, set multiActive false until simulate decides
