@@ -25,8 +25,8 @@ function updateEndPinVisibility() {
         // Hide pins when zoomed out too far; scale pins with zoom
         const minZoomToShow = 7;
         const visible = zoom >= minZoomToShow;
-        // Scaling relative to zoom (base scale is 3.0)
-        let scale = Math.max(0, (zoom - 6) * 0.4 + 1.8); // zoom 7 ~2.2, 10 ~3.4, 12 ~4.2
+        // Scaling relative to zoom (base scale is 7.5)
+        let scale = Math.max(0, (zoom - 6) * 1.0 + 5.5); // zoom 7 ~5.5, 10 ~8.5, 12 ~10.5
         if (!visible) scale = 0;
 
         function setMarkerScale(marker) {
@@ -34,7 +34,7 @@ function updateEndPinVisibility() {
             if (typeof marker.setVisible === 'function') marker.setVisible(visible);
             const icon = marker.getIcon && marker.getIcon();
             if (icon && typeof icon === 'object') {
-                const newIcon = Object.assign({}, icon, { scale: Math.max(2.0, Math.min(4.5, scale)) });
+                const newIcon = Object.assign({}, icon, { scale: Math.max(5.0, Math.min(11.0, scale)) });
                 // If hidden, set very small scale to avoid flashes
                 if (!visible) newIcon.scale = 0.01;
                 try { marker.setIcon(newIcon); } catch (e) {}
@@ -320,7 +320,7 @@ function setEndPin(endPoint, color, hourOffset) {
             fillOpacity: 0.9,
             strokeColor: outlineColor,
             strokeWeight: 2,
-            scale: 3.0
+            scale: 7.5
         };
         var marker = new google.maps.Marker({
             position: position,
