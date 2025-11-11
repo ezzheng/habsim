@@ -91,7 +91,7 @@ _CACHE_DIR = Path(os.environ.get("HABSIM_CACHE_DIR", _default_cache_dir))
 _CACHE_DIR.mkdir(parents=True, exist_ok=True)
 _CACHE_LOCK = threading.Lock()
 _CHUNK_SIZE = 1024 * 1024
-_MAX_CACHED_FILES = 25  # Allow 25 weather files (~7.7GB) - handles full 21-model ensemble + buffer
+_MAX_CACHED_FILES = 30  # Allow 30 weather files (~9.2GB) - increased for 32GB RAM system, handles full 21-model ensemble + buffer
 
 # Cache for whichgefs to reduce connection pool pressure (updates every 6 hours, but status checks every 5 seconds)
 _whichgefs_cache = {"value": None, "timestamp": 0, "ttl": 60}  # Cache for 60 seconds
