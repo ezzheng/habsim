@@ -347,11 +347,15 @@ def set_ensemble_mode(duration_seconds=60):
     
     Also triggers background prefetching of all 21 models for faster ensemble runs.
     """
+    import os
     global _current_max_cache, _ensemble_mode_until, _ensemble_mode_started
     now = time.time()
     MAX_ENSEMBLE_DURATION = 300  # 5 minutes maximum
     is_new_ensemble = False
+    worker_pid = os.getpid()
     with _cache_lock:
+        old_cache_limit = _current_max_cache
+        old_until = _ensemble_mode_until
         _current_max_cache = MAX_SIMULATOR_CACHE_ENSEMBLE
         # Track when ensemble mode first started
         if _ensemble_mode_until <= now:
@@ -359,16 +363,18 @@ def set_ensemble_mode(duration_seconds=60):
             is_new_ensemble = True
             _ensemble_mode_started = now
             _ensemble_mode_until = now + duration_seconds
+            logging.info(f"[WORKER {worker_pid}] Ensemble mode ACTIVATED: cache_limit {old_cache_limit} -> {MAX_SIMULATOR_CACHE_ENSEMBLE}, expires at {_ensemble_mode_until:.1f} (in {duration_seconds}s)")
         else:
             # Already in ensemble mode, check if we've exceeded max duration
             if now - _ensemble_mode_started >= MAX_ENSEMBLE_DURATION:
                 # Exceeded max duration - don't extend, let it expire
-                logging.info(f"Ensemble mode exceeded max duration ({MAX_ENSEMBLE_DURATION}s), not extending further")
+                logging.info(f"[WORKER {worker_pid}] Ensemble mode exceeded max duration ({MAX_ENSEMBLE_DURATION}s), not extending further")
             else:
                 # Extend ensemble mode but respect max duration
                 new_expiry = now + duration_seconds
                 max_allowed_expiry = _ensemble_mode_started + MAX_ENSEMBLE_DURATION
                 _ensemble_mode_until = min(new_expiry, max_allowed_expiry)
+                logging.info(f"[WORKER {worker_pid}] Ensemble mode EXTENDED: expires at {_ensemble_mode_until:.1f} (was {old_until:.1f})")
     
     # Prefetch all models in background when starting new ensemble mode
     if is_new_ensemble:

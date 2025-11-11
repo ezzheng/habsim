@@ -349,7 +349,9 @@ def cache_status():
             'expires_at': ensemble_until,
             'seconds_until_expiry': max(0, round(ensemble_until - now, 1)) if ensemble_until > 0 else 0,
             'seconds_since_start': round(now - ensemble_started, 1) if ensemble_started > 0 else 0,
-            'note': 'Status is per-worker. Ensemble requests may be handled by a different worker (check worker_pid in logs).'
+            'seconds_since_expiry': round(now - ensemble_until, 1) if ensemble_until > 0 and now > ensemble_until else None,
+            'note': 'Status is per-worker. Ensemble requests may be handled by a different worker (check worker_pid in logs).',
+            'diagnostic': f'This worker (PID {os.getpid()}) has ensemble_started={ensemble_started}, ensemble_until={ensemble_until}, cache_limit={cache_limit}'
         },
         'idle_cleanup': {
             'idle_duration_seconds': round(idle_duration, 1),
@@ -630,8 +632,10 @@ def spaceshot():
     # Single model requests (/sim/singlezpb) do NOT extend ensemble mode.
     # Legacy /sim/montecarlo endpoint also does NOT extend ensemble mode.
     # This prevents memory bloat from non-ensemble requests.
+    worker_pid = os.getpid()
+    app.logger.info(f"[WORKER {worker_pid}] /sim/spaceshot called - activating ensemble mode on THIS worker")
     simulate.set_ensemble_mode(duration_seconds=60)
-    app.logger.info("Ensemble mode enabled: expanded cache for 60 seconds (ensemble + Monte Carlo)")
+    app.logger.info(f"[WORKER {worker_pid}] Ensemble mode enabled: expanded cache for 60 seconds (ensemble + Monte Carlo)")
     
     # Build model list based on configuration
     model_ids = []
