@@ -4,11 +4,22 @@ import math
 import random
 import bisect
 import numpy as np
-from rasterio.transform import Affine, rowcol
 from windfile import WindFile
 from datetime import timedelta, datetime
 EARTH_RADIUS = float(6.371e6)
 import pdb
+
+def _rowcol_from_transform(rows, cols, lon, lat):
+    """
+    Equivalent to rasterio.transform.rowcol() for our global grid transform.
+    Inverts Affine(360.0/cols, 0, -180.0, 0, -180.0/rows, 90.0) to convert lon/lat to row/col.
+    """
+    # For transform: x = a*col + c, y = e*row + f
+    # Invert: col = (x - c) / a, row = (y - f) / e
+    # Where: a = 360.0/cols, c = -180.0, e = -180.0/rows, f = 90.0
+    col_f = (lon + 180.0) / (360.0 / cols)
+    row_f = (lat - 90.0) / (-180.0 / rows)
+    return float(row_f), float(col_f)
 
 class Trajectory(list):
     # superclass of list
@@ -88,12 +99,6 @@ class ElevationFile:
         # Use memory-mapped read-only mode to avoid loading 430MB into RAM
         # This allows OS to manage page cache instead of Python holding full array
         self.data = np.load(path, mmap_mode='r')
-        rows, cols = self.data.shape
-        # Create transform for global grid: (-180, 90) at upper left, covering full globe
-        # Affine(a, b, c, d, e, f) where:
-        # a = pixel width in x (lon), b = rotation, c = upper left x (lon)
-        # d = rotation, e = pixel height in y (lat, negative for north-up), f = upper left y (lat)
-        self.transform = Affine(360.0 / cols, 0, -180.0, 0, -180.0 / rows, 90.0)
 
     def elev(self, lat, lon): # return elevation
         """
@@ -102,7 +107,8 @@ class ElevationFile:
         rows, cols = self.data.shape
         
         # Convert lat/lon to fractional row/col
-        row_f, col_f = rowcol(self.transform, lon, lat, op=float)
+        # Equivalent to: row_f, col_f = rowcol(transform, lon, lat, op=float)
+        row_f, col_f = _rowcol_from_transform(rows, cols, lon, lat)
         
         # Clamp to valid range
         row_f = np.clip(row_f, 0, rows - 1)

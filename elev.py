@@ -1,42 +1,47 @@
 import numpy as np
 import threading
-from rasterio.transform import Affine, rowcol
 from gefs import load_gefs
 
 _ELEV_DATA = None
 _ELEV_SHAPE = None
-_ELEV_TRANSFORM = None
 _ELEV_LOCK = threading.Lock()
+
+def _rowcol_from_transform(rows, cols, lon, lat):
+    """
+    Equivalent to rasterio.transform.rowcol() for our global grid transform.
+    Inverts Affine(360.0/cols, 0, -180.0, 0, -180.0/rows, 90.0) to convert lon/lat to row/col.
+    """
+    # For transform: x = a*col + c, y = e*row + f
+    # Invert: col = (x - c) / a, row = (y - f) / e
+    # Where: a = 360.0/cols, c = -180.0, e = -180.0/rows, f = 90.0
+    col_f = (lon + 180.0) / (360.0 / cols)
+    row_f = (lat - 90.0) / (-180.0 / rows)
+    return float(row_f), float(col_f)
 
 def _get_elev_data():
     """Load elevation data once with memory mapping for efficiency."""
-    global _ELEV_DATA, _ELEV_SHAPE, _ELEV_TRANSFORM
+    global _ELEV_DATA, _ELEV_SHAPE
     if _ELEV_DATA is not None:
-        return _ELEV_DATA, _ELEV_SHAPE, _ELEV_TRANSFORM
+        return _ELEV_DATA, _ELEV_SHAPE
     with _ELEV_LOCK:
         if _ELEV_DATA is not None:
-            return _ELEV_DATA, _ELEV_SHAPE, _ELEV_TRANSFORM
+            return _ELEV_DATA, _ELEV_SHAPE
         # Use load_gefs to handle S3 downloads and caching
         path = load_gefs('worldelev.npy')
         _ELEV_DATA = np.load(path, mmap_mode='r')
         _ELEV_SHAPE = _ELEV_DATA.shape
-        rows, cols = _ELEV_SHAPE
-        # Create transform for global grid: (-180, 90) at upper left, covering full globe
-        # Affine(a, b, c, d, e, f) where:
-        # a = pixel width in x (lon), b = rotation, c = upper left x (lon)
-        # d = rotation, e = pixel height in y (lat, negative for north-up), f = upper left y (lat)
-        _ELEV_TRANSFORM = Affine(360.0 / cols, 0, -180.0, 0, -180.0 / rows, 90.0)
-        return _ELEV_DATA, _ELEV_SHAPE, _ELEV_TRANSFORM
+        return _ELEV_DATA, _ELEV_SHAPE
 
 def getElevation(lat, lon):
     """
     Returns interpolated elevation (meters) for given lat/lon using downsampled array.
     """
-    data, shape, transform = _get_elev_data()
+    data, shape = _get_elev_data()
     rows, cols = shape
     
     # Convert lat/lon to fractional row/col
-    row_f, col_f = rowcol(transform, lon, lat, op=float)
+    # Equivalent to: row_f, col_f = rowcol(transform, lon, lat, op=float)
+    row_f, col_f = _rowcol_from_transform(rows, cols, lon, lat)
     
     # Clamp to valid range
     row_f = np.clip(row_f, 0, rows - 1)
