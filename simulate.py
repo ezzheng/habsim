@@ -3,6 +3,7 @@ import math
 import gc
 import elev
 import hashlib
+import os
 import time
 import threading
 import logging
@@ -347,7 +348,6 @@ def set_ensemble_mode(duration_seconds=60):
     
     Also triggers background prefetching of all 21 models for faster ensemble runs.
     """
-    import os
     global _current_max_cache, _ensemble_mode_until, _ensemble_mode_started
     now = time.time()
     MAX_ENSEMBLE_DURATION = 300  # 5 minutes maximum
@@ -541,10 +541,14 @@ def _trim_cache_to_normal():
             if ensemble_exceeded_max:
                 _ensemble_mode_until = 0  # Force expiration even if still being extended
                 _ensemble_mode_started = 0
+                worker_pid = os.getpid()
+                print(f"[WORKER {worker_pid}] Ensemble mode exceeded max duration (5 min): forcing cache trim to normal", flush=True)
                 logging.info("Ensemble mode exceeded max duration (5 min): forcing cache trim to normal (5 simulators)")
             else:
                 _ensemble_mode_until = 0
                 _ensemble_mode_started = 0
+                worker_pid = os.getpid()
+                print(f"[WORKER {worker_pid}] Ensemble mode expired: cache limit reset to normal", flush=True)
                 logging.info("Ensemble mode expired: cache limit reset to normal (5 simulators)")
         
         # If cache is too large, trim to normal size keeping most recently used
@@ -594,6 +598,8 @@ def _trim_cache_to_normal():
                     _cleanup_queue[model_id] = (simulator, cleanup_time)
             
             if evicted_count > 0:
+                worker_pid = os.getpid()
+                print(f"[WORKER {worker_pid}] Trimmed cache: evicted {evicted_count} simulators, keeping {len(_simulator_cache)} (limit: {_current_max_cache})", flush=True)
                 logging.info(f"Trimmed cache: evicted {evicted_count} simulators, keeping {len(_simulator_cache)} (limit: {_current_max_cache})")
                 if rss_before is not None:
                     logging.info(f"Memory before trim: {rss_before:.1f} MB RSS")
@@ -659,6 +665,8 @@ def _periodic_cache_trim():
             if should_run_idle_cleanup:
                 with _cache_lock:
                     cache_size = len(_simulator_cache)
+                worker_pid = os.getpid()
+                print(f"[WORKER {worker_pid}] Idle threshold reached: {idle_duration:.1f}s without user activity, cache size: {cache_size}, triggering cleanup", flush=True)
                 logging.info(f"Idle threshold reached: {idle_duration:.1f}s without user activity, cache size: {cache_size}, triggering cleanup")
                 try:
                     cleanup_ran = _idle_memory_cleanup(idle_duration)
@@ -666,6 +674,7 @@ def _periodic_cache_trim():
                     # This prevents infinite retries when cleanup can't run
                     _last_idle_cleanup = time.time()
                     if cleanup_ran:
+                        print(f"[WORKER {worker_pid}] Idle cleanup completed successfully", flush=True)
                         logging.info(f"Idle cleanup completed successfully, marked timestamp: {_last_idle_cleanup}")
                     else:
                         logging.info(f"Idle cleanup was skipped (lock held or models in use), but marked as attempted: {_last_idle_cleanup}")
