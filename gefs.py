@@ -515,12 +515,26 @@ def _ensure_cached(file_name: str) -> Path:
         
         for attempt in range(max_retries):
             # Clean up any incomplete temp files from previous attempts
+            # BUT: Only clean up OUR OWN temp files (from previous attempts by this worker)
+            # Don't delete temp files that might belong to other workers
             tmp_path = cache_path.with_suffix(cache_path.suffix + ".tmp")
-            if tmp_path.exists():
+            if tmp_path.exists() and attempt > 0:
+                # Only clean up on retry attempts (attempt > 0)
+                # This ensures we're cleaning up OUR OWN failed attempt, not another worker's
                 try:
-                    tmp_path.unlink()
-                    logging.debug(f"Cleaned up incomplete download: {file_name}")
-                except:
+                    # Check file age - if it's very old (>5 minutes), it's probably stale
+                    import time
+                    file_age = time.time() - tmp_path.stat().st_mtime
+                    if file_age > 300:  # 5 minutes
+                        tmp_path.unlink()
+                        logging.debug(f"Cleaned up stale incomplete download: {file_name} (age: {file_age:.0f}s)")
+                    elif attempt == 1:
+                        # On first retry, clean up our own temp file from previous attempt
+                        tmp_path.unlink()
+                        logging.debug(f"Cleaned up incomplete download from previous attempt: {file_name}")
+                except Exception as e:
+                    # File might have been deleted by another worker or doesn't exist
+                    logging.debug(f"Could not clean up temp file {file_name}.tmp: {e}")
                     pass
             
             try:
@@ -762,14 +776,17 @@ def _ensure_cached(file_name: str) -> Path:
         # Rename temp file to final cache location
         # Double-check temp file exists right before rename to avoid race conditions
         try:
-            if not tmp_path.exists():
+            # Atomic check: try to get file size (this will fail if file doesn't exist)
+            # This is more reliable than exists() + stat() which has a race condition window
+            try:
+                tmp_size = tmp_path.stat().st_size
+            except FileNotFoundError:
                 raise IOError(f"Download failed: temp file {tmp_path} was deleted before rename (race condition or cleanup issue)")
             
-            # Get file size before rename for verification
-            tmp_size = tmp_path.stat().st_size
             if tmp_size == 0:
                 raise IOError(f"Download failed: temp file {file_name} is empty before rename")
             
+            # Perform rename atomically
             os.replace(tmp_path, cache_path)
             
             # Verify final file exists and is not empty
