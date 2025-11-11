@@ -6,17 +6,11 @@ _ELEV_DATA = None
 _ELEV_SHAPE = None
 _ELEV_LOCK = threading.Lock()
 
-def _rowcol_from_transform(rows, cols, lon, lat):
-    """
-    Equivalent to rasterio.transform.rowcol() for our global grid transform.
-    Inverts Affine(360.0/cols, 0, -180.0, 0, -180.0/rows, 90.0) to convert lon/lat to row/col.
-    """
-    # For transform: x = a*col + c, y = e*row + f
-    # Invert: col = (x - c) / a, row = (y - f) / e
-    # Where: a = 360.0/cols, c = -180.0, e = -180.0/rows, f = 90.0
-    col_f = (lon + 180.0) / (360.0 / cols)
-    row_f = (lat - 90.0) / (-180.0 / rows)
-    return float(row_f), float(col_f)
+# Bounds derived from raster metadata (see save_elevation.ipynb)
+MIN_LON = -180.00013888888893
+MAX_LON = 179.99985967111152
+MAX_LAT = 83.99986041511133
+MIN_LAT = -90.0001388888889
 
 def _get_elev_data():
     """Load elevation data once with memory mapping for efficiency."""
@@ -34,34 +28,29 @@ def _get_elev_data():
 
 def getElevation(lat, lon):
     """
-    Returns interpolated elevation (meters) for given lat/lon using downsampled array.
+    Return bilinearly interpolated elevation for (lat, lon).
     """
     data, shape = _get_elev_data()
     rows, cols = shape
-    
-    # Convert lat/lon to fractional row/col
-    # Equivalent to: row_f, col_f = rowcol(transform, lon, lat, op=float)
-    row_f, col_f = _rowcol_from_transform(rows, cols, lon, lat)
-    
-    # Clamp to valid range
-    row_f = np.clip(row_f, 0, rows - 1)
-    col_f = np.clip(col_f, 0, cols - 1)
-    
-    # Integer indices and fractional offsets
-    row0 = int(np.floor(row_f))
-    col0 = int(np.floor(col_f))
-    row1 = min(row0 + 1, rows - 1)
-    col1 = min(col0 + 1, cols - 1)
-    dr = row_f - row0
-    dc = col_f - col0
-    
+    # Clamp input to data bounds and normalize lon
+    lat = np.clip(lat, MIN_LAT, MAX_LAT)
+    lon = ((lon + 180) % 360) - 180
+    # Fractional column/row using metadata bounds
+    col_f = (lon - MIN_LON) / (MAX_LON - MIN_LON) * (cols - 1)
+    row_f = (MAX_LAT - lat) / (MAX_LAT - MIN_LAT) * (rows - 1)
+    # Integer indices and fractions
+    x0 = int(np.floor(col_f))
+    y0 = int(np.floor(row_f))
+    x1 = min(x0 + 1, cols - 1)
+    y1 = min(y0 + 1, rows - 1)
+    fx = col_f - x0
+    fy = row_f - y0
     # Bilinear interpolation
-    v00 = data[row0, col0]
-    v10 = data[row0, col1]
-    v01 = data[row1, col0]
-    v11 = data[row1, col1]
-    v_top = v00 * (1 - dc) + v10 * dc
-    v_bottom = v01 * (1 - dc) + v11 * dc
-    elev = v_top * (1 - dr) + v_bottom * dr
-    
+    v00 = data[y0, x0]
+    v10 = data[y0, x1]
+    v01 = data[y1, x0]
+    v11 = data[y1, x1]
+    v_top = v00 * (1 - fx) + v10 * fx
+    v_bottom = v01 * (1 - fx) + v11 * fx
+    elev = v_top * (1 - fy) + v_bottom * fy
     return float(max(0, elev))

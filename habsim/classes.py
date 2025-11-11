@@ -99,38 +99,38 @@ class ElevationFile:
         # Use memory-mapped read-only mode to avoid loading 430MB into RAM
         # This allows OS to manage page cache instead of Python holding full array
         self.data = np.load(path, mmap_mode='r')
+        # Bounds derived from raster metadata (see save_elevation.ipynb)
+        self.MIN_LON = -180.00013888888893
+        self.MAX_LON = 179.99985967111152
+        self.MAX_LAT = 83.99986041511133
+        self.MIN_LAT = -90.0001388888889
 
     def elev(self, lat, lon): # return elevation
         """
-        Returns interpolated elevation (meters) for given lat/lon using downsampled array.
+        Return bilinearly interpolated elevation for (lat, lon).
         """
         rows, cols = self.data.shape
-        
-        # Convert lat/lon to fractional row/col
-        # Equivalent to: row_f, col_f = rowcol(transform, lon, lat, op=float)
-        row_f, col_f = _rowcol_from_transform(rows, cols, lon, lat)
-        
-        # Clamp to valid range
-        row_f = np.clip(row_f, 0, rows - 1)
-        col_f = np.clip(col_f, 0, cols - 1)
-        
-        # Integer indices and fractional offsets
-        row0 = int(np.floor(row_f))
-        col0 = int(np.floor(col_f))
-        row1 = min(row0 + 1, rows - 1)
-        col1 = min(col0 + 1, cols - 1)
-        dr = row_f - row0
-        dc = col_f - col0
-        
+        # Clamp input to data bounds and normalize lon
+        lat = np.clip(lat, self.MIN_LAT, self.MAX_LAT)
+        lon = ((lon + 180) % 360) - 180
+        # Fractional column/row using metadata bounds
+        col_f = (lon - self.MIN_LON) / (self.MAX_LON - self.MIN_LON) * (cols - 1)
+        row_f = (self.MAX_LAT - lat) / (self.MAX_LAT - self.MIN_LAT) * (rows - 1)
+        # Integer indices and fractions
+        x0 = int(np.floor(col_f))
+        y0 = int(np.floor(row_f))
+        x1 = min(x0 + 1, cols - 1)
+        y1 = min(y0 + 1, rows - 1)
+        fx = col_f - x0
+        fy = row_f - y0
         # Bilinear interpolation
-        v00 = self.data[row0, col0]
-        v10 = self.data[row0, col1]
-        v01 = self.data[row1, col0]
-        v11 = self.data[row1, col1]
-        v_top = v00 * (1 - dc) + v10 * dc
-        v_bottom = v01 * (1 - dc) + v11 * dc
-        elev = v_top * (1 - dr) + v_bottom * dr
-        
+        v00 = self.data[y0, x0]
+        v10 = self.data[y0, x1]
+        v01 = self.data[y1, x0]
+        v11 = self.data[y1, x1]
+        v_top = v00 * (1 - fx) + v10 * fx
+        v_bottom = v01 * (1 - fx) + v11 * fx
+        elev = v_top * (1 - fy) + v_bottom * fy
         return float(max(0, elev))
 
 class Balloon:
