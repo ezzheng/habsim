@@ -458,14 +458,14 @@ def singlezpb(timestamp, lat, lon, alt, equil, eqtime, asc, desc, model, coeffic
         # Simulate ascent phase:
         # - timestamp, lat, lon: Starting position and time
         # - asc: Ascent rate (positive, m/s)
-        # - 240: Step size (seconds) - simulation time interval
+        # - 120: Step size (seconds) - simulation time interval
         # - dur: Maximum duration (hours) - stops when burst altitude reached
         # - alt: Starting altitude (meters)
         # - model: Weather model to use
         # - elevation=False: Skip ground elevation checks during ascent (balloon is going up,
         #   so it won't hit ground. This avoids unnecessary elevation lookups for performance)
         # - coefficient: Floating coefficient - scales horizontal wind effect
-        rise = simulate.simulate(timestamp, lat, lon, asc, 240, dur, alt, model, coefficient=coefficient, elevation=False)
+        rise = simulate.simulate(timestamp, lat, lon, asc, 120, dur, alt, model, coefficient=coefficient, elevation=False)
         
         # Extract final position from ascent phase to use as starting point for coast
         if len(rise) > 0:
@@ -478,14 +478,14 @@ def singlezpb(timestamp, lat, lon, alt, equil, eqtime, asc, desc, model, coeffic
         # Simulate coast/floating phase:
         # - timestamp, lat, lon, alt: Final position from ascent (at burst altitude)
         # - 0: Vertical rate (m/s) - zero means floating, no vertical movement
-        # - 240: Step size (seconds) - same as ascent
+        # - 120: Step size (seconds) - same as ascent
         # - eqtime: Duration (hours) - how long to float at equilibrium
         # - alt: Current altitude (burst altitude, stays constant)
         # - model: Same weather model
         # - elevation=True (default): Use elevation checks (though not needed at high altitude,
         #   this is the default behavior for consistency)
         # - coefficient: Floating coefficient - scales horizontal wind effect
-        coast = simulate.simulate(timestamp, lat, lon, 0, 240, eqtime, alt, model, coefficient=coefficient)
+        coast = simulate.simulate(timestamp, lat, lon, 0, 120, eqtime, alt, model, coefficient=coefficient)
         
         # Extract final position from coast phase to use as starting point for descent
         if len(coast) > 0:
@@ -507,7 +507,7 @@ def singlezpb(timestamp, lat, lon, alt, equil, eqtime, asc, desc, model, coeffic
         # Simulate descent phase:
         # - timestamp, lat, lon: Final position from coast phase
         # - -desc: Descent rate (negative, m/s) - negative because descending
-        # - 240: Step size (seconds) - same as other phases
+        # - 120: Step size (seconds) - same as other phases
         # - dur: Maximum duration (hours) - estimate, actual stop is when ground is hit
         # - alt: Starting altitude (burst altitude)
         # - model: Same weather model
@@ -515,7 +515,7 @@ def singlezpb(timestamp, lat, lon, alt, equil, eqtime, asc, desc, model, coeffic
         #   when balloon.alt < ground_elevation. This ensures the balloon stops at the actual
         #   ground level (which may be above sea level) rather than continuing below ground.
         # - coefficient: Floating coefficient - scales horizontal wind effect
-        fall = simulate.simulate(timestamp, lat, lon, -desc, 240, dur, alt, model, coefficient=coefficient)
+        fall = simulate.simulate(timestamp, lat, lon, -desc, 120, dur, alt, model, coefficient=coefficient)
         
         # Return all three trajectory phases
         return (rise, coast, fall)
