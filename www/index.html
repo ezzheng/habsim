@@ -1287,8 +1287,11 @@
             const isMultiMode = (window.ensembleEnabled === true) && (window.ensembleMultiLabel === true);
             
             // Collect all parameters
+            const launchDate = `${(document.getElementById('mo')?.value || '').padStart(2,'0')}/${(document.getElementById('day')?.value || '').padStart(2,'0')}/${document.getElementById('yr')?.value || ''}`;
+            const launchTime = `${(document.getElementById('hr')?.value || '').padStart(2,'0')}:${(document.getElementById('mn')?.value || '').padStart(2,'0')} ${tzAbbr}`;
             const params = {
-                [isMultiMode ? 'First Launch Time' : 'Launch Time']: `${(document.getElementById('mo')?.value || '').padStart(2,'0')}/${(document.getElementById('day')?.value || '').padStart(2,'0')}/${document.getElementById('yr')?.value || ''} ${(document.getElementById('hr')?.value || '').padStart(2,'0')}:${(document.getElementById('mn')?.value || '').padStart(2,'0')} ${tzAbbr}`,
+                [isMultiMode ? 'First Launch Date' : 'Launch Date']: launchDate,
+                [isMultiMode ? 'First Launch Time' : 'Launch Time']: launchTime,
                 'Launch Latitude': document.getElementById('lat')?.value || 'N/A',
                 'Launch Longitude': document.getElementById('lon')?.value || 'N/A',
                 'Launch Altitude': (document.getElementById('alt')?.value || 'N/A') + ' m',
