@@ -370,11 +370,12 @@ function getElev() {
         })
         .then((result) => {
             if (typeof result === 'number') {
-                document.getElementById("alt").value = result;
+                document.getElementById("alt").value = Math.round(result);
             } else if (result && result.error) {
                 throw new Error(result.error);
             } else {
-                document.getElementById("alt").value = result;
+                var val = parseFloat(result);
+                document.getElementById("alt").value = isNaN(val) ? result : Math.round(val);
             }
         })
         .catch(err => {
