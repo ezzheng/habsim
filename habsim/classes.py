@@ -262,15 +262,35 @@ class Simulator:
             step_history.append(self.step(balloon, 0, coefficient))
         end_time = balloon.time + timedelta(hours=dur)
         while (end_time - balloon.time).total_seconds() > 1:
+            # Calculate step size (may be reduced if hitting end_time or ground)
+            current_step_size = step_size
             if balloon.time + timedelta(seconds=step_size) >= end_time:
-                step_size = (end_time - balloon.time).seconds
-            newRecord = self.step(balloon, step_size, coefficient)
+                current_step_size = (end_time - balloon.time).seconds
+            
+            # If descending and elevation checking is enabled, check if we'll hit ground
+            if elevation and balloon.ascent_rate < 0:  # Descending
+                current_ground_elev = self.elev_file.elev(*balloon.location)
+                # Estimate altitude after full step (simple linear estimate)
+                estimated_alt_after = balloon.alt + balloon.ascent_rate * current_step_size
+                
+                # If we would go below ground, calculate exact time to reach ground
+                if estimated_alt_after < current_ground_elev:
+                    # Calculate time to reach ground: (alt - ground_elev) / descent_rate
+                    # descent_rate is negative, so we need absolute value
+                    time_to_ground = (balloon.alt - current_ground_elev) / abs(balloon.ascent_rate)
+                    # Use smaller of: time to ground or remaining step time
+                    current_step_size = min(time_to_ground, current_step_size)
+                    # Minimum step size to avoid numerical issues
+                    if current_step_size < 0.1:
+                        current_step_size = 0.1
+            
+            newRecord = self.step(balloon, current_step_size, coefficient)
 
             #total_airtime += step_size
             step_history.append(newRecord)
             
-            # break if balloon hits the ground (last record will be below ground)
-            if elevation and balloon.alt < self.elev_file.elev(*balloon.location):
+            # break if balloon hits the ground (check after step to catch any overshoot)
+            if elevation and balloon.alt <= self.elev_file.elev(*balloon.location):
                 break
         return step_history
 
