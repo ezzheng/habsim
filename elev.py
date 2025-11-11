@@ -9,12 +9,15 @@ _RESOLUTION_LAT = 60  # points per degree for latitude (will be calculated from 
 _RESOLUTION_LON = 60  # points per degree for longitude (will be calculated from file)
 
 def _get_elev_data():
-    global _ELEV_DATA, _ELEV_SHAPE
-    if _ELEV_DATA is not None:
-        return _ELEV_DATA, _ELEV_SHAPE
+    global _ELEV_DATA, _ELEV_SHAPE, _RESOLUTION_LAT, _RESOLUTION_LON
     with _ELEV_LOCK:
-        if _ELEV_DATA is not None:
+        if _ELEV_DATA is not None and _ELEV_SHAPE is not None:
+            # Data already loaded - always recalculate resolutions from shape to ensure correctness
+            actual_height, actual_width = _ELEV_SHAPE
+            _RESOLUTION_LAT = actual_height / 180.0
+            _RESOLUTION_LON = actual_width / 360.0
             return _ELEV_DATA, _ELEV_SHAPE
+        
         # Use memory-mapped read to avoid loading the whole array into RAM repeatedly
         try:
             path = load_gefs('worldelev.npy')
@@ -41,7 +44,6 @@ def _get_elev_data():
             
             # Use the actual resolutions from the file (they may differ)
             # This ensures coordinate calculations match the actual data
-            global _RESOLUTION_LAT, _RESOLUTION_LON
             _RESOLUTION_LAT = actual_resolution_lat
             _RESOLUTION_LON = actual_resolution_lon
             
