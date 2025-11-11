@@ -721,25 +721,25 @@ def _ensure_cached(file_name: str) -> Path:
                         logging.error(f"Download failed with fatal error for {file_name}: {e}")
                         if lock_fd:
                             try:
-                                import fcntl
-                                fcntl.flock(lock_fd.fileno(), fcntl.LOCK_UN)
-                                lock_fd.close()
-                            except:
-                                pass
-                    raise
-                else:
-                        # Retryable error - log and retry
-                        logging.warning(f"Download attempt {attempt + 1}/{max_retries} failed for {file_name}: {e}. Retrying in {wait_time}s...")
-                        time.sleep(wait_time)
-                except Exception as e:
-                    # Unexpected errors - treat as retryable but log as warning
-                    # Clean up incomplete download
-                    if tmp_path.exists():
-                        try:
-                            tmp_path.unlink()
+                            import fcntl
+                            fcntl.flock(lock_fd.fileno(), fcntl.LOCK_UN)
+                            lock_fd.close()
                         except:
                             pass
-                    last_error = e
+                    raise
+                else:
+                    # Retryable error - log and retry
+                    logging.warning(f"Download attempt {attempt + 1}/{max_retries} failed for {file_name}: {e}. Retrying in {wait_time}s...")
+                    time.sleep(wait_time)
+            except Exception as e:
+                # Unexpected errors - treat as retryable but log as warning
+                # Clean up incomplete download
+                if tmp_path.exists():
+                    try:
+                        tmp_path.unlink()
+                    except:
+                        pass
+                last_error = e
             else:
                 # Last attempt failed - release lock and clean up
                 logging.error(f"Download failed after {max_retries} attempts for {file_name}: {last_error}")
