@@ -899,7 +899,7 @@ def _start_cache_trim_thread():
         worker_pid = os.getpid()
         thread = threading.Thread(target=_periodic_cache_trim, daemon=True, name=f"CacheTrimThread-{worker_pid}")
         thread.start()
-        print(f"[WORKER {worker_pid}] Cache trim background thread started (idle cleanup will run after 120s of inactivity)", flush=True)
+        # Logging handled by post_fork hook for workers, module-level call logs for master process
         logging.info(f"[WORKER {worker_pid}] Cache trim background thread started (idle cleanup will run after 120s of inactivity)")
 
 # Start cleanup thread immediately when module is imported (after function definition)

@@ -66,9 +66,13 @@ def post_fork(server, worker):
     # We need to reset the flag so each worker can start its own periodic cleanup thread
     try:
         import simulate
+        was_already_started = simulate._cache_trim_thread_started
         simulate._cache_trim_thread_started = False
         simulate._start_cache_trim_thread()
-        print(f"[WORKER {worker.pid}] Cache trim thread started in post_fork hook", flush=True)
+        if was_already_started:
+            print(f"[WORKER {worker.pid}] Cache trim thread restarted in post_fork hook (was already started before fork)", flush=True)
+        else:
+            print(f"[WORKER {worker.pid}] Cache trim thread started in post_fork hook", flush=True)
     except Exception as e:
         print(f"[WORKER {worker.pid}] Failed to start cache trim thread in post_fork: {e}", flush=True)
 
