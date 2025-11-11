@@ -24,8 +24,20 @@ def _get_elev_data():
             return _ELEV_DATA, _ELEV_SHAPE
         # Use memory-mapped read to avoid loading the whole array into RAM repeatedly
         path = load_gefs('worldelev.npy')
+        if path is None:
+            import logging
+            logging.error("load_gefs('worldelev.npy') returned None")
+            return None, None
         _ELEV_DATA = np.load(path, mmap_mode='r')
+        if _ELEV_DATA is None:
+            import logging
+            logging.error("np.load() returned None for worldelev.npy")
+            return None, None
         _ELEV_SHAPE = _ELEV_DATA.shape
+        if _ELEV_SHAPE is None or len(_ELEV_SHAPE) != 2:
+            import logging
+            logging.error(f"Invalid shape for worldelev.npy: {_ELEV_SHAPE}")
+            return None, None
         # Calculate actual resolution from file dimensions
         actual_height, actual_width = _ELEV_SHAPE
         _RESOLUTION_LAT = actual_height / 180.0  # points per degree for latitude
@@ -35,6 +47,12 @@ def _get_elev_data():
 def getElevation(lat, lon):
     """Get elevation with bilinear interpolation for smoother results"""
     data, shape = _get_elev_data()
+    
+    # Check if data loaded successfully
+    if data is None or shape is None:
+        import logging
+        logging.error(f"Elevation data not loaded for ({lat}, {lon})")
+        return 0
     
     # Convert lat/lon to grid coordinates (continuous)
     # Use separate resolutions for latitude and longitude
@@ -70,7 +88,9 @@ def getElevation(lat, lon):
         result = v0 * (1 - fy) + v1 * fy
         
         return max(0, round(result, 2))
-    except Exception:
+    except Exception as e:
+        import logging
+        logging.warning(f"Bilinear interpolation failed for ({lat}, {lon}): {e}, falling back to nearest neighbor")
         # Fallback to nearest neighbor if interpolation fails
         x = int(round(x_float))
         y = int(round(y_float))
@@ -78,5 +98,7 @@ def getElevation(lat, lon):
         y = max(0, min(y, shape[0] - 1))
         try:
             return max(0, round(float(data[y, x]), 2))
-        except Exception:
+        except Exception as e2:
+            import logging
+            logging.error(f"Nearest neighbor fallback also failed for ({lat}, {lon}): {e2}")
             return 0

@@ -996,10 +996,12 @@ def elevation():
     app.logger.info(f"[ELEV ENDPOINT] Called with lat={lat}, lon={lon}")
     try:
         result = elev.getElevation(lat, lon)
-        app.logger.info(f"[ELEV ENDPOINT] getElevation returned: {result}")
+        app.logger.info(f"[ELEV ENDPOINT] getElevation returned: {result} (type: {type(result)})")
         return str(result)
     except Exception as e:
         app.logger.error(f"[ELEV ENDPOINT] Exception in getElevation: {e}", exc_info=True)
+        import traceback
+        traceback.print_exc()
         return "0"
 
 
