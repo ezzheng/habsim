@@ -45,9 +45,6 @@ import elev
 from datetime import datetime, timezone
 from gefs import listdir_gefs, open_gefs
 
-# Set app.logger for elev module so logs appear
-elev.set_logger(app.logger)
-
 # Import simulate at module level to avoid circular import issues
 import simulate
 import downloader  # Import to access model configuration
