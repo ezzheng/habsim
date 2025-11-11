@@ -102,20 +102,30 @@ class ElevationFile:
                 logging.error("ElevationFile.__init__(): np.load() returned None")
                 self.resolution = 60
                 return
-            # Validate array dimensions match expected resolution (60 points per degree)
-            # Expected: 180 degrees latitude * 60 = 10800 points, 360 degrees longitude * 60 = 21600 points
-            expected_height = 180 * self.resolution  # 10800 for 60 resolution
-            expected_width = 360 * self.resolution   # 21600 for 60 resolution
+            # Calculate actual resolution from file dimensions
+            # Resolution = points per degree = array_size / degrees
             actual_shape = self.data.shape
             if len(actual_shape) != 2:
                 import logging
                 logging.error(f"ElevationFile.__init__(): Invalid shape {actual_shape}, expected 2D array")
                 self.data = None
-            elif actual_shape[0] != expected_height or actual_shape[1] != expected_width:
+                self.resolution = 60
+                return
+            
+            actual_height, actual_width = actual_shape
+            actual_resolution_lat = actual_height / 180.0  # points per degree for latitude
+            actual_resolution_lon = actual_width / 360.0  # points per degree for longitude
+            
+            # Use the actual resolution from the file instead of hardcoded value
+            # This ensures coordinate calculations match the actual data
+            if abs(actual_resolution_lat - actual_resolution_lon) > 0.01:
                 import logging
-                logging.error(f"ElevationFile.__init__(): Resolution mismatch! Expected shape ({expected_height}, {expected_width}) for resolution {self.resolution}, but got {actual_shape}")
-                # Don't set data to None - still try to use it, but log the error
-            self.resolution = 60
+                logging.warning(f"ElevationFile: file has different lat/lon resolutions: {actual_resolution_lat} vs {actual_resolution_lon}, using lat resolution")
+            self.resolution = actual_resolution_lat
+            
+            if abs(self.resolution - 60) > 1:
+                import logging
+                logging.warning(f"ElevationFile: file resolution ({self.resolution:.2f} points/degree) differs from expected (60). Using actual resolution from file.")
         except Exception as e:
             import logging
             logging.error(f"ElevationFile.__init__(): Failed to load elevation data from {path}: {e}", exc_info=True)

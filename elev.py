@@ -32,18 +32,23 @@ def _get_elev_data():
                 logging.error(f"Invalid shape for worldelev.npy: {_ELEV_SHAPE}")
                 return None, None
             
-            # Validate array dimensions match expected resolution (60 points per degree)
-            # Expected: 180 degrees latitude * 60 = 10800 points, 360 degrees longitude * 60 = 21600 points
-            expected_height = 180 * _RESOLUTION  # 10800 for 60 resolution
-            expected_width = 360 * _RESOLUTION   # 21600 for 60 resolution
+            # Calculate actual resolution from file dimensions
+            # Resolution = points per degree = array_size / degrees
             actual_height, actual_width = _ELEV_SHAPE
+            actual_resolution_lat = actual_height / 180.0  # points per degree for latitude
+            actual_resolution_lon = actual_width / 360.0  # points per degree for longitude
             
-            if actual_height != expected_height or actual_width != expected_width:
+            # Use the actual resolution from the file instead of hardcoded value
+            # This ensures coordinate calculations match the actual data
+            global _RESOLUTION
+            if abs(actual_resolution_lat - actual_resolution_lon) > 0.01:
                 import logging
-                logging.error(f"Resolution mismatch! Expected shape ({expected_height}, {expected_width}) for resolution {_RESOLUTION}, but got {_ELEV_SHAPE}. "
-                            f"This will cause incorrect elevation lookups. Check if data file was created with different resolution.")
-                # Don't return None - still try to use it, but log the error
-                # The coordinate calculation might still work if we adjust, but it's risky
+                logging.warning(f"Elevation file has different lat/lon resolutions: {actual_resolution_lat} vs {actual_resolution_lon}, using lat resolution")
+            _RESOLUTION = actual_resolution_lat
+            
+            if abs(_RESOLUTION - 60) > 1:
+                import logging
+                logging.warning(f"Elevation file resolution ({_RESOLUTION:.2f} points/degree) differs from expected (60). Using actual resolution from file.")
             
             return _ELEV_DATA, _ELEV_SHAPE
         except Exception as e:
