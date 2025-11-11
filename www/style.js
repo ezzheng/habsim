@@ -124,7 +124,7 @@ function setDefaultValues() {
     if (descEl && (!descEl.value || descEl.value.trim() === "")) descEl.value = 8;
     if (coeffEl && (!coeffEl.value || coeffEl.value.trim() === "")) coeffEl.value = 0.5;
     if (durEl && (!durEl.value || durEl.value.trim() === "")) durEl.value = 48;
-    if (stepEl && (!stepEl.value || stepEl.value.trim() === "")) stepEl.value = 240;
+            if (stepEl && (!stepEl.value || stepEl.value.trim() === "")) stepEl.value = 120;
     if (eqtimeEl && (!eqtimeEl.value || eqtimeEl.value.trim() === "")) eqtimeEl.value = 1;
 }
 
@@ -212,7 +212,7 @@ function setMode(mode){
         const stepEl = document.getElementById("step");
         if (coeffEl && (!coeffEl.value || coeffEl.value.trim() === "")) coeffEl.value = 0.5;
         if (durEl && (!durEl.value || durEl.value.trim() === "")) durEl.value = 48;
-        if (stepEl && (!stepEl.value || stepEl.value.trim() === "")) stepEl.value = 240;
+            if (stepEl && (!stepEl.value || stepEl.value.trim() === "")) stepEl.value = 120;
         var remain = document.getElementById("timeremain");
         if (remain) remain.style.visibility = "hidden";
     }
