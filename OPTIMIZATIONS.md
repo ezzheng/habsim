@@ -318,3 +318,4 @@ HABSIM uses a multi-layer caching strategy optimized for Railway (max 32GB RAM, 
 - **Idle cleanup**: If no further requests arrive for ~3 min, `_idle_memory_cleanup()` purges remaining simulators, runs multi-pass GC, and calls `malloc_trim(0)` so RSS returns close to cold-start levels.
 - **Disk cache**: Wind files stay on disk, so the next ensemble rebuilds simulators from local storage instead of redownloading from S3 via `get_object()`.
 - **Maximum Duration**: Even with consecutive ensemble calls, cache will force trim after 5 minutes to prevent memory bloat
+- **Race condition protection**: Defensive checks at multiple points prevent crashes if simulators are cleaned up during use
