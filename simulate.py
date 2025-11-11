@@ -478,12 +478,14 @@ def _process_cleanup_queue():
     
     # Clean up outside the lock
     for model_id, simulator in to_cleanup:
-        # Double-check model is not in use
+        # CRITICAL: Triple-check model is not in use (most important check)
         with _in_use_lock:
             if model_id in _in_use_models:
-                # Still in use - reschedule cleanup
+                # Still in use - reschedule cleanup with longer delay
+                worker_pid = os.getpid()
+                print(f"[WORKER {worker_pid}] Cleanup queue: model {model_id} still in-use, rescheduling cleanup", flush=True)
                 with _cleanup_queue_lock:
-                    _cleanup_queue[model_id] = (simulator, now + _CLEANUP_DELAY)
+                    _cleanup_queue[model_id] = (simulator, now + _CLEANUP_DELAY * 2)  # Double delay if still in use
                 continue
         
         # CRITICAL: Also check if simulator is still in cache (shouldn't be, but safety check)
@@ -491,10 +493,21 @@ def _process_cleanup_queue():
         with _cache_lock:
             if model_id in _simulator_cache:
                 # Simulator is back in cache - don't clean it up, remove from queue
+                worker_pid = os.getpid()
+                print(f"[WORKER {worker_pid}] Cleanup queue: model {model_id} is back in cache, skipping cleanup", flush=True)
                 logging.warning(f"Simulator {model_id} is back in cache, skipping cleanup (was re-added after eviction)")
                 continue
         
+        # Final safety check: verify simulator hasn't been cleaned up already
+        if simulator is None or (hasattr(simulator, 'wind_file') and simulator.wind_file is None):
+            # Already cleaned up - skip
+            worker_pid = os.getpid()
+            print(f"[WORKER {worker_pid}] Cleanup queue: model {model_id} already cleaned up, skipping", flush=True)
+            continue
+        
         # Clean up the simulator (it's already removed from cache and not in use)
+        worker_pid = os.getpid()
+        print(f"[WORKER {worker_pid}] Cleanup queue: cleaning up model {model_id} (not in-use, not in cache)", flush=True)
         _cleanup_simulator_safely(simulator)
         
         # Explicitly break reference
@@ -1023,6 +1036,12 @@ def simulate(simtime, lat, lon, rate, step, max_duration, alt, model, coefficien
         # Additional defensive check right before use (double protection against race conditions)
         if not hasattr(simulator, 'wind_file') or simulator.wind_file is None:
             logging.error(f"Simulator {model} wind_file became None between retrieval and use - race condition")
+            raise RuntimeError(f"Simulator {model} is invalid: wind_file is None (cleaned up during use)")
+        
+        # CRITICAL: Verify simulator is still valid right before simulation starts
+        # This is the last chance to catch cleanup races before they cause errors
+        if not hasattr(simulator, 'wind_file') or simulator.wind_file is None:
+            logging.error(f"Simulator {model} wind_file is None right before simulate() - race condition detected!")
             raise RuntimeError(f"Simulator {model} is invalid: wind_file is None (cleaned up during use)")
         
         traj = simulator.simulate(balloon, step, coefficient, elevation, dur=max_duration)

@@ -565,6 +565,8 @@ def singlezpb(timestamp, lat, lon, alt, equil, eqtime, asc, desc, model, coeffic
 @app.route('/sim/singlezpb')
 @cache_for(600)  # Cache for 10 minutes
 def singlezpbh():
+    worker_pid = os.getpid()
+    print(f"[WORKER {worker_pid}] /sim/singlezpb called", flush=True)
     args = request.args
     timestamp = datetime.utcfromtimestamp(float(args['timestamp'])).replace(tzinfo=timezone.utc)
     lat, lon = float(args['lat']), float(args['lon'])
