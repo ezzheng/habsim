@@ -176,17 +176,19 @@ def record_activity():
 
 
 def _idle_memory_cleanup(idle_duration):
-    """Deep cleanup when the worker has been idle for a while."""
+    """Deep cleanup when the worker has been idle for a while.
+    Returns True if cleanup ran, False if skipped (lock held or models in use)."""
     global _current_max_cache, _ensemble_mode_until, _ensemble_mode_started, elevation_cache, currgefs, _cleanup_queue
     if not _idle_cleanup_lock.acquire(blocking=False):
-        return
+        logging.debug(f"Idle cleanup skipped: lock already held by another thread")
+        return False
     try:
         # Safety check: ensure no simulators are currently in use
         with _in_use_lock:
             models_in_use = _in_use_models.copy()
         if models_in_use:
             logging.warning(f"Idle cleanup skipped: {len(models_in_use)} models still in use: {models_in_use}")
-            return
+            return False
         
         rss_before = _get_rss_memory_mb()
         if rss_before is not None:
@@ -256,6 +258,7 @@ def _idle_memory_cleanup(idle_duration):
             logging.info(f"Idle cleanup complete: released {evicted} simulator(s); RSS: {rss_after:.1f} MB (released {rss_delta:.1f} MB)")
         else:
             logging.info(f"Idle cleanup complete: released {evicted} simulator(s); cache and elevation reset to baseline")
+        return True
     finally:
         _idle_cleanup_lock.release()
 
@@ -618,9 +621,13 @@ def _periodic_cache_trim():
                 try:
                     with _cache_lock:
                         cache_size = len(_simulator_cache)
-                    _idle_memory_cleanup(idle_duration)
+                    cleanup_ran = _idle_memory_cleanup(idle_duration)
+                    # Always mark cleanup as attempted, even if skipped
                     _last_idle_cleanup = time.time()
-                    logging.info(f"Emergency idle cleanup completed successfully")
+                    if cleanup_ran:
+                        logging.info(f"Emergency idle cleanup completed successfully")
+                    else:
+                        logging.warning(f"Emergency cleanup was skipped (lock held or models in use), but marked as attempted")
                 except Exception as emergency_error:
                     logging.error(f"Emergency cleanup failed: {emergency_error}", exc_info=True)
                     _last_idle_cleanup = time.time()  # Mark as attempted
@@ -633,9 +640,14 @@ def _periodic_cache_trim():
                     cache_size = len(_simulator_cache)
                 logging.info(f"Idle threshold reached: {idle_duration:.1f}s without user activity, cache size: {cache_size}, triggering cleanup")
                 try:
-                    _idle_memory_cleanup(idle_duration)
+                    cleanup_ran = _idle_memory_cleanup(idle_duration)
+                    # Always mark cleanup as attempted, even if it was skipped (lock held or models in use)
+                    # This prevents infinite retries when cleanup can't run
                     _last_idle_cleanup = time.time()
-                    logging.info(f"Idle cleanup completed successfully, marked timestamp: {_last_idle_cleanup}")
+                    if cleanup_ran:
+                        logging.info(f"Idle cleanup completed successfully, marked timestamp: {_last_idle_cleanup}")
+                    else:
+                        logging.info(f"Idle cleanup was skipped (lock held or models in use), but marked as attempted: {_last_idle_cleanup}")
                 except Exception as cleanup_error:
                     logging.error(f"Idle cleanup failed: {cleanup_error}", exc_info=True)
                     # Still mark as attempted to prevent repeated failures
