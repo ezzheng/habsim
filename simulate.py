@@ -549,15 +549,28 @@ def _trim_cache_to_normal():
             
             # Evict models not in the keep list
             models_to_evict = set(_simulator_cache.keys()) - models_to_keep
-            # Do not evict models currently in use
+            # CRITICAL: Do not evict models currently in use - check BEFORE removing from cache
             with _in_use_lock:
-                models_to_evict = {m for m in models_to_evict if m not in _in_use_models}
+                models_in_use_set = _in_use_models.copy()
+            models_to_evict = {m for m in models_to_evict if m not in models_in_use_set}
+            
+            # Double-check: don't evict if any models are in use (safety check)
+            if models_in_use_set and models_to_evict:
+                # Re-check in-use models right before eviction to prevent race conditions
+                with _in_use_lock:
+                    models_to_evict = {m for m in models_to_evict if m not in _in_use_models}
+            
             evicted_count = len(models_to_evict)
             
             # Remove from cache immediately, but schedule delayed cleanup
             # This ensures simulators are only cleaned up after they're definitely not in use
             simulators_to_cleanup = []
             for model_id in models_to_evict:
+                # Final safety check: don't remove if somehow marked as in-use (shouldn't happen, but be safe)
+                with _in_use_lock:
+                    if model_id in _in_use_models:
+                        logging.warning(f"Skipping eviction of model {model_id} - marked as in-use during eviction")
+                        continue
                 simulator = _simulator_cache.get(model_id)
                 if simulator:
                     simulators_to_cleanup.append((model_id, simulator))
@@ -835,13 +848,21 @@ def _get_simulator(model):
         if refresh_time > 1.0:
             logging.warning(f"[PERF] refresh() slow: time={refresh_time:.2f}s")
     
-    # Trim cache if ensemble mode expired (called on every simulator access)
-    # Optimized to be fast - only does expensive work if actually needed
-    trim_start = time.time()
-    _trim_cache_to_normal()
-    trim_time = time.time() - trim_start
-    if trim_time > 0.5:  # Reduced threshold since it should be much faster now
-        logging.warning(f"[PERF] _trim_cache_to_normal() slow: time={trim_time:.2f}s")
+    # Only trim cache if ensemble mode has expired (don't trim during active use)
+    # The background thread handles periodic trimming, so we only check here if ensemble expired
+    now = time.time()
+    with _cache_lock:
+        ensemble_expired = _ensemble_mode_until > 0 and now > _ensemble_mode_until
+        ensemble_exceeded_max = _ensemble_mode_started > 0 and (now - _ensemble_mode_started) >= 300  # 5 minutes
+        cache_too_large = len(_simulator_cache) > MAX_SIMULATOR_CACHE_ENSEMBLE  # Safety check for memory leaks
+    # Only trim if ensemble mode expired or cache is dangerously large (memory leak protection)
+    # Don't trim during normal operation - let background thread handle it
+    if ensemble_expired or ensemble_exceeded_max or cache_too_large:
+        trim_start = time.time()
+        _trim_cache_to_normal()
+        trim_time = time.time() - trim_start
+        if trim_time > 0.5:
+            logging.warning(f"[PERF] _trim_cache_to_normal() slow: time={trim_time:.2f}s")
     
     with _cache_lock:
         # Fast path: return cached simulator if available
