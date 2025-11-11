@@ -606,8 +606,14 @@ def _periodic_cache_trim():
             should_run_idle_cleanup = (idle_duration >= _IDLE_RESET_TIMEOUT and 
                                       (time_since_last_cleanup >= _IDLE_CLEAN_COOLDOWN or _last_idle_cleanup == 0))
             
+            # Log when cleanup should run but hasn't (for debugging)
+            if should_run_idle_cleanup and _last_idle_cleanup == 0 and idle_duration >= _IDLE_RESET_TIMEOUT + 10:
+                logging.warning(f"Idle cleanup should run but hasn't: idle={idle_duration:.1f}s, threshold={_IDLE_RESET_TIMEOUT}s, last_cleanup={_last_idle_cleanup}")
+            
             # Emergency cleanup: if idle >600s and cleanup never ran, force it immediately
-            if idle_duration > 600 and _last_idle_cleanup == 0:
+            # Also trigger if idle >180s and cleanup never ran (lower threshold for first cleanup)
+            if ((idle_duration > 600 and _last_idle_cleanup == 0) or 
+                (idle_duration > 180 and _last_idle_cleanup == 0 and idle_duration >= _IDLE_RESET_TIMEOUT + 60)):
                 logging.error(f"EMERGENCY: Worker idle for {idle_duration:.1f}s but cleanup never ran! Forcing cleanup now.")
                 try:
                     with _cache_lock:

@@ -265,10 +265,13 @@ def cache_status():
     with simulate._cache_lock:
         cache_size = len(simulate._simulator_cache)
         cache_limit = simulate._current_max_cache
-        ensemble_active = simulate._is_ensemble_mode()
+        ensemble_active_by_timestamp = simulate._is_ensemble_mode()
         ensemble_until = simulate._ensemble_mode_until
         ensemble_started = simulate._ensemble_mode_started
         cached_models = list(simulate._simulator_cache.keys())
+        # Ensemble mode is active if timestamp says so OR if cache limit is expanded to ensemble size
+        # (cache limit stays expanded until trim happens, even if timestamp expired)
+        ensemble_active = ensemble_active_by_timestamp or (cache_limit >= simulate.MAX_SIMULATOR_CACHE_ENSEMBLE)
     
     now = time.time()
     
