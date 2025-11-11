@@ -278,7 +278,7 @@ HABSIM uses a multi-layer caching strategy optimized for Railway (max 32GB RAM, 
 
 ### Single Model Runs (Default)
 - **Speed**: ~5-10 seconds
-- **RAM**: ~3.5-4GB (worst case: 4 workers × 750MB), typically ~1.5-2GB (models distributed across workers)
+- **RAM**: ~6.5-7GB (worst case: 4 workers × 1.5GB), typically ~2-3GB (models distributed across workers)
 - **CPU**: Minimal (single request processing)
 - **Why Fast**: Model 0 pre-warmed in RAM, files on disk
 

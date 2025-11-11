@@ -19,8 +19,8 @@ This is an offshoot of the prediction server developed for the Stanford Space In
   - Routes: `/sim/singlezpb`, `/sim/spaceshot`, `/sim/elev`, `/sim/models`, `/sim/progress`, `/sim/cache-status`
   - Startup helpers: `_start_cache_trim_thread()` (ensures background trim thread is running) and `_prewarm_cache()` (builds simulator for model 0, memory-maps `worldelev.npy`)
   - `ThreadPoolExecutor(max_workers=32)` drives ensemble + Monte Carlo runs (441 simulations)
-  - Dynamic cache expansion: ensemble requests lift simulator cap to 25; trims back to 5 after the run finishes
-  - Idle watchdog: workers that stay idle for 3 minutes trigger a deep cleanup (drops simulators, keeps `worldelev.npy` mapped, runs multi-pass GC + `malloc_trim`)
+  - Dynamic cache expansion: ensemble requests lift simulator cap to 30; trims back to 10 after the run finishes
+  - Idle watchdog: workers that stay idle for 2 minutes trigger a deep cleanup (drops simulators, keeps `worldelev.npy` mapped, runs multi-pass GC + `malloc_trim`)
   - `Cache-Control` headers + `flask-compress` for smaller responses; `/sim/cache-status` surfaces cache/memory state for debugging
 
 ### Simulation Engine
