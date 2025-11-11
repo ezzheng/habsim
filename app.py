@@ -301,29 +301,55 @@ def cache_status():
     last_idle_cleanup = getattr(simulate, '_last_idle_cleanup', 0)
     last_cleanup = now - last_idle_cleanup if last_idle_cleanup > 0 else 0
     
+    # Determine why cache might be empty or why ensemble mode might not show as active
+    cache_status_note = None
+    if cache_size == 0:
+        if ensemble_active:
+            cache_status_note = 'Cache is empty but ensemble mode is active (simulators may be building)'
+        elif idle_duration > 300:
+            cache_status_note = f'Cache is empty - worker has been idle for {round(idle_duration)}s (may have been cleaned up)'
+        else:
+            cache_status_note = 'Cache is empty - this worker may not have handled any requests yet'
+    elif cache_limit == simulate.MAX_SIMULATOR_CACHE_NORMAL and cache_size < cache_limit:
+        cache_status_note = 'Cache is below normal limit (normal operation)'
+    elif cache_limit >= simulate.MAX_SIMULATOR_CACHE_ENSEMBLE:
+        if not ensemble_active_by_timestamp:
+            cache_status_note = 'Cache limit is expanded but timestamp expired (trim pending)'
+        else:
+            cache_status_note = 'Ensemble mode active - cache limit expanded'
+    
     status = {
         'worker_pid': os.getpid(),
+        'worker_info': {
+            'pid': os.getpid(),
+            'note': 'Gunicorn uses 4 workers. Each request may hit a different worker. This shows status for THIS worker only.',
+            'tip': 'Refresh multiple times to see different workers, or check logs for which worker handled your request'
+        },
         'cache': {
             'size': cache_size,
             'limit': cache_limit,
             'normal_limit': simulate.MAX_SIMULATOR_CACHE_NORMAL,
             'ensemble_limit': simulate.MAX_SIMULATOR_CACHE_ENSEMBLE,
-            'cached_models': cached_models
+            'cached_models': cached_models,
+            'status_note': cache_status_note
         },
         'disk_cache': {
             'directory': cache_dir_path,
             'directory_exists': cache_dir_exists,
             'persistent_volume_mounted': persistent_volume_mounted,
             'files_count': disk_cache_files,
-            'size_mb': round(disk_cache_size_mb, 2)
+            'size_mb': round(disk_cache_size_mb, 2),
+            'note': 'Disk cache is shared across all workers (persistent volume)'
         },
         'ensemble_mode': {
             'active': ensemble_active,
+            'active_by_timestamp': ensemble_active_by_timestamp,
+            'active_by_cache_limit': cache_limit >= simulate.MAX_SIMULATOR_CACHE_ENSEMBLE,
             'started': ensemble_started,
             'expires_at': ensemble_until,
             'seconds_until_expiry': max(0, round(ensemble_until - now, 1)) if ensemble_until > 0 else 0,
             'seconds_since_start': round(now - ensemble_started, 1) if ensemble_started > 0 else 0,
-            'note': 'Status is per-worker (Gunicorn multi-worker). This worker may differ from the one handling ensemble requests.'
+            'note': 'Status is per-worker. Ensemble requests may be handled by a different worker (check worker_pid in logs).'
         },
         'idle_cleanup': {
             'idle_duration_seconds': round(idle_duration, 1),
@@ -332,7 +358,7 @@ def cache_status():
             'last_cleanup_ago_seconds': round(last_cleanup, 1) if last_cleanup > 0 else None,
             'cleanup_has_run': last_idle_cleanup > 0
         },
-        'note': 'Check Railway metrics for actual memory usage'
+        'note': 'Check Railway metrics for actual memory usage. This endpoint shows status for ONE worker only.'
     }
     
     return jsonify(status)
