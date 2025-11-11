@@ -251,20 +251,21 @@ function setEndPin(endPoint, color, hourOffset) {
             clearEndPin();
         }
         var position = new google.maps.LatLng(endPoint[1], endPoint[2]);
-        // Square icon
+        // Square icon - larger scale for easier clicking
         var icon = {
             path: "M -8,-8 L 8,-8 L 8,8 L -8,8 Z",
             fillColor: color || "#000000",
             fillOpacity: 0.9,
             strokeColor: "#ffffff",
             strokeWeight: 2,
-            scale: 1
+            scale: 1.5
         };
         var marker = new google.maps.Marker({
             position: position,
             map: map,
             icon: icon,
-            zIndex: 1500
+            zIndex: 1500,
+            optimized: false  // Better click detection
         });
         // Build info content on click (no hover)
         var date = new Date(endPoint[0] * 1000);
@@ -295,9 +296,13 @@ function setEndPin(endPoint, color, hourOffset) {
                 launchTime = launchTime + (hourOffset * 3600);
             }
             var ldate = new Date(launchTime * 1000);
+            var lyear = ldate.getFullYear();
+            var lmonth = "0" + (ldate.getMonth() + 1);
+            var lday = "0" + ldate.getDate();
             var lhours = ldate.getHours();
             var lminutes = "0" + ldate.getMinutes();
             var lseconds = "0" + ldate.getSeconds();
+            var lformattedDate = lyear + '-' + lmonth.substr(-2) + '-' + lday.substr(-2);
             var lformattedTime = lhours + ':' + lminutes.substr(-2) + ':' + lseconds.substr(-2);
             var llat = parseFloat(lastLaunchInfo.lat);
             var llon = parseFloat(lastLaunchInfo.lon);
@@ -305,9 +310,9 @@ function setEndPin(endPoint, color, hourOffset) {
             var lroundedLon = isNaN(llon) ? lastLaunchInfo.lon : llon.toFixed(5);
             launchSection = ''
                 + '<div style="margin-top: 6px; padding-top: 6px; border-top: 1px solid #eee;">'
-                + '<div style="margin-bottom: 4px;"><strong style="font-weight: 600;">Launch time:</strong> ' + lformattedTime + ' ' + tzAbbr + '</div>'
-                + '<div style="margin-bottom: 4px;"><strong style="font-weight: 600;">Launch lat:</strong> ' + lroundedLat + '°</div>'
-                + '<div><strong style="font-weight: 600;">Launch lon:</strong> ' + lroundedLon + '°</div>'
+                + '<div style="margin-bottom: 4px;"><strong style="font-weight: 600;">Launch time:</strong> ' + lformattedDate + ' ' + lformattedTime + ' ' + tzAbbr + '</div>'
+                + '<div style="margin-bottom: 4px;"><strong style="font-weight: 600;">Launch Lat:</strong> ' + lroundedLat + '°</div>'
+                + '<div><strong style="font-weight: 600;">Launch Lon:</strong> ' + lroundedLon + '°</div>'
                 + '</div>';
         }
         var contentHtml = '<div style="font-family: -apple-system, BlinkMacSystemFont, \'Segoe UI\', Roboto, \'Helvetica Neue\', Arial, sans-serif; padding: 6px 8px; line-height: 1.5;">'
@@ -426,7 +431,8 @@ function addMultiEndPin(payload, hourOffset, color) {
                     const prevLen = currpaths.length;
                     // Track model id for rawpathcache alignment; use model 0 for multi
                     try { rawpathcacheModels.push(0); } catch (e) {}
-                    makepaths(btype, allpaths, false);
+                    // Use isControl=true to make multi trajectories thicker (like normal simulate mode)
+                    makepaths(btype, allpaths, true);
                     const newPolys = currpaths.slice(prevLen);
                     marker._polylines = newPolys;
                     marker._rawIndex = (rawpathcache && rawpathcache.length) ? rawpathcache.length - 1 : null;
@@ -1451,7 +1457,7 @@ async function simulate() {
                                 geodesic: true,
                                 strokeColor: '#808080',
                                 strokeOpacity: 0.6,
-                                strokeWeight: 3,
+                                strokeWeight: 6,
                                 zIndex: 1200
                             });
                             multiConnectorPath.setMap(map);

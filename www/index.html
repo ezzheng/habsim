@@ -1264,16 +1264,19 @@
             // Get timezone abbreviation for display
             const tzAbbr = getTimezoneAbbreviation();
             
+            // Check if multi mode is active
+            const isMultiMode = (window.ensembleEnabled === true) && (window.ensembleMultiLabel === true);
+            
             // Collect all parameters
             const params = {
-                'Launch Time': `${(document.getElementById('mo')?.value || '').padStart(2,'0')}/${(document.getElementById('day')?.value || '').padStart(2,'0')}/${document.getElementById('yr')?.value || ''} ${(document.getElementById('hr')?.value || '').padStart(2,'0')}:${(document.getElementById('mn')?.value || '').padStart(2,'0')} ${tzAbbr}`,
+                [isMultiMode ? 'First Launch Time' : 'Launch Time']: `${(document.getElementById('mo')?.value || '').padStart(2,'0')}/${(document.getElementById('day')?.value || '').padStart(2,'0')}/${document.getElementById('yr')?.value || ''} ${(document.getElementById('hr')?.value || '').padStart(2,'0')}:${(document.getElementById('mn')?.value || '').padStart(2,'0')} ${tzAbbr}`,
                 'Launch Latitude': document.getElementById('lat')?.value || 'N/A',
                 'Launch Longitude': document.getElementById('lon')?.value || 'N/A',
                 'Launch Altitude': (document.getElementById('alt')?.value || 'N/A') + ' m',
                 'Equilibrium Altitude': (document.getElementById('equil')?.value || 'N/A') + ' m',
                 'Ascent Rate': (document.getElementById('asc')?.value || 'N/A') + ' m/s',
                 'Descent Rate': (document.getElementById('desc')?.value || 'N/A') + ' m/s',
-                'Mode': window.ensembleEnabled ? 'Ensemble (21 models)' : 'Single Model'
+                'Mode': isMultiMode ? 'Multi' : (window.ensembleEnabled ? 'Ensemble (21 models)' : 'Single Model')
             };
             
             // Build parameter HTML
@@ -1308,7 +1311,8 @@
                 const mn = (document.getElementById('mn')?.value || '').padStart(2,'0');
                 const lat = (document.getElementById('lat')?.value || '').replace(/\s+/g,'');
                 const lon = (document.getElementById('lon')?.value || '').replace(/\s+/g,'');
-                const modeStr = window.ensembleEnabled ? 'Ensemble' : 'Single';
+                const isMultiMode = (window.ensembleEnabled === true) && (window.ensembleMultiLabel === true);
+                const modeStr = isMultiMode ? 'Multi' : (window.ensembleEnabled ? 'Ensemble' : 'Single');
                 const safeTime = `${yr}-${mo}-${day}_${hr}-${mn}`;
                 const titleStr = `HABSIM_${modeStr}_${safeTime}_${lat}_${lon}`.replace(/__+/g,'_');
                 window.__origTitle = window.__origTitle || document.title;
