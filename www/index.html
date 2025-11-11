@@ -1161,27 +1161,72 @@
             // Ensemble toggle - defaults to OFF
             const ensembleBtn = document.getElementById('ensemble-toggle');
             if (ensembleBtn) {
-                // Click toggles activation (green border)
-                ensembleBtn.addEventListener('click', () => {
+                // Long-press toggles label between Ensemble and Multi
+                let pressTimer = null;
+                let longPressJustCompleted = false;
+                const longPressMs = 500;
+                const cancelTimer = () => { 
+                    if (pressTimer) { 
+                        clearTimeout(pressTimer); 
+                        pressTimer = null; 
+                    } 
+                };
+                const completeLongPress = () => {
+                    pressTimer = null; // Clear timer reference
+                    window.ensembleMultiLabel = !window.ensembleMultiLabel;
+                    ensembleBtn.textContent = window.ensembleMultiLabel ? 'Multi' : 'Ensemble';
+                    // After long press switches state, turn button OFF (user must click to enable)
+                    window.ensembleEnabled = false;
+                    ensembleBtn.classList.remove('on');
+                    window.multiActive = false;
+                    longPressJustCompleted = true;
+                    // Reset flag after a short delay to allow click handler to check it
+                    setTimeout(() => { longPressJustCompleted = false; }, 300);
+                };
+                const startLongPress = () => {
+                    cancelTimer();
+                    longPressJustCompleted = false;
+                    pressTimer = setTimeout(completeLongPress, longPressMs);
+                };
+                // Support both mouse and touch events for mobile
+                ensembleBtn.addEventListener('mousedown', (e) => {
+                    e.preventDefault(); // Prevent text selection
+                    startLongPress();
+                });
+                ensembleBtn.addEventListener('touchstart', (e) => {
+                    e.preventDefault(); // Prevent scrolling/zooming
+                    startLongPress();
+                });
+                ensembleBtn.addEventListener('mouseup', cancelTimer);
+                ensembleBtn.addEventListener('mouseleave', cancelTimer);
+                ensembleBtn.addEventListener('touchend', (e) => {
+                    const timerWasRunning = pressTimer !== null;
+                    cancelTimer();
+                    // If long press just completed, prevent the click event that follows
+                    if (longPressJustCompleted) {
+                        e.preventDefault();
+                    } else if (!timerWasRunning) {
+                        // Timer already completed (pressTimer is null), check flag after brief delay
+                        setTimeout(() => {
+                            if (longPressJustCompleted) {
+                                // Flag was set, but click might have already fired - that's handled in click handler
+                            }
+                        }, 50);
+                    }
+                });
+                ensembleBtn.addEventListener('touchcancel', cancelTimer);
+                ensembleBtn.addEventListener('touchmove', cancelTimer);
+                // Click toggles activation (green border) - but ignore if long press just completed
+                ensembleBtn.addEventListener('click', (e) => {
+                    if (longPressJustCompleted) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        return;
+                    }
                     window.ensembleEnabled = !window.ensembleEnabled;
                     ensembleBtn.classList.toggle('on', window.ensembleEnabled);
                     // If enabling, set multiActive false until simulate decides
                     if (!window.ensembleEnabled) window.multiActive = false;
-                });
-                // Long-press toggles label between Ensemble and Multi
-                let pressTimer = null;
-                const longPressMs = 500;
-                const cancelTimer = () => { if (pressTimer) { clearTimeout(pressTimer); pressTimer = null; } };
-                ensembleBtn.addEventListener('mousedown', () => {
-                    cancelTimer();
-                    pressTimer = setTimeout(() => {
-                        window.ensembleMultiLabel = !window.ensembleMultiLabel;
-                        ensembleBtn.textContent = window.ensembleMultiLabel ? 'Multi' : 'Ensemble';
-                        // Do not auto-enable; user must click to toggle active state
-                    }, longPressMs);
-                });
-                ['mouseup','mouseleave','touchend','touchcancel'].forEach(evt => {
-                    ensembleBtn.addEventListener(evt, cancelTimer);
                 });
             }
             // Initialize ensemble state to false (not enabled by default)

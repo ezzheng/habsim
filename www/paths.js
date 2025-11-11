@@ -230,8 +230,9 @@ function clearEndPin() {
     } catch (e) {}
 }
 
-function setEndPin(endPoint, color) {
+function setEndPin(endPoint, color, hourOffset) {
     // endPoint: [time, lat, lon, alt]
+    // hourOffset: optional hour offset for multi mode (adds to launch time)
     try {
         // In Multi mode, we keep all end pins; otherwise clear previous
         if (!window.multiActive) {
@@ -276,7 +277,12 @@ function setEndPin(endPoint, color) {
         var roundedLon = isNaN(lon) ? endPoint[2] : lon.toFixed(5);
         var launchSection = '';
         if (lastLaunchInfo && typeof lastLaunchInfo.time === 'number') {
-            var ldate = new Date(lastLaunchInfo.time * 1000);
+            // Adjust launch time by hour offset if in multi mode
+            var launchTime = lastLaunchInfo.time;
+            if (typeof hourOffset === 'number' && hourOffset !== 0) {
+                launchTime = launchTime + (hourOffset * 3600);
+            }
+            var ldate = new Date(launchTime * 1000);
             var lhours = ldate.getHours();
             var lminutes = "0" + ldate.getMinutes();
             var lseconds = "0" + ldate.getSeconds();
@@ -341,7 +347,7 @@ function setEndPin(endPoint, color) {
 circleslist = [];
 
 // Shows a single compound path, but is mode-aware
-function showpath(path, modelId = 1) {
+function showpath(path, modelId = 1, hourOffset = null) {
     switch(btype) {
         case 'STANDARD':
             var rise = path[0];
@@ -384,7 +390,7 @@ function showpath(path, modelId = 1) {
             var isEnsemble = Array.isArray(window.availableModels) && window.availableModels.length > 1 && (window.ensembleEnabled || false);
             if (!isEnsemble || modelId === 0) {
                 // Set a single end pin: always for single; in ensemble only for control model
-                setEndPin(endPoint, getcolor('0'));
+                setEndPin(endPoint, getcolor('0'), hourOffset);
             }
         }
     } catch (e) {
@@ -1307,7 +1313,8 @@ async function simulate() {
                             const payload = await response.json();
                             if (payload && payload !== "error" && payload !== "alt error") {
                                 // Always treat as model 0 for coloring/end-pin logic
-                                showpath(payload, 0);
+                                // Pass hour offset so end pin shows correct launch time
+                                showpath(payload, 0, h);
                             }
                         } catch (e) {
                             if (e && (e.name === 'AbortError' || e.message === 'The operation was aborted.')) {
