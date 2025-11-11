@@ -598,7 +598,9 @@ def spaceshot():
     import sys
     import os
     worker_pid = os.getpid()
-    # CRITICAL: Log immediately at start of function - this proves the endpoint was called
+    # CRITICAL: Use print() to stdout so it appears in Railway logs (same as access logs)
+    # app.logger goes to stderr which Railway may filter or show separately
+    print(f"[WORKER {worker_pid}] ===== SPACESHOT ENDPOINT CALLED ===== (stdout for Railway visibility)", flush=True)
     app.logger.error(f"[WORKER {worker_pid}] ===== SPACESHOT ENDPOINT CALLED ===== (error level for visibility)")
     sys.stdout.flush()
     sys.stderr.flush()
@@ -642,7 +644,9 @@ def spaceshot():
     # Legacy /sim/montecarlo endpoint also does NOT extend ensemble mode.
     # This prevents memory bloat from non-ensemble requests.
     worker_pid = os.getpid()
-    # Use ERROR level so it appears in Railway (gunicorn loglevel='warning' filters INFO)
+    # Use print() to stdout so it appears in Railway logs (same as access logs)
+    print(f"[WORKER {worker_pid}] /sim/spaceshot called - activating ensemble mode on THIS worker", flush=True)
+    # Also log to app.logger (stderr) for completeness
     app.logger.error(f"[WORKER {worker_pid}] /sim/spaceshot called - activating ensemble mode on THIS worker")
     import sys
     sys.stdout.flush()  # Ensure log appears immediately
@@ -656,6 +660,7 @@ def spaceshot():
     with simulate._cache_lock:
         cache_limit_after = simulate._current_max_cache
         ensemble_until_after = simulate._ensemble_mode_until
+    print(f"[WORKER {worker_pid}] Ensemble mode enabled: cache_limit={cache_limit_after}, expires_at={ensemble_until_after:.1f}", flush=True)
     app.logger.error(f"[WORKER {worker_pid}] Ensemble mode enabled: cache_limit={cache_limit_after}, expires_at={ensemble_until_after:.1f}")
     sys.stdout.flush()  # Ensure log appears immediately
     sys.stderr.flush()
@@ -814,8 +819,10 @@ def spaceshot():
             verify_cache_limit = simulate._current_max_cache
             verify_ensemble_active = simulate._is_ensemble_mode()
         if verify_cache_limit < simulate.MAX_SIMULATOR_CACHE_ENSEMBLE:
+            print(f"[WORKER {worker_pid}] WARNING: Starting simulations but cache_limit={verify_cache_limit} < {simulate.MAX_SIMULATOR_CACHE_ENSEMBLE}! Ensemble mode may not be active!", flush=True)
             app.logger.error(f"[WORKER {worker_pid}] WARNING: Starting simulations but cache_limit={verify_cache_limit} < {simulate.MAX_SIMULATOR_CACHE_ENSEMBLE}! Ensemble mode may not be active!")
         else:
+            print(f"[WORKER {worker_pid}] Verified: cache_limit={verify_cache_limit}, ensemble_active={verify_ensemble_active} - ready to start simulations", flush=True)
             app.logger.error(f"[WORKER {worker_pid}] Verified: cache_limit={verify_cache_limit}, ensemble_active={verify_ensemble_active} - ready to start simulations")
         sys.stdout.flush()
         sys.stderr.flush()
