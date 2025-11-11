@@ -731,41 +731,30 @@ def _ensure_cached(file_name: str) -> Path:
                     # Retryable error - log and retry
                     logging.warning(f"Download attempt {attempt + 1}/{max_retries} failed for {file_name}: {e}. Retrying in {wait_time}s...")
                     time.sleep(wait_time)
-                else:
-                    # Last attempt failed - release lock and clean up
-                    logging.error(f"Download failed after {max_retries} attempts for {file_name}: {last_error}")
-                    if lock_fd:
-                        try:
-                            import fcntl
-                            fcntl.flock(lock_fd.fileno(), fcntl.LOCK_UN)
-                            lock_fd.close()
-                        except:
-                            pass
-                    raise
                 except Exception as e:
                     # Unexpected errors - treat as retryable but log as warning
                     # Clean up incomplete download
-                if tmp_path.exists():
-                    try:
-                        tmp_path.unlink()
-                    except:
-                        pass
-                last_error = e
-                if attempt < max_retries - 1:
-                    wait_time = 2 ** (attempt + 1)
-                    logging.warning(f"Unexpected error on download attempt {attempt + 1}/{max_retries} for {file_name}: {e}. Retrying in {wait_time}s...")
-                    time.sleep(wait_time)
-                else:
-                    # Last attempt failed - release lock and clean up
-                    logging.error(f"Download failed after {max_retries} attempts for {file_name} (unexpected error): {last_error}")
-                    if lock_fd:
+                    if tmp_path.exists():
                         try:
-                            import fcntl
-                            fcntl.flock(lock_fd.fileno(), fcntl.LOCK_UN)
-                            lock_fd.close()
+                            tmp_path.unlink()
                         except:
                             pass
-                    raise
+                    last_error = e
+            else:
+                # Last attempt failed - release lock and clean up
+                logging.error(f"Download failed after {max_retries} attempts for {file_name}: {last_error}")
+                if lock_fd:
+                    try:
+                        import fcntl
+                        fcntl.flock(lock_fd.fileno(), fcntl.LOCK_UN)
+                        lock_fd.close()
+                    except:
+                        pass
+                raise IOError(f"Download failed: temp file not created for {file_name} after {max_retries} attempts")
+        
+        # If we got here without error, file should exist
+        if not tmp_path.exists():
+            raise IOError(f"Download logic error: loop completed but temp file not found for {file_name}")
         
         # If we get here, download succeeded (tmp_path exists from successful attempt)
         # Note: tmp_path is defined in the loop, so we need to reconstruct it here
