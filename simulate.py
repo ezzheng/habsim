@@ -383,6 +383,7 @@ def set_ensemble_mode(duration_seconds=60):
                 new_expiry = now + duration_seconds
                 max_allowed_expiry = _ensemble_mode_started + MAX_ENSEMBLE_DURATION
                 _ensemble_mode_until = min(new_expiry, max_allowed_expiry)
+                print(f"[WORKER {worker_pid}] Ensemble mode EXTENDED: expires at {_ensemble_mode_until:.1f} (was {old_until:.1f})", flush=True)
                 logging.info(f"[WORKER {worker_pid}] Ensemble mode EXTENDED: expires at {_ensemble_mode_until:.1f} (was {old_until:.1f})")
     
     # Prefetch all models in background when starting new ensemble mode
@@ -414,6 +415,8 @@ def _prefetch_ensemble_models():
             logging.warning(f"Ensemble prefetch error: {e}")
     
     # Start background thread (daemon so it doesn't block shutdown)
+    worker_pid = os.getpid()
+    print(f"[WORKER {worker_pid}] Starting background prefetching of 21 ensemble models", flush=True)
     thread = threading.Thread(target=prefetch_worker, daemon=True, name="EnsemblePrefetch")
     thread.start()
     logging.info("Started background prefetching of ensemble models")
@@ -478,10 +481,16 @@ def _process_cleanup_queue():
     
     with _cleanup_queue_lock:
         # Find simulators ready for cleanup
+        queue_size_before = len(_cleanup_queue)
         for model_id, (simulator, cleanup_time) in list(_cleanup_queue.items()):
             if now >= cleanup_time:
                 to_cleanup.append((model_id, simulator))
                 del _cleanup_queue[model_id]
+    
+    # Log if we're processing cleanup queue (only if there are items)
+    if to_cleanup:
+        worker_pid = os.getpid()
+        print(f"[WORKER {worker_pid}] Processing cleanup queue: {len(to_cleanup)} simulators ready for cleanup (queue had {queue_size_before} items)", flush=True)
     
     # Clean up outside the lock
     for model_id, simulator in to_cleanup:
@@ -725,10 +734,13 @@ def _periodic_cache_trim():
             
             if (ensemble_expired or ensemble_exceeded_max) and cache_size > MAX_SIMULATOR_CACHE_NORMAL:
                 # Ensemble mode expired but cache still large - trim immediately and aggressively
+                worker_pid = os.getpid()
                 rss_before = _get_rss_memory_mb()
                 if rss_before is not None:
+                    print(f"[WORKER {worker_pid}] Periodic trim: ensemble expired, trimming cache from {cache_size} to {MAX_SIMULATOR_CACHE_NORMAL} (RSS: {rss_before:.1f} MB)", flush=True)
                     logging.info(f"Ensemble mode expired/exceeded, trimming cache from {cache_size} to {MAX_SIMULATOR_CACHE_NORMAL} (RSS: {rss_before:.1f} MB)")
                 else:
+                    print(f"[WORKER {worker_pid}] Periodic trim: ensemble expired, trimming cache from {cache_size} to {MAX_SIMULATOR_CACHE_NORMAL}", flush=True)
                     logging.info(f"Ensemble mode expired/exceeded, trimming cache from {cache_size} to {MAX_SIMULATOR_CACHE_NORMAL}")
                 
                 _trim_cache_to_normal()
@@ -765,6 +777,8 @@ def _periodic_cache_trim():
                         logging.warning(f"Cache trim didn't reduce size enough: {new_size} > {MAX_SIMULATOR_CACHE_NORMAL} (failure #{consecutive_trim_failures})")
                     if consecutive_trim_failures > 2:  # Reduced from 3 to 2 for faster response
                         # Force more aggressive trimming
+                        worker_pid = os.getpid()
+                        print(f"[WORKER {worker_pid}] Multiple trim failures ({consecutive_trim_failures}), forcing aggressive cleanup", flush=True)
                         logging.warning("Multiple trim failures, forcing aggressive cleanup")
                         _force_aggressive_trim()
                         consecutive_trim_failures = 0
@@ -772,6 +786,8 @@ def _periodic_cache_trim():
                     consecutive_trim_failures = 0
                     if rss_after is not None and rss_before is not None:
                         rss_delta = rss_before - rss_after
+                        worker_pid = os.getpid()
+                        print(f"[WORKER {worker_pid}] Periodic trim SUCCESS: {new_size} simulators (RSS: {rss_after:.1f} MB, released {rss_delta:.1f} MB)", flush=True)
                         logging.info(f"Cache trim successful: {new_size} simulators (RSS: {rss_after:.1f} MB, released: {rss_delta:.1f} MB)")
                 time.sleep(3)  # Check even more frequently (reduced from 5s) when trim failing
             else:
@@ -804,7 +820,10 @@ def _force_aggressive_trim():
         if len(_simulator_cache) <= 1:
             return
         
-        logging.warning(f"Force aggressive trim: removing {len(_simulator_cache) - 1} simulators, keeping only 1")
+        worker_pid = os.getpid()
+        cache_size_before = len(_simulator_cache)
+        print(f"[WORKER {worker_pid}] Force aggressive trim: removing {cache_size_before - 1} simulators, keeping only 1", flush=True)
+        logging.warning(f"Force aggressive trim: removing {cache_size_before - 1} simulators, keeping only 1")
         
         # Sort by access time (most recent first)
         sorted_models = sorted(_simulator_access_times.items(), key=lambda x: x[1], reverse=True)

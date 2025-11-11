@@ -952,10 +952,13 @@ def spaceshot():
         app.logger.info(f"Ensemble + Monte Carlo complete: {ensemble_success}/{len(model_ids)} ensemble paths, {ensemble_landings} ensemble + {montecarlo_landings} Monte Carlo = {len(landing_positions)} total landing positions in {elapsed:.1f} seconds")
         
     except Exception as e:
+        print(f"[WORKER {worker_pid}] Ensemble + Monte Carlo run FAILED: {e}", flush=True)
         app.logger.exception(f"Ensemble + Monte Carlo run failed with unexpected error: {e}")
         paths = ["error"] * len(model_ids)
         landing_positions = []
     finally:
+        # Trim cache after ensemble completes (in finally block so it always runs)
+        print(f"[WORKER {worker_pid}] Spaceshot complete - trimming cache to normal", flush=True)
         simulate._trim_cache_to_normal()
         # Mark progress as completed and schedule cleanup after 30 seconds
         # This allows clients to poll one last time to see 100% completion
