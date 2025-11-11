@@ -109,29 +109,32 @@ class ElevationFile:
         """
         Return bilinearly interpolated elevation for (lat, lon).
         """
-        rows, cols = self.data.shape
-        # Clamp input to data bounds and normalize lon
-        lat = np.clip(lat, self.MIN_LAT, self.MAX_LAT)
-        lon = ((lon + 180) % 360) - 180
-        # Fractional column/row using metadata bounds
-        col_f = (lon - self.MIN_LON) / (self.MAX_LON - self.MIN_LON) * (cols - 1)
-        row_f = (self.MAX_LAT - lat) / (self.MAX_LAT - self.MIN_LAT) * (rows - 1)
-        # Integer indices and fractions
-        x0 = int(np.floor(col_f))
-        y0 = int(np.floor(row_f))
-        x1 = min(x0 + 1, cols - 1)
-        y1 = min(y0 + 1, rows - 1)
-        fx = col_f - x0
-        fy = row_f - y0
-        # Bilinear interpolation
-        v00 = self.data[y0, x0]
-        v10 = self.data[y0, x1]
-        v01 = self.data[y1, x0]
-        v11 = self.data[y1, x1]
-        v_top = v00 * (1 - fx) + v10 * fx
-        v_bottom = v01 * (1 - fx) + v11 * fx
-        elev = v_top * (1 - fy) + v_bottom * fy
-        return float(max(0, elev))
+        try:
+            rows, cols = self.data.shape
+            # Clamp input to data bounds and normalize lon
+            lat = np.clip(lat, self.MIN_LAT, self.MAX_LAT)
+            lon = ((lon + 180) % 360) - 180
+            # Fractional column/row using metadata bounds
+            col_f = (lon - self.MIN_LON) / (self.MAX_LON - self.MIN_LON) * (cols - 1)
+            row_f = (self.MAX_LAT - lat) / (self.MAX_LAT - self.MIN_LAT) * (rows - 1)
+            # Integer indices and fractions
+            x0 = int(np.floor(col_f))
+            y0 = int(np.floor(row_f))
+            x1 = min(x0 + 1, cols - 1)
+            y1 = min(y0 + 1, rows - 1)
+            fx = col_f - x0
+            fy = row_f - y0
+            # Bilinear interpolation
+            v00 = self.data[y0, x0]
+            v10 = self.data[y0, x1]
+            v01 = self.data[y1, x0]
+            v11 = self.data[y1, x1]
+            v_top = v00 * (1 - fx) + v10 * fx
+            v_bottom = v01 * (1 - fx) + v11 * fx
+            elev = v_top * (1 - fy) + v_bottom * fy
+            return float(max(0, elev))
+        except Exception:
+            return 0.0
 
 class Balloon:
     def __init__(self, time=None, location=None, alt=0, ascent_rate=0, air_vector=(0,0), wind_vector=None, ground_elev=None):

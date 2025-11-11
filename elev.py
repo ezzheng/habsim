@@ -30,27 +30,30 @@ def getElevation(lat, lon):
     """
     Return bilinearly interpolated elevation for (lat, lon).
     """
-    data, shape = _get_elev_data()
-    rows, cols = shape
-    # Clamp input to data bounds and normalize lon
-    lat = np.clip(lat, MIN_LAT, MAX_LAT)
-    lon = ((lon + 180) % 360) - 180
-    # Fractional column/row using metadata bounds
-    col_f = (lon - MIN_LON) / (MAX_LON - MIN_LON) * (cols - 1)
-    row_f = (MAX_LAT - lat) / (MAX_LAT - MIN_LAT) * (rows - 1)
-    # Integer indices and fractions
-    x0 = int(np.floor(col_f))
-    y0 = int(np.floor(row_f))
-    x1 = min(x0 + 1, cols - 1)
-    y1 = min(y0 + 1, rows - 1)
-    fx = col_f - x0
-    fy = row_f - y0
-    # Bilinear interpolation
-    v00 = data[y0, x0]
-    v10 = data[y0, x1]
-    v01 = data[y1, x0]
-    v11 = data[y1, x1]
-    v_top = v00 * (1 - fx) + v10 * fx
-    v_bottom = v01 * (1 - fx) + v11 * fx
-    elev = v_top * (1 - fy) + v_bottom * fy
-    return float(max(0, elev))
+    try:
+        data, shape = _get_elev_data()
+        rows, cols = shape
+        # Clamp input to data bounds and normalize lon
+        lat = np.clip(lat, MIN_LAT, MAX_LAT)
+        lon = ((lon + 180) % 360) - 180
+        # Fractional column/row using metadata bounds
+        col_f = (lon - MIN_LON) / (MAX_LON - MIN_LON) * (cols - 1)
+        row_f = (MAX_LAT - lat) / (MAX_LAT - MIN_LAT) * (rows - 1)
+        # Integer indices and fractions
+        x0 = int(np.floor(col_f))
+        y0 = int(np.floor(row_f))
+        x1 = min(x0 + 1, cols - 1)
+        y1 = min(y0 + 1, rows - 1)
+        fx = col_f - x0
+        fy = row_f - y0
+        # Bilinear interpolation
+        v00 = data[y0, x0]
+        v10 = data[y0, x1]
+        v01 = data[y1, x0]
+        v11 = data[y1, x1]
+        v_top = v00 * (1 - fx) + v10 * fx
+        v_bottom = v01 * (1 - fx) + v11 * fx
+        elev = v_top * (1 - fy) + v_bottom * fy
+        return float(max(0, elev))
+    except Exception:
+        return 0.0
