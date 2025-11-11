@@ -158,7 +158,7 @@ This is an offshoot of the prediction server developed for the Stanford Space In
 - **Location**: `/app/data/gefs` on Railway (persistent volume if mounted, otherwise ephemeral storage)
 - **Files**: Up to 30 `.npz` files (~9.2GB) cached on disk (increased for 32GB RAM system)
 - **Purpose**: Fast local access, eliminates download delays after first download
-- **Eviction**: LRU when cache exceeds 30 files or 25GB total size (`worldelev.npy` is exempt)
+- **Eviction**: LRU when cache exceeds 30 files or 25GB total size (`worldelev.npy` is always exempt)
 - **Download Strategy**: Files download on-demand with per-file locking, extended timeouts, and stall detection
 - **Model Change Cleanup**: Automatically deletes old model files when GEFS updates every 6 hours
 - **Idle effect**: Idle worker cleanup does not delete disk cache; simulators are rebuilt from these on next request
