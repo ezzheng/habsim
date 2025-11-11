@@ -4,6 +4,7 @@ import math
 import random
 import bisect
 import numpy as np
+from rasterio.transform import Affine, rowcol
 from windfile import WindFile
 from datetime import timedelta, datetime
 EARTH_RADIUS = float(6.371e6)
