@@ -1276,7 +1276,7 @@
                 'Equilibrium Altitude': (document.getElementById('equil')?.value || 'N/A') + ' m',
                 'Ascent Rate': (document.getElementById('asc')?.value || 'N/A') + ' m/s',
                 'Descent Rate': (document.getElementById('desc')?.value || 'N/A') + ' m/s',
-                'Mode': isMultiMode ? 'Multi' : (window.ensembleEnabled ? 'Ensemble (21 models)' : 'Single Model')
+                'Mode': isMultiMode ? 'Multi (every 3 hours for 7 days)' : (window.ensembleEnabled ? 'Ensemble (21 models)' : 'Single Model')
             };
             
             // Build parameter HTML
