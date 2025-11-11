@@ -95,9 +95,10 @@ class ElevationFile:
         rows, cols = self.data.shape
         
         # Convert lat/lon to fractional row/col
-        # (equivalent to rowcol(transform, lon, lat, op=float))
-        row_f = (90.0 - lat) / 180.0 * (rows - 1)
-        col_f = (lon + 180.0) / 360.0 * (cols - 1)
+        # Equivalent to: row_f, col_f = rowcol(transform, lon, lat, op=float)
+        # For global grid: transform maps pixel (0,0) at top-left to (-180, 90)
+        row_f = (90.0 - lat) / 180.0 * rows
+        col_f = (lon + 180.0) / 360.0 * cols
         
         # Clamp to valid range
         row_f = np.clip(row_f, 0, rows - 1)
