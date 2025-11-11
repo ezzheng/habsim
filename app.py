@@ -164,8 +164,8 @@ if is_railway:
         app.logger.warning(f"Failed to start cache trim thread from app startup (non-critical): {e}")
 
 # Start pre-warming in background thread
-_cache_warmer_thread = threading.Thread(target=_prewarm_cache, daemon=True)
-_cache_warmer_thread.start()
+    _cache_warmer_thread = threading.Thread(target=_prewarm_cache, daemon=True)
+    _cache_warmer_thread.start()
 else:
     # On Vercel or local dev - skip heavy initialization
     app.logger.info("Skipping Railway-specific initialization (Vercel/local dev)")
@@ -247,10 +247,10 @@ def index():
 @app.route('/sim/which')
 def whichgefs():
     # Read directly from storage to avoid importing heavy modules on cold start
-        f = open_gefs('whichgefs')
-        s = f.readline()
+    f = open_gefs('whichgefs')
+    s = f.readline()
     f.close()
-        return s
+    return s
 
 @app.route('/sim/cache-status')
 def cache_status():
@@ -542,8 +542,8 @@ def singlezpbh():
     asc, desc = float(args['asc']), float(args['desc'])
     model = int(args['model'])
     try:
-    path = singlezpb(timestamp, lat, lon, alt, equil, eqtime, asc, desc, model)
-    return jsonify(path)
+        path = singlezpb(timestamp, lat, lon, alt, equil, eqtime, asc, desc, model)
+        return jsonify(path)
     except FileNotFoundError as e:
         # Model file not found in S3
         app.logger.warning(f"Model file not found for request: {e}")
@@ -872,7 +872,7 @@ def spaceshot():
         montecarlo_landings = len(landing_positions) - ensemble_landings
         app.logger.info(f"Ensemble + Monte Carlo complete: {ensemble_success}/{len(model_ids)} ensemble paths, {ensemble_landings} ensemble + {montecarlo_landings} Monte Carlo = {len(landing_positions)} total landing positions in {elapsed:.1f} seconds")
         
-            except Exception as e:
+    except Exception as e:
         app.logger.exception(f"Ensemble + Monte Carlo run failed with unexpected error: {e}")
         paths = ["error"] * len(model_ids)
         landing_positions = []
