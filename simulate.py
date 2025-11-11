@@ -180,7 +180,9 @@ def _idle_memory_cleanup(idle_duration):
     """Deep cleanup when the worker has been idle for a while.
     Returns True if cleanup ran, False if skipped (lock held or models in use)."""
     global _current_max_cache, _ensemble_mode_until, _ensemble_mode_started, elevation_cache, currgefs, _cleanup_queue
+    worker_pid = os.getpid()
     if not _idle_cleanup_lock.acquire(blocking=False):
+        print(f"[WORKER {worker_pid}] Idle cleanup skipped: lock already held by another thread", flush=True)
         logging.debug(f"Idle cleanup skipped: lock already held by another thread")
         return False
     try:
@@ -188,13 +190,16 @@ def _idle_memory_cleanup(idle_duration):
         with _in_use_lock:
             models_in_use = _in_use_models.copy()
         if models_in_use:
+            print(f"[WORKER {worker_pid}] Idle cleanup skipped: {len(models_in_use)} models still in use: {models_in_use}", flush=True)
             logging.warning(f"Idle cleanup skipped: {len(models_in_use)} models still in use: {models_in_use}")
             return False
         
         rss_before = _get_rss_memory_mb()
         if rss_before is not None:
+            print(f"[WORKER {worker_pid}] Idle memory cleanup STARTING: idle for {idle_duration:.1f}s, RSS before: {rss_before:.1f} MB", flush=True)
             logging.info(f"Idle memory cleanup triggered after {idle_duration:.1f}s without requests (RSS: {rss_before:.1f} MB)")
         else:
+            print(f"[WORKER {worker_pid}] Idle memory cleanup STARTING: idle for {idle_duration:.1f}s", flush=True)
             logging.info(f"Idle memory cleanup triggered after {idle_duration:.1f}s without requests")
         
         # Process any pending cleanups first
@@ -256,8 +261,10 @@ def _idle_memory_cleanup(idle_duration):
         rss_after = _get_rss_memory_mb()
         if rss_after is not None and rss_before is not None:
             rss_delta = rss_before - rss_after
+            print(f"[WORKER {worker_pid}] Idle cleanup COMPLETE: released {evicted} simulator(s); RSS: {rss_after:.1f} MB (released {rss_delta:.1f} MB)", flush=True)
             logging.info(f"Idle cleanup complete: released {evicted} simulator(s); RSS: {rss_after:.1f} MB (released {rss_delta:.1f} MB)")
         else:
+            print(f"[WORKER {worker_pid}] Idle cleanup COMPLETE: released {evicted} simulator(s); cache and elevation reset to baseline", flush=True)
             logging.info(f"Idle cleanup complete: released {evicted} simulator(s); cache and elevation reset to baseline")
         return True
     finally:
@@ -657,6 +664,8 @@ def _periodic_cache_trim():
             # Also trigger if idle >180s and cleanup never ran (lower threshold for first cleanup)
             if ((idle_duration > 600 and _last_idle_cleanup == 0) or 
                 (idle_duration > 180 and _last_idle_cleanup == 0 and idle_duration >= _IDLE_RESET_TIMEOUT + 60)):
+                worker_pid = os.getpid()
+                print(f"[WORKER {worker_pid}] EMERGENCY: Worker idle for {idle_duration:.1f}s but cleanup never ran! Forcing cleanup now.", flush=True)
                 logging.error(f"EMERGENCY: Worker idle for {idle_duration:.1f}s but cleanup never ran! Forcing cleanup now.")
                 try:
                     with _cache_lock:
@@ -665,10 +674,13 @@ def _periodic_cache_trim():
                     # Always mark cleanup as attempted, even if skipped
                     _last_idle_cleanup = time.time()
                     if cleanup_ran:
+                        print(f"[WORKER {worker_pid}] Emergency idle cleanup completed successfully", flush=True)
                         logging.info(f"Emergency idle cleanup completed successfully")
                     else:
+                        print(f"[WORKER {worker_pid}] Emergency cleanup was skipped (lock held or models in use), but marked as attempted", flush=True)
                         logging.warning(f"Emergency cleanup was skipped (lock held or models in use), but marked as attempted")
                 except Exception as emergency_error:
+                    print(f"[WORKER {worker_pid}] Emergency cleanup FAILED: {emergency_error}", flush=True)
                     logging.error(f"Emergency cleanup failed: {emergency_error}", exc_info=True)
                     _last_idle_cleanup = time.time()  # Mark as attempted
                 consecutive_trim_failures = 0
@@ -687,11 +699,13 @@ def _periodic_cache_trim():
                     # This prevents infinite retries when cleanup can't run
                     _last_idle_cleanup = time.time()
                     if cleanup_ran:
-                        print(f"[WORKER {worker_pid}] Idle cleanup completed successfully", flush=True)
+                        print(f"[WORKER {worker_pid}] Idle cleanup completed successfully, marked timestamp: {_last_idle_cleanup:.1f}", flush=True)
                         logging.info(f"Idle cleanup completed successfully, marked timestamp: {_last_idle_cleanup}")
                     else:
+                        print(f"[WORKER {worker_pid}] Idle cleanup was skipped (lock held or models in use), but marked as attempted: {_last_idle_cleanup:.1f}", flush=True)
                         logging.info(f"Idle cleanup was skipped (lock held or models in use), but marked as attempted: {_last_idle_cleanup}")
                 except Exception as cleanup_error:
+                    print(f"[WORKER {worker_pid}] Idle cleanup FAILED: {cleanup_error}", flush=True)
                     logging.error(f"Idle cleanup failed: {cleanup_error}", exc_info=True)
                     # Still mark as attempted to prevent repeated failures
                     _last_idle_cleanup = time.time()
