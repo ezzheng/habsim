@@ -742,9 +742,9 @@ def _ensure_cached(file_name: str) -> Path:
                         except:
                             pass
                     raise
-            except Exception as e:
-                # Unexpected errors - treat as retryable but log as warning
-                # Clean up incomplete download
+                except Exception as e:
+                    # Unexpected errors - treat as retryable but log as warning
+                    # Clean up incomplete download
                 if tmp_path.exists():
                     try:
                         tmp_path.unlink()
