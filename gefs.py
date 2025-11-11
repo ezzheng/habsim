@@ -728,9 +728,9 @@ def _ensure_cached(file_name: str) -> Path:
                                 pass
                     raise
                 else:
-                    # Retryable error - log and retry
-                    logging.warning(f"Download attempt {attempt + 1}/{max_retries} failed for {file_name}: {e}. Retrying in {wait_time}s...")
-                    time.sleep(wait_time)
+                        # Retryable error - log and retry
+                        logging.warning(f"Download attempt {attempt + 1}/{max_retries} failed for {file_name}: {e}. Retrying in {wait_time}s...")
+                        time.sleep(wait_time)
                 except Exception as e:
                     # Unexpected errors - treat as retryable but log as warning
                     # Clean up incomplete download
