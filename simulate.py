@@ -482,15 +482,25 @@ def _process_cleanup_queue():
     with _cleanup_queue_lock:
         # Find simulators ready for cleanup
         queue_size_before = len(_cleanup_queue)
+        # Find oldest cleanup time before modifying queue
+        oldest_item_time = None
+        if queue_size_before > 0:
+            oldest_item_time = min(cleanup_time for _, (_, cleanup_time) in _cleanup_queue.items())
         for model_id, (simulator, cleanup_time) in list(_cleanup_queue.items()):
             if now >= cleanup_time:
                 to_cleanup.append((model_id, simulator))
                 del _cleanup_queue[model_id]
     
-    # Log if we're processing cleanup queue (only if there are items)
-    if to_cleanup:
+    # Log cleanup queue processing (always log if queue had items, even if none ready yet)
+    if queue_size_before > 0:
         worker_pid = os.getpid()
-        print(f"[WORKER {worker_pid}] Processing cleanup queue: {len(to_cleanup)} simulators ready for cleanup (queue had {queue_size_before} items)", flush=True)
+        if to_cleanup:
+            print(f"[WORKER {worker_pid}] Processing cleanup queue: {len(to_cleanup)} simulators ready for cleanup (queue had {queue_size_before} items)", flush=True)
+        elif oldest_item_time:
+            # Queue has items but none ready yet - log when very close to cleanup time
+            wait_remaining = oldest_item_time - now
+            if wait_remaining < 1.0:  # Only log when very close to cleanup time
+                print(f"[WORKER {worker_pid}] Cleanup queue: {queue_size_before} simulators waiting (oldest ready in {wait_remaining:.1f}s)", flush=True)
     
     # Clean up outside the lock
     for model_id, simulator in to_cleanup:
@@ -632,7 +642,13 @@ def _trim_cache_to_normal():
                 logging.info(f"Trimmed cache: evicted {evicted_count} simulators, keeping {len(_simulator_cache)} (limit: {_current_max_cache})")
                 if rss_before is not None:
                     logging.info(f"Memory before trim: {rss_before:.1f} MB RSS")
+                print(f"[WORKER {worker_pid}] Scheduled {evicted_count} simulators for delayed cleanup (will process after {_CLEANUP_DELAY}s)", flush=True)
                 logging.info(f"Scheduled {evicted_count} simulators for delayed cleanup (will process after {_CLEANUP_DELAY}s)")
+            else:
+                # Log even when no eviction needed (for visibility)
+                worker_pid = os.getpid()
+                cache_size = len(_simulator_cache)
+                print(f"[WORKER {worker_pid}] Trim check: cache size {cache_size} <= limit {_current_max_cache}, no trimming needed", flush=True)
 
 def _periodic_cache_trim():
     """Background thread that periodically trims cache when ensemble mode expires.
@@ -646,12 +662,15 @@ def _periodic_cache_trim():
         try:
             now = time.time()
             idle_duration = now - _last_activity_timestamp
-            # Log idle status periodically for debugging (every 30s when idle)
-            if idle_duration > 30 and int(idle_duration) % 30 < 2:  # Log roughly every 30s when idle
+            # Log idle status periodically for debugging (every 30s when idle, or when close to threshold)
+            should_log_idle = (idle_duration > 30 and int(idle_duration) % 30 < 2) or (idle_duration >= _IDLE_RESET_TIMEOUT - 10 and idle_duration < _IDLE_RESET_TIMEOUT + 10)
+            if should_log_idle:
                 with _cache_lock:
                     cache_size = len(_simulator_cache)
                 last_cleanup_ago = (now - _last_idle_cleanup) if _last_idle_cleanup > 0 else 0
                 should_trigger = idle_duration >= _IDLE_RESET_TIMEOUT and (last_cleanup_ago >= _IDLE_CLEAN_COOLDOWN or _last_idle_cleanup == 0)
+                worker_pid = os.getpid()
+                print(f"[WORKER {worker_pid}] Idle check: {idle_duration:.1f}s idle (threshold: {_IDLE_RESET_TIMEOUT}s), cache size: {cache_size}, last_cleanup: {last_cleanup_ago:.1f}s ago, should_trigger: {should_trigger}", flush=True)
                 logging.info(f"Idle check: {idle_duration:.1f}s idle (threshold: {_IDLE_RESET_TIMEOUT}s), cache size: {cache_size}, last_cleanup: {last_cleanup_ago:.1f}s ago, should_trigger: {should_trigger}")
             # Fix: Handle case where cleanup never ran (_last_idle_cleanup = 0)
             # If cleanup never ran, allow it immediately if idle threshold reached
@@ -792,8 +811,8 @@ def _periodic_cache_trim():
                 time.sleep(3)  # Check even more frequently (reduced from 5s) when trim failing
             else:
                 # Normal check interval - always call trim to handle edge cases
-                # Also process cleanup queue periodically
-                _process_cleanup_queue()
+                # Also process cleanup queue periodically (always process, even if no trimming needed)
+                _process_cleanup_queue()  # Process cleanup queue every cycle
                 _trim_cache_to_normal()
                 consecutive_trim_failures = 0
                 time.sleep(20)  # Check more frequently (reduced from 30s)
