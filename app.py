@@ -634,8 +634,19 @@ def spaceshot():
     # This prevents memory bloat from non-ensemble requests.
     worker_pid = os.getpid()
     app.logger.info(f"[WORKER {worker_pid}] /sim/spaceshot called - activating ensemble mode on THIS worker")
+    import sys
+    sys.stdout.flush()  # Ensure log appears immediately
+    
+    # CRITICAL: Activate ensemble mode BEFORE any simulations start
+    # This must happen synchronously before ThreadPoolExecutor begins
     simulate.set_ensemble_mode(duration_seconds=60)
-    app.logger.info(f"[WORKER {worker_pid}] Ensemble mode enabled: expanded cache for 60 seconds (ensemble + Monte Carlo)")
+    
+    # Verify ensemble mode was activated (for debugging)
+    with simulate._cache_lock:
+        cache_limit_after = simulate._current_max_cache
+        ensemble_until_after = simulate._ensemble_mode_until
+    app.logger.info(f"[WORKER {worker_pid}] Ensemble mode enabled: cache_limit={cache_limit_after}, expires_at={ensemble_until_after:.1f}")
+    sys.stdout.flush()  # Ensure log appears immediately
     
     # Build model list based on configuration
     model_ids = []
@@ -786,6 +797,16 @@ def spaceshot():
             return None
     
     try:
+        # Verify ensemble mode is active before starting simulations
+        with simulate._cache_lock:
+            verify_cache_limit = simulate._current_max_cache
+            verify_ensemble_active = simulate._is_ensemble_mode()
+        if verify_cache_limit < simulate.MAX_SIMULATOR_CACHE_ENSEMBLE:
+            app.logger.error(f"[WORKER {worker_pid}] WARNING: Starting simulations but cache_limit={verify_cache_limit} < {simulate.MAX_SIMULATOR_CACHE_ENSEMBLE}! Ensemble mode may not be active!")
+        else:
+            app.logger.info(f"[WORKER {worker_pid}] Verified: cache_limit={verify_cache_limit}, ensemble_active={verify_ensemble_active} - ready to start simulations")
+        sys.stdout.flush()
+        
         # ========================================================================
         # PARALLEL EXECUTION: Ensemble + Monte Carlo Simulations
         # ========================================================================
