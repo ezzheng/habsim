@@ -993,7 +993,14 @@ Given a lat and lon, returns the elevation as a string
 @app.route('/sim/elev')
 def elevation():
     lat, lon = float(request.args['lat']), float(request.args['lon'])
-    return str(elev.getElevation(lat, lon))
+    app.logger.info(f"[ELEV ENDPOINT] Called with lat={lat}, lon={lon}")
+    try:
+        result = elev.getElevation(lat, lon)
+        app.logger.info(f"[ELEV ENDPOINT] getElevation returned: {result}")
+        return str(result)
+    except Exception as e:
+        app.logger.error(f"[ELEV ENDPOINT] Exception in getElevation: {e}", exc_info=True)
+        return "0"
 
 
 '''

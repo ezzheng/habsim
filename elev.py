@@ -63,17 +63,19 @@ def _get_elev_data():
 def getElevation(lat, lon):
     """Get elevation with bilinear interpolation for smoother results"""
     import logging
-    logging.info(f"[ELEV DEBUG] getElevation called with lat={lat}, lon={lon}")
+    # Use root logger to ensure logs appear
+    logger = logging.getLogger()
+    logger.info(f"[ELEV DEBUG] getElevation called with lat={lat}, lon={lon}")
     try:
         data, shape = _get_elev_data()
-        logging.info(f"[ELEV DEBUG] _get_elev_data returned: data is None={data is None}, shape={shape}")
+        logger.info(f"[ELEV DEBUG] _get_elev_data returned: data is None={data is None}, shape={shape}")
         
         # Validate data and shape are loaded correctly
         if data is None or shape is None:
-            logging.error("Elevation data not loaded: data=%s, shape=%s", data is None, shape is None)
+            logger.error("Elevation data not loaded: data=%s, shape=%s", data is None, shape is None)
             return 0
         
-        logging.info(f"[ELEV DEBUG] Data loaded: shape={shape}, resolutions: lat={_RESOLUTION_LAT:.2f}, lon={_RESOLUTION_LON:.2f}")
+        logger.info(f"[ELEV DEBUG] Data loaded: shape={shape}, resolutions: lat={_RESOLUTION_LAT:.2f}, lon={_RESOLUTION_LON:.2f}")
         
         # Convert lat/lon to grid coordinates (continuous)
         # Use separate resolutions for latitude and longitude
@@ -95,7 +97,7 @@ def getElevation(lat, lon):
         y1_clamped = max(0, min(y1, shape[0] - 1))
         
         # Debug logging - always log for now
-        logging.info(f"[ELEV DEBUG] Coordinate calculation: lat={lat}, lon={lon}, res_lat={_RESOLUTION_LAT:.2f}, res_lon={_RESOLUTION_LON:.2f}, "
+        logger.info(f"[ELEV DEBUG] Coordinate calculation: lat={lat}, lon={lon}, res_lat={_RESOLUTION_LAT:.2f}, res_lon={_RESOLUTION_LON:.2f}, "
                     f"x_float={x_float:.2f}, y_float={y_float:.2f}, x0={x0}, y0={y0}, shape={shape}")
         
         try:
@@ -105,7 +107,7 @@ def getElevation(lat, lon):
             v01 = float(data[y1_clamped, x0_clamped])  # top-left
             v11 = float(data[y1_clamped, x1_clamped])  # top-right
             
-            logging.info(f"[ELEV DEBUG] Elevation values: v00={v00}, v10={v10}, v01={v01}, v11={v11}, "
+            logger.info(f"[ELEV DEBUG] Elevation values: v00={v00}, v10={v10}, v01={v01}, v11={v11}, "
                         f"indices: ({y0_clamped},{x0_clamped}), ({y0_clamped},{x1_clamped}), ({y1_clamped},{x0_clamped}), ({y1_clamped},{x1_clamped})")
             
             # Interpolate in x direction
@@ -115,28 +117,25 @@ def getElevation(lat, lon):
             # Interpolate in y direction
             result = v0 * (1 - fy) + v1 * fy
             
-            logging.info(f"[ELEV DEBUG] Elevation interpolation: fx={fx:.3f}, fy={fy:.3f}, v0={v0:.2f}, v1={v1:.2f}, result={result:.2f}")
+            logger.info(f"[ELEV DEBUG] Elevation interpolation: fx={fx:.3f}, fy={fy:.3f}, v0={v0:.2f}, v1={v1:.2f}, result={result:.2f}")
             
             final_result = max(0, round(result, 2))
-            logging.info(f"[ELEV DEBUG] Returning elevation: {final_result}")
+            logger.info(f"[ELEV DEBUG] Returning elevation: {final_result}")
             return final_result
         except Exception as e:
             # Fallback to nearest neighbor if interpolation fails
-            import logging
-            logging.warning(f"Bilinear interpolation failed for ({lat}, {lon}): {e}, falling back to nearest neighbor")
+            logger.warning(f"Bilinear interpolation failed for ({lat}, {lon}): {e}, falling back to nearest neighbor")
             x = int(round(x_float))
             y = int(round(y_float))
             x_clamped = max(0, min(x, shape[1] - 1))
             y_clamped = max(0, min(y, shape[0] - 1))
             try:
                 result = float(data[y_clamped, x_clamped])
-                logging.info(f"[ELEV DEBUG] Nearest neighbor fallback: x={x}, y={y}, clamped to ({y_clamped},{x_clamped}), value={result}")
+                logger.info(f"[ELEV DEBUG] Nearest neighbor fallback: x={x}, y={y}, clamped to ({y_clamped},{x_clamped}), value={result}")
                 return max(0, round(result, 2))
             except Exception as e2:
-                import logging
-                logging.error(f"Nearest neighbor fallback also failed for ({lat}, {lon}): {e2}")
+                logger.error(f"Nearest neighbor fallback also failed for ({lat}, {lon}): {e2}")
                 return 0
     except Exception as e:
-        import logging
-        logging.error(f"Failed to get elevation data for ({lat}, {lon}): {e}")
+        logger.error(f"Failed to get elevation data for ({lat}, {lon}): {e}", exc_info=True)
         return 0
