@@ -12,6 +12,9 @@ var endPinMarkers = [];
 var endPinInfoWindows = [];
 // Launch info captured at simulate-time
 var lastLaunchInfo = null;
+// Multi connector path and collected end positions
+var multiConnectorPath = null;
+var multiEndPositions = [];
 
 // Shows a single compound path, mode unaware
 function makepaths(btype, allpaths, isControl = false){
@@ -47,6 +50,14 @@ function clearAllVisualizations() {
     clearWaypoints();
     // Clear end pin
     clearEndPin();
+    // Clear multi connector path and positions
+    try {
+        if (multiConnectorPath) {
+            multiConnectorPath.setMap(null);
+            multiConnectorPath = null;
+        }
+        multiEndPositions = [];
+    } catch (e) {}
     
     // Clear all paths
     for (let path in currpaths) {
@@ -227,6 +238,7 @@ function clearEndPin() {
         }
         endPinInfoWindows = [];
         endPinMarkers = [];
+        multiEndPositions = [];
     } catch (e) {}
 }
 
@@ -333,6 +345,8 @@ function setEndPin(endPoint, color, hourOffset) {
         if (window.multiActive) {
             endPinMarkers.push(marker);
             endPinInfoWindows.push(info);
+            // Track position for multi connector
+            try { multiEndPositions.push(position); } catch (e) {}
         } else {
             endPinMarker = marker;
             endPinInfoWindow = info;
@@ -340,14 +354,102 @@ function setEndPin(endPoint, color, hourOffset) {
     } catch (e) {
         console.warn('Failed to set end pin', e);
     }
+    return marker;
 }
 
+// Adds an end pin for multi mode and toggles its trajectory on click
+function addMultiEndPin(payload, hourOffset, color) {
+    try {
+        // Derive segments from payload depending on mode
+        let rise = [], equil = [], fall = [], fpath = [];
+        switch(btype) {
+            case 'STANDARD':
+                rise = payload[0];
+                equil = [];
+                fall = payload[2];
+                fpath = [];
+                break;
+            case 'ZPB':
+                rise = payload[0];
+                equil = payload[1];
+                fall = payload[2];
+                fpath = [];
+                break;
+            case 'FLOAT':
+                rise = [];
+                equil = [];
+                fall = [];
+                fpath = payload;
+                break;
+        }
+        const allpaths = [rise, equil, fall, fpath];
+        // Determine end point
+        let lastSegIdx = -1;
+        for (let si = allpaths.length - 1; si >= 0; si--) {
+            if (allpaths[si] && allpaths[si].length > 0) { lastSegIdx = si; break; }
+        }
+        if (lastSegIdx < 0) return;
+        const endPoint = allpaths[lastSegIdx][allpaths[lastSegIdx].length - 1];
+        // Place the end pin (returns marker)
+        const marker = setEndPin(endPoint, color, hourOffset);
+        if (!marker) return;
+        // Attach toggle behavior for trajectory rendering
+        marker._polylines = null;
+        marker._rawIndex = null;
+        marker.addListener('click', function() {
+            try {
+                if (marker._polylines && marker._polylines.length) {
+                    // Remove existing trajectory
+                    for (const pl of marker._polylines) {
+                        try { pl.setMap(null); } catch (e) {}
+                    }
+                    // Remove from global currpaths
+                    try {
+                        currpaths = currpaths.filter(pl => marker._polylines.indexOf(pl) === -1);
+                    } catch (e) {}
+                    // Remove from rawpathcache to update waypoints
+                    if (marker._rawIndex !== null && marker._rawIndex >= 0) {
+                        try {
+                            rawpathcache[marker._rawIndex] = [];
+                            rawpathcacheModels[marker._rawIndex] = null;
+                        } catch (e) {}
+                    }
+                    marker._polylines = null;
+                    marker._rawIndex = null;
+                    // Refresh waypoints
+                    if (typeof clearWaypoints === 'function') {
+                        clearWaypoints();
+                        if (waypointsToggle) { showWaypoints(); }
+                    }
+                } else {
+                    // Draw trajectory now
+                    const prevLen = currpaths.length;
+                    // Track model id for rawpathcache alignment; use model 0 for multi
+                    try { rawpathcacheModels.push(0); } catch (e) {}
+                    makepaths(btype, allpaths, false);
+                    const newPolys = currpaths.slice(prevLen);
+                    marker._polylines = newPolys;
+                    marker._rawIndex = (rawpathcache && rawpathcache.length) ? rawpathcache.length - 1 : null;
+                    // Refresh waypoints if enabled
+                    if (waypointsToggle) {
+                        if (typeof clearWaypoints === 'function') clearWaypoints();
+                        if (typeof showWaypoints === 'function') showWaypoints();
+                    }
+                }
+            } catch (e) {
+                console.warn('Error toggling multi trajectory', e);
+            }
+        });
+    } catch (e) {
+        console.warn('Failed to add multi end pin', e);
+    }
+}
 
 // Cache of circles
 circleslist = [];
 
 // Shows a single compound path, but is mode-aware
-function showpath(path, modelId = 1, hourOffset = null) {
+function showpath(path, modelId = 1, hourOffset = null, endpointColor = null) {
     switch(btype) {
         case 'STANDARD':
             var rise = path[0];
@@ -390,7 +492,7 @@ function showpath(path, modelId = 1, hourOffset = null) {
             var isEnsemble = Array.isArray(window.availableModels) && window.availableModels.length > 1 && (window.ensembleEnabled || false);
             if (!isEnsemble || modelId === 0) {
                 // Set a single end pin: always for single; in ensemble only for control model
-                setEndPin(endPoint, getcolor('0'), hourOffset);
+                setEndPin(endPoint, endpointColor || getcolor('0'), hourOffset);
             }
         }
     } catch (e) {
@@ -1301,9 +1403,26 @@ async function simulate() {
                     alert('Multi mode is only available for STANDARD or ZPB.');
                 } else {
                     window.multiActive = true;
-                    // 13 staggered runs: every 2 hours from 0 to 24
-                    const offsets = [0,2,4,6,8,10,12,14,16,18,20,22,24];
-                    for (const h of offsets) {
+                    // Staggered runs: every 3 hours from 0 to 168 (one week)
+                    const offsets = [];
+                    for (let h = 0; h <= 168; h += 3) offsets.push(h);
+                    // Rainbow gradient colors (red -> purple)
+                    const total = offsets.length;
+                    function hslToHex(h, s, l) {
+                        s /= 100; l /= 100;
+                        const k = n => (n + h / 30) % 12;
+                        const a = s * Math.min(l, 1 - l);
+                        const f = n => l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)));
+                        const toHex = x => Math.round(255 * x).toString(16).padStart(2, '0');
+                        return '#' + toHex(f(0)) + toHex(f(8)) + toHex(f(4));
+                    }
+                    function getMultiGradientColor(idx, n) {
+                        if (n <= 1) return '#DC143C';
+                        const hue = 0 + (270 * idx) / (n - 1);
+                        return hslToHex(hue, 85, 50);
+                    }
+                    for (let i = 0; i < offsets.length; i++) {
+                        const h = offsets[i];
                         const t2 = time + h * 3600;
                         const url2 = URL_ROOT + "/singlezpb?timestamp="
                             + t2 + "&lat=" + lat + "&lon=" + lon + "&alt=" + alt + "&equil=" + equil + "&eqtime=" + (eqtime || 0) + "&asc=" + asc + "&desc=" + desc
@@ -1312,9 +1431,9 @@ async function simulate() {
                             const response = await fetch(url2, { signal: window.__simAbort.signal });
                             const payload = await response.json();
                             if (payload && payload !== "error" && payload !== "alt error") {
-                                // Always treat as model 0 for coloring/end-pin logic
-                                // Pass hour offset so end pin shows correct launch time
-                                showpath(payload, 0, h);
+                                // Add end pin only; defer trajectory to endpoint click
+                                const color = getMultiGradientColor(i, total);
+                                addMultiEndPin(payload, h, color);
                             }
                         } catch (e) {
                             if (e && (e.name === 'AbortError' || e.message === 'The operation was aborted.')) {
@@ -1323,6 +1442,21 @@ async function simulate() {
                             console.warn('Multi fetch failed for offset', h, e);
                         }
                     }
+                    // Draw connector line between endpoints after multi completes
+                    try {
+                        if (multiEndPositions && multiEndPositions.length > 1) {
+                            if (multiConnectorPath) { multiConnectorPath.setMap(null); multiConnectorPath = null; }
+                            multiConnectorPath = new google.maps.Polyline({
+                                path: multiEndPositions,
+                                geodesic: true,
+                                strokeColor: '#808080',
+                                strokeOpacity: 0.6,
+                                strokeWeight: 3,
+                                zIndex: 1200
+                            });
+                            multiConnectorPath.setMap(map);
+                        }
+                    } catch (e) { console.warn('Failed to draw multi connector path', e); }
                     window.multiActive = false;
                     // Skip the rest of ensemble/single flow after multi
                     if (waypointsToggle) { showWaypoints(); }
