@@ -25,8 +25,8 @@ function updateEndPinVisibility() {
         // Hide pins when zoomed out too far; scale pins with zoom
         const minZoomToShow = 7;
         const visible = zoom >= minZoomToShow;
-        // Larger scaling relative to zoom
-        let scale = Math.max(0, (zoom - 6) * 0.35 + 1.2); // zoom 7 ~1.55, 10 ~2.25, 12 ~2.95
+        // Scaling relative to zoom (base scale is 1.8)
+        let scale = Math.max(0, (zoom - 6) * 0.25 + 1.0); // zoom 7 ~1.25, 10 ~2.0, 12 ~2.5
         if (!visible) scale = 0;
 
         function setMarkerScale(marker) {
@@ -34,7 +34,7 @@ function updateEndPinVisibility() {
             if (typeof marker.setVisible === 'function') marker.setVisible(visible);
             const icon = marker.getIcon && marker.getIcon();
             if (icon && typeof icon === 'object') {
-                const newIcon = Object.assign({}, icon, { scale: Math.max(1.6, Math.min(3.2, scale)) });
+                const newIcon = Object.assign({}, icon, { scale: Math.max(1.2, Math.min(2.5, scale)) });
                 // If hidden, set very small scale to avoid flashes
                 if (!visible) newIcon.scale = 0.01;
                 try { marker.setIcon(newIcon); } catch (e) {}
@@ -304,14 +304,23 @@ function setEndPin(endPoint, color, hourOffset) {
             clearEndPin();
         }
         var position = new google.maps.LatLng(endPoint[1], endPoint[2]);
-        // Square icon - larger scale for easier clicking
+        // Circle icon - determine outline color based on mode
+        var outlineColor = "#000000"; // Default black for normal/ensemble
+        if (window.multiActive && typeof hourOffset === 'number') {
+            // In multi mode: black outline for every 24 hours (0, 24, 48, 72, 96, 120, 144, 168), white for others
+            if (hourOffset % 24 === 0) {
+                outlineColor = "#000000"; // Black for 0, 24, 48, 72, 96, 120, 144, 168
+            } else {
+                outlineColor = "#ffffff"; // White for other times
+            }
+        }
         var icon = {
-            path: "M -8,-8 L 8,-8 L 8,8 L -8,8 Z",
+            path: google.maps.SymbolPath.CIRCLE,
             fillColor: color || "#000000",
             fillOpacity: 0.9,
-            strokeColor: "#ffffff",
+            strokeColor: outlineColor,
             strokeWeight: 2,
-            scale: 2.4
+            scale: 1.8
         };
         var marker = new google.maps.Marker({
             position: position,
