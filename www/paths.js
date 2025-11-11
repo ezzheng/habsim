@@ -116,10 +116,39 @@ function showWaypoints() {
 
                         // Will display time in 10:30:23 format
                         var formattedTime = hours + ':' + minutes.substr(-2) + ':' + seconds.substr(-2);
+                        
+                        // Get timezone abbreviation
+                        var tzAbbr = 'UTC';
+                        try {
+                            var timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+                            var now = new Date();
+                            var formatter = new Intl.DateTimeFormat('en-US', {
+                                timeZone: timeZone,
+                                timeZoneName: 'short'
+                            });
+                            var parts = formatter.formatToParts(now);
+                            var tzPart = parts.find(function(part) { return part.type === 'timeZoneName'; });
+                            tzAbbr = (tzPart && tzPart.value) || 'UTC';
+                        } catch (e) {
+                            // Fallback to UTC if detection fails
+                        }
+                        
+                        // Round altitude to 2 decimal places
+                        var altitude = parseFloat(allpaths[index][point][3]);
+                        var roundedAltitude = isNaN(altitude) ? allpaths[index][point][3] : altitude.toFixed(2);
+                        
+                        // Round latitude and longitude to 5 decimal places (~1m precision)
+                        var lat = parseFloat(allpaths[index][point][1]);
+                        var lon = parseFloat(allpaths[index][point][2]);
+                        var roundedLat = isNaN(lat) ? allpaths[index][point][1] : lat.toFixed(5);
+                        var roundedLon = isNaN(lon) ? allpaths[index][point][2] : lon.toFixed(5);
+                        
                         var infowindow = new google.maps.InfoWindow({
                             content: '<div style="font-family: -apple-system, BlinkMacSystemFont, \'Segoe UI\', Roboto, \'Helvetica Neue\', Arial, sans-serif; padding: 4px 6px; line-height: 1.5;">' +
-                                     '<div style="margin-bottom: 4px;"><strong style="font-weight: 600;">Altitude:</strong> ' + allpaths[index][point][3] + 'm</div>' +
-                                     '<div><strong style="font-weight: 600;">Time:</strong> ' + formattedTime + '</div>' +
+                                     '<div style="margin-bottom: 4px;"><strong style="font-weight: 600;">Altitude:</strong> ' + roundedAltitude + 'm</div>' +
+                                     '<div style="margin-bottom: 4px;"><strong style="font-weight: 600;">Latitude:</strong> ' + roundedLat + '°</div>' +
+                                     '<div style="margin-bottom: 4px;"><strong style="font-weight: 600;">Longitude:</strong> ' + roundedLon + '°</div>' +
+                                     '<div><strong style="font-weight: 600;">Time:</strong> ' + formattedTime + ' ' + tzAbbr + '</div>' +
                                      '</div>'
                         });
                         circle.addListener("mouseover", function () {

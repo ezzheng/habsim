@@ -69,26 +69,26 @@ def get_current_model() -> datetime | None:
 
 def get_most_recent_available() -> datetime:
     """Get most recent 6-hourly model run time that has extended range available.
-    Prefers model from 12 hours ago to ensure all forecast hours (up to 384h) are available.
+    Prefers model from 6 hours ago to get more recent data.
     Extended range forecasts take time to process, so newer models may not have all hours yet.
     """
     now = datetime.utcnow()
     # GEFS runs at 00, 06, 12, 18 UTC
     hour = (now.hour // 6) * 6
-    # Prefer model from 12 hours ago to ensure extended range is fully available
-    # Fall back to 6 hours ago if 12h model doesn't exist
-    model_12h = datetime(now.year, now.month, now.day, hour) - timedelta(hours=12)
+    # Prefer model from 6 hours ago to get more recent data
+    # Fall back to 12 hours ago if 6h model doesn't have extended range yet
     model_6h = datetime(now.year, now.month, now.day, hour) - timedelta(hours=6)
+    model_12h = datetime(now.year, now.month, now.day, hour) - timedelta(hours=12)
     
-    # Check if 12h model has extended range available
-    if check_data_available(model_12h, check_extended=True):
-        return model_12h
-    # Fall back to 6h model if 12h doesn't have extended range yet
-    elif check_data_available(model_6h, check_extended=False):
+    # Check if 6h model has extended range available
+    if check_data_available(model_6h, check_extended=True):
         return model_6h
-    else:
-        # Default to 12h model even if extended range isn't ready yet
+    # Fall back to 12h model if 6h doesn't have extended range yet
+    elif check_data_available(model_12h, check_extended=True):
         return model_12h
+    else:
+        # Default to 6h model even if extended range isn't ready yet
+        return model_6h
 
 def check_data_available(timestamp: datetime, check_extended: bool = False) -> bool:
     """Check if data is available for given timestamp.
@@ -253,7 +253,7 @@ def main():
             logger.info(f"Testing with most recent available: {fmt_timestamp(test_timestamp)}")
         
         # In test mode, check extended range if using a recent model
-        is_recent = (datetime.utcnow() - test_timestamp).total_seconds() < 12 * 3600
+        is_recent = (datetime.utcnow() - test_timestamp).total_seconds() < 6 * 3600
         if check_data_available(test_timestamp, check_extended=is_recent):
             logger.info(f"Data available, proceeding with download/upload...")
             success = download_and_upload_model(test_timestamp)
@@ -281,14 +281,14 @@ def main():
         now = datetime.utcnow()
         
         # Skip if too old
-        if next_run < now - timedelta(hours=12):
+        if next_run < now - timedelta(hours=6):
             logger.warning(f"Next run {fmt_timestamp(next_run)} is too old, skipping")
             next_run = get_most_recent_available()
             continue
         
         # Check if data is available (check extended range if model is recent)
-        # For models older than 12 hours, extended range should definitely be available
-        is_recent = (now - next_run).total_seconds() < 12 * 3600
+        # For models older than 6 hours, extended range should definitely be available
+        is_recent = (now - next_run).total_seconds() < 6 * 3600
         if check_data_available(next_run, check_extended=is_recent):
             logger.info(f"Data available for {fmt_timestamp(next_run)}, starting download...")
             if download_and_upload_model(next_run):
