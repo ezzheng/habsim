@@ -95,7 +95,7 @@ HABSIM uses a multi-layer caching strategy optimized for Railway (max 32GB RAM, 
 
 **Location**: RAM  
 **Storage**: `_simulator_cache` `{model_id: simulator}`  
-**Capacity**: 5 simulators (normal) → 25 simulators (ensemble) per worker  
+**Capacity**: 10 simulators (normal) → 30 simulators (ensemble) per worker  
 **Eviction**: LRU with aggressive cleanup, guarded by `_cache_lock`
 
 **Dynamic behavior**
@@ -217,7 +217,7 @@ HABSIM uses a multi-layer caching strategy optimized for Railway (max 32GB RAM, 
   - Both run in parallel using the same 32-worker pool
   - Returns `{paths: [...], heatmap_data: [...]}` for frontend visualization
 - **Auto-extension**: Each ensemble run extends ensemble mode by 60 seconds (maximum 5 minutes total)
-- **Auto-trimming**: Cache trims back to 5 simulators 60 seconds after last ensemble run
+- **Auto-trimming**: Cache trims back to 10 simulators 60 seconds after last ensemble run
 - **Maximum Duration Cap**: Ensemble mode is capped at 5 minutes to prevent indefinite extension from consecutive calls
 - **Ensemble Mode Only**: Ensemble mode is ONLY extended by `/sim/spaceshot` endpoint (explicit ensemble + Monte Carlo calls). Single model requests (`/sim/singlezpb`) do NOT extend ensemble mode
 
@@ -271,7 +271,7 @@ HABSIM uses a multi-layer caching strategy optimized for Railway (max 32GB RAM, 
 **Ensemble Mode**:
 - Auto-enabled when `/sim/spaceshot` is called (ONLY endpoint that extends ensemble mode)
 - Duration: 60 seconds (1 minute, auto-extends with each ensemble run, but capped at 5 minutes maximum)
-- Auto-trims cache to 5 simulators after expiration (within 60-90 seconds after last ensemble call)
+- Auto-trims cache to 10 simulators after expiration (within 60-90 seconds after last ensemble call)
 - **Important**: Single model requests (`/sim/singlezpb`) do NOT extend ensemble mode to prevent memory bloat
 
 ## Performance Profile
