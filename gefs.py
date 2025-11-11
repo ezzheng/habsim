@@ -721,12 +721,12 @@ def _ensure_cached(file_name: str) -> Path:
                         logging.error(f"Download failed with fatal error for {file_name}: {e}")
                         if lock_fd:
                             try:
-                            import fcntl
-                            fcntl.flock(lock_fd.fileno(), fcntl.LOCK_UN)
-                            lock_fd.close()
-                        except:
-                            pass
-                    raise
+                                import fcntl
+                                fcntl.flock(lock_fd.fileno(), fcntl.LOCK_UN)
+                                lock_fd.close()
+                            except:
+                                pass
+                        raise
                 else:
                     # Retryable error - log and retry
                     logging.warning(f"Download attempt {attempt + 1}/{max_retries} failed for {file_name}: {e}. Retrying in {wait_time}s...")
