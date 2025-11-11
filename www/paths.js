@@ -15,6 +15,57 @@ var lastLaunchInfo = null;
 // Multi connector path and collected end positions
 var multiConnectorPath = null;
 var multiEndPositions = [];
+// Zoom listener for end pins
+var endPinZoomListener = null;
+
+function updateEndPinVisibility() {
+    try {
+        if (!map) return;
+        const zoom = map.getZoom ? map.getZoom() : 10;
+        // Hide pins when zoomed out too far; scale pins with zoom
+        const minZoomToShow = 7;
+        const visible = zoom >= minZoomToShow;
+        // Compute scale relative to zoom (approximate)
+        let scale = Math.max(0, (zoom - 6) * 0.2); // zoom 7 => 0.2, 10 => 0.8, 12 => 1.2
+        if (!visible) scale = 0;
+
+        function setMarkerScale(marker) {
+            if (!marker) return;
+            if (typeof marker.setVisible === 'function') marker.setVisible(visible);
+            const icon = marker.getIcon && marker.getIcon();
+            if (icon && typeof icon === 'object') {
+                const newIcon = Object.assign({}, icon, { scale: Math.max(0.6, Math.min(1.6, scale)) });
+                // If hidden, set very small scale to avoid flashes
+                if (!visible) newIcon.scale = 0.01;
+                try { marker.setIcon(newIcon); } catch (e) {}
+            }
+        }
+
+        // Single mode marker
+        if (endPinMarker) setMarkerScale(endPinMarker);
+        // Multi markers
+        if (endPinMarkers && endPinMarkers.length) {
+            for (const m of endPinMarkers) setMarkerScale(m);
+        }
+    } catch (e) {}
+}
+
+function ensureEndPinZoomListener() {
+    try {
+        if (!map || !google || !google.maps) return;
+        if (endPinZoomListener) return;
+        endPinZoomListener = google.maps.event.addListener(map, 'zoom_changed', updateEndPinVisibility);
+    } catch (e) {}
+}
+
+function clearEndPinZoomListener() {
+    try {
+        if (endPinZoomListener && google && google.maps && google.maps.event) {
+            google.maps.event.removeListener(endPinZoomListener);
+            endPinZoomListener = null;
+        }
+    } catch (e) {}
+}
 
 // Shows a single compound path, mode unaware
 function makepaths(btype, allpaths, isControl = false){
@@ -50,6 +101,8 @@ function clearAllVisualizations() {
     clearWaypoints();
     // Clear end pin
     clearEndPin();
+    // Clear zoom listener
+    clearEndPinZoomListener();
     // Clear multi connector path and positions
     try {
         if (multiConnectorPath) {
@@ -357,6 +410,9 @@ function setEndPin(endPoint, color, hourOffset) {
             endPinMarker = marker;
             endPinInfoWindow = info;
         }
+        // Ensure zoom handling is active and apply current zoom state
+        ensureEndPinZoomListener();
+        updateEndPinVisibility();
     } catch (e) {
         console.warn('Failed to set end pin', e);
     }
