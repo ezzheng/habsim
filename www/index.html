@@ -70,11 +70,22 @@
             top: auto !important;
         }
         
+        /* Dropdown menu: goes up on desktop (bottom left), down on mobile (top left) */
+        .custom-map-type-menu {
+            bottom: 45px !important;
+            top: auto !important;
+        }
+        
         @media (max-width: 768px) {
             .custom-map-type-container {
                 bottom: auto !important;
                 top: 0 !important;
                 left: 0 !important;
+            }
+            
+            .custom-map-type-menu {
+                bottom: auto !important;
+                top: 45px !important;
             }
         }
         
@@ -82,7 +93,7 @@
         .custom-fullscreen-container {
             position: absolute;
             bottom: 10px;
-            left: 10px;
+            right: 10px;
             z-index: 1000;
         }
         

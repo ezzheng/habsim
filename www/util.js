@@ -60,9 +60,9 @@ google.maps.event.addListener(map, 'click', function (event) {
         // Create dropdown menu
         const dropdownMenu = document.createElement('div');
         dropdownMenu.id = 'custom-map-type-menu';
+        dropdownMenu.className = 'custom-map-type-menu';
         dropdownMenu.style.cssText = `
             position: absolute;
-            bottom: 45px;
             left: 0;
             background-color: white;
             border-radius: 2px;
