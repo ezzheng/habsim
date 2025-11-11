@@ -101,11 +101,12 @@ class ElevationFile:
         lat = max(-90, min(90, lat))
         
         # Convert to array indices
-        x = int(round((lon + 180) * self.resolution_lon))
-        y = int(round((90 - lat) * self.resolution_lat)) - 1
+        # Use (shape - 1) because array has n points covering n-1 intervals
+        shape = self.data.shape
+        x = int(round((lon + 180) / 360.0 * (shape[1] - 1)))
+        y = int(round((90 - lat) / 180.0 * (shape[0] - 1)))
         
         # Clamp indices to valid array bounds
-        shape = self.data.shape
         x = max(0, min(x, shape[1] - 1))
         y = max(0, min(y, shape[0] - 1))
         

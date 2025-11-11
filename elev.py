@@ -25,9 +25,16 @@ def getElevation(lat, lon):
     """Get elevation with bilinear interpolation for smoother results"""
     data, shape = _get_elev_data()
     
+    # Normalize longitude to [-180, 180] range
+    lon = ((lon + 180) % 360) - 180
+    
+    # Clamp latitude to valid range
+    lat = max(-90, min(90, lat))
+    
     # Convert lat/lon to grid coordinates (continuous)
-    x_float = (lon + 180) * _RESOLUTION_LON
-    y_float = (90 - lat) * _RESOLUTION_LAT - 1
+    # Use (shape - 1) because array has n points covering n-1 intervals
+    x_float = (lon + 180) / 360.0 * (shape[1] - 1)
+    y_float = (90 - lat) / 180.0 * (shape[0] - 1)
     
     # Get integer indices and fractional parts for interpolation
     x0 = int(np.floor(x_float))
