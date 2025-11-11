@@ -523,7 +523,6 @@ def _ensure_cached(file_name: str) -> Path:
                 # This ensures we're cleaning up OUR OWN failed attempt, not another worker's
                 try:
                     # Check file age - if it's very old (>5 minutes), it's probably stale
-                    import time
                     file_age = time.time() - tmp_path.stat().st_mtime
                     if file_age > 300:  # 5 minutes
                         tmp_path.unlink()
