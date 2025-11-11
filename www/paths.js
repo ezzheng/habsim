@@ -301,7 +301,28 @@ function setEndPin(endPoint, color) {
             + '</div>';
         var info = new google.maps.InfoWindow({ content: contentHtml });
         marker.addListener('click', function() {
-            info.open(map, marker);
+            // Toggle behavior: if already open, close it; otherwise open it
+            if (info.getMap()) {
+                // Info window is open, close it
+                info.close();
+            } else {
+                // Close any other open end pin info windows first
+                if (window.multiActive) {
+                    // Close all other multi end pin info windows
+                    for (var i = 0; i < endPinInfoWindows.length; i++) {
+                        if (endPinInfoWindows[i] && endPinInfoWindows[i].getMap()) {
+                            endPinInfoWindows[i].close();
+                        }
+                    }
+                } else {
+                    // Close single end pin info window if open
+                    if (endPinInfoWindow && endPinInfoWindow.getMap()) {
+                        endPinInfoWindow.close();
+                    }
+                }
+                // Open this info window
+                info.open(map, marker);
+            }
         });
         if (window.multiActive) {
             endPinMarkers.push(marker);
@@ -1274,8 +1295,8 @@ async function simulate() {
                     alert('Multi mode is only available for STANDARD or ZPB.');
                 } else {
                     window.multiActive = true;
-                    // 9 staggered runs: 0,3,6,...,24 hours
-                    const offsets = [0,3,6,9,12,15,18,21,24];
+                    // 13 staggered runs: every 2 hours from 0 to 24
+                    const offsets = [0,2,4,6,8,10,12,14,16,18,20,22,24];
                     for (const h of offsets) {
                         const t2 = time + h * 3600;
                         const url2 = URL_ROOT + "/singlezpb?timestamp="
