@@ -237,7 +237,8 @@ HABSIM uses a multi-layer caching strategy optimized for Railway (max 32GB RAM, 
 - **Aggressive GC**: Trim passes run multiple GC cycles (including generation 2) followed by `malloc_trim(0)` so freed pages return to the OS.
 - **Idle reset**: Workers that stay idle for 180 s trigger `_idle_memory_cleanup()`—clears simulators, resets ensemble mode, runs GC, trims RSS—while leaving `worldelev.npy` mapped.
 - **Ensemble cap**: Cache expansion is capped at 5 minutes of continuous ensemble mode; after that, limits snap back to normal even if calls continue.
-- **Worker recycling**: `max_requests = 800` provides a final safeguard against long-lived leaks.
+- **Defensive checks**: Multiple validation points to ensure simulator wind_file is not None, preventing race condition crashes.
+- **Worker recycling**: `max_requests = 1000` provides a final safeguard against long-lived leaks.
 
 ## UI Optimizations
 - Elevation fetching debounced (150ms) to prevent rapid-fire requests
