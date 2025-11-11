@@ -1,6 +1,22 @@
 import threading
 import numpy as np
 from gefs import load_gefs
+import logging
+
+# Get logger - will use app.logger if available, otherwise root logger
+_logger = None
+
+def set_logger(logger):
+    """Set the logger to use for elevation logging"""
+    global _logger
+    _logger = logger
+
+def _get_logger():
+    """Get the logger, using app.logger if available"""
+    global _logger
+    if _logger is not None:
+        return _logger
+    return logging.getLogger(__name__)
 
 _ELEV_DATA = None
 _ELEV_SHAPE = None
@@ -25,18 +41,15 @@ def _get_elev_data():
         # Use memory-mapped read to avoid loading the whole array into RAM repeatedly
         path = load_gefs('worldelev.npy')
         if path is None:
-            import logging
-            logging.error("load_gefs('worldelev.npy') returned None")
+            _get_logger().error("load_gefs('worldelev.npy') returned None")
             return None, None
         _ELEV_DATA = np.load(path, mmap_mode='r')
         if _ELEV_DATA is None:
-            import logging
-            logging.error("np.load() returned None for worldelev.npy")
+            _get_logger().error("np.load() returned None for worldelev.npy")
             return None, None
         _ELEV_SHAPE = _ELEV_DATA.shape
         if _ELEV_SHAPE is None or len(_ELEV_SHAPE) != 2:
-            import logging
-            logging.error(f"Invalid shape for worldelev.npy: {_ELEV_SHAPE}")
+            _get_logger().error(f"Invalid shape for worldelev.npy: {_ELEV_SHAPE}")
             return None, None
         # Calculate actual resolution from file dimensions
         actual_height, actual_width = _ELEV_SHAPE
@@ -50,8 +63,7 @@ def getElevation(lat, lon):
     
     # Check if data loaded successfully
     if data is None or shape is None:
-        import logging
-        logging.error(f"Elevation data not loaded for ({lat}, {lon})")
+        _get_logger().error(f"Elevation data not loaded for ({lat}, {lon})")
         return 0
     
     # Convert lat/lon to grid coordinates (continuous)
@@ -89,8 +101,7 @@ def getElevation(lat, lon):
         
         return max(0, round(result, 2))
     except Exception as e:
-        import logging
-        logging.warning(f"Bilinear interpolation failed for ({lat}, {lon}): {e}, falling back to nearest neighbor")
+        _get_logger().warning(f"Bilinear interpolation failed for ({lat}, {lon}): {e}, falling back to nearest neighbor")
         # Fallback to nearest neighbor if interpolation fails
         x = int(round(x_float))
         y = int(round(y_float))
@@ -99,6 +110,5 @@ def getElevation(lat, lon):
         try:
             return max(0, round(float(data[y, x]), 2))
         except Exception as e2:
-            import logging
-            logging.error(f"Nearest neighbor fallback also failed for ({lat}, {lon}): {e2}")
+            _get_logger().error(f"Nearest neighbor fallback also failed for ({lat}, {lon}): {e2}")
             return 0
