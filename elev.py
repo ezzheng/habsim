@@ -5,7 +5,8 @@ from gefs import load_gefs
 _ELEV_DATA = None
 _ELEV_SHAPE = None
 _ELEV_LOCK = threading.Lock()
-_RESOLUTION = 120  # points per degree
+_RESOLUTION_LAT = 58  # points per degree for latitude (10440 / 180)
+_RESOLUTION_LON = 60  # points per degree for longitude (21600 / 360)
 
 def _get_elev_data():
     global _ELEV_DATA, _ELEV_SHAPE
@@ -25,8 +26,8 @@ def getElevation(lat, lon):
     data, shape = _get_elev_data()
     
     # Convert lat/lon to grid coordinates (continuous)
-    x_float = (lon + 180) * _RESOLUTION
-    y_float = (90 - lat) * _RESOLUTION - 1
+    x_float = (lon + 180) * _RESOLUTION_LON
+    y_float = (90 - lat) * _RESOLUTION_LAT - 1
     
     # Get integer indices and fractional parts for interpolation
     x0 = int(np.floor(x_float))

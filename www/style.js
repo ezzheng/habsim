@@ -84,13 +84,13 @@ function updateServerStatus() {
             const el = document.getElementById("status");
             if (!el) return;
             el.textContent = result;
-            if(result === "Ready") {
+    if(result === "Ready") {
                 el.style.color = "#00CC00";
-            }
+    }
             else if(result === "Refreshing"){
                 el.style.color = "#FFB900";
-            }
-            else{
+    }
+    else{
                 el.style.color = "#CC0000";
             }
         })

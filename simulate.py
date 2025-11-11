@@ -96,9 +96,9 @@ def _cache_prediction(cache_key, result):
     # Evict oldest if cache is full
     if len(_prediction_cache) >= MAX_CACHE_SIZE:
         try:
-            oldest_key = min(_cache_access_times, key=_cache_access_times.get)
-            del _prediction_cache[oldest_key]
-            del _cache_access_times[oldest_key]
+        oldest_key = min(_cache_access_times, key=_cache_access_times.get)
+        del _prediction_cache[oldest_key]
+        del _cache_access_times[oldest_key]
         except (ValueError, KeyError, RuntimeError):
             # Race condition during concurrent access - safe to ignore
             # Another thread may have deleted the key already
@@ -324,8 +324,8 @@ def _get_elevation_data():
     if elevation_cache is None:
         with _elevation_lock:
             # Check again inside lock (another thread might have initialized it)
-            if elevation_cache is None:
-                elevation_cache = load_gefs('worldelev.npy')
+    if elevation_cache is None:
+        elevation_cache = load_gefs('worldelev.npy')
     return elevation_cache
 
 def set_ensemble_mode(duration_seconds=60):

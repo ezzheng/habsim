@@ -83,14 +83,15 @@ class Location(tuple): # subclass of tuple, override __iter__
         return EARTH_RADIUS * c
 
 class ElevationFile:
-    # res may not be 120
-    resolution = 120 ## points per degree
+    resolution_lat = 58  # points per degree for latitude (10440 / 180)
+    resolution_lon = 60  # points per degree for longitude (21600 / 360)
 
     def __init__(self, path): # store
         # Use memory-mapped read-only mode to avoid loading 430MB into RAM
         # This allows OS to manage page cache instead of Python holding full array
         self.data = np.load(path, mmap_mode='r')
-        self.resolution = 120
+        self.resolution_lat = 58
+        self.resolution_lon = 60
 
     def elev(self, lat, lon): # return elevation
         # Normalize longitude to [-180, 180] range
@@ -100,8 +101,8 @@ class ElevationFile:
         lat = max(-90, min(90, lat))
         
         # Convert to array indices
-        x = int(round((lon + 180) * self.resolution))
-        y = int(round((90 - lat) * self.resolution)) - 1
+        x = int(round((lon + 180) * self.resolution_lon))
+        y = int(round((90 - lat) * self.resolution_lat)) - 1
         
         # Clamp indices to valid array bounds
         shape = self.data.shape
@@ -294,9 +295,3 @@ class Simulator:
                 break
         return step_history
 
-#testing output code below this point
-#balloon = Balloon(0, 30, 40, datetime.utcfromtimestamp(1612143049))
-#simulate = Simulator(wf)
-#for i in range(1000):
-#    simulate.step(balloon, 1)
-#print(balloon.history)
