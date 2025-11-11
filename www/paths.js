@@ -205,9 +205,9 @@ function showWaypoints() {
                         
                         var infowindow = new google.maps.InfoWindow({
                             content: '<div style="font-family: -apple-system, BlinkMacSystemFont, \'Segoe UI\', Roboto, \'Helvetica Neue\', Arial, sans-serif; padding: 4px 6px; line-height: 1.5;">' +
-                                     '<div style="margin-bottom: 4px;"><strong style="font-weight: 600;">Altitude:</strong> ' + roundedAltitude + 'm</div>' +
                                      '<div style="margin-bottom: 4px;"><strong style="font-weight: 600;">Land Lat:</strong> ' + roundedLat + '°</div>' +
                                      '<div style="margin-bottom: 4px;"><strong style="font-weight: 600;">Land Lon:</strong> ' + roundedLon + '°</div>' +
+                                     '<div style="margin-bottom: 4px;"><strong style="font-weight: 600;">Land Altitude:</strong> ' + roundedAltitude + 'm</div>' +
                                      '<div><strong style="font-weight: 600;">Land Time:</strong> ' + formattedTime + ' ' + tzAbbr + '</div>' +
                                      '</div>'
                         });
@@ -310,16 +310,17 @@ function setEndPin(endPoint, color, hourOffset) {
             var lroundedLon = isNaN(llon) ? lastLaunchInfo.lon : llon.toFixed(5);
             launchSection = ''
                 + '<div style="margin-top: 6px; padding-top: 6px; border-top: 1px solid #eee;">'
-                + '<div style="margin-bottom: 4px;"><strong style="font-weight: 600;">Launch Time:</strong> ' + lformattedDate + ' ' + lformattedTime + ' ' + tzAbbr + '</div>'
                 + '<div style="margin-bottom: 4px;"><strong style="font-weight: 600;">Launch Lat:</strong> ' + lroundedLat + '°</div>'
-                + '<div><strong style="font-weight: 600;">Launch Lon:</strong> ' + lroundedLon + '°</div>'
+                + '<div style="margin-bottom: 4px;"><strong style="font-weight: 600;">Launch Lon:</strong> ' + lroundedLon + '°</div>'
+                + '<div style="margin-bottom: 4px;"><strong style="font-weight: 600;">Launch Date:</strong> ' + lformattedDate + '</div>'
+                + '<div><strong style="font-weight: 600;">Launch Time:</strong> ' + lformattedTime + ' ' + tzAbbr + '</div>'
                 + '</div>';
         }
         var contentHtml = '<div style="font-family: -apple-system, BlinkMacSystemFont, \'Segoe UI\', Roboto, \'Helvetica Neue\', Arial, sans-serif; padding: 6px 8px; line-height: 1.5;">'
-            + '<div style="margin-bottom: 4px;"><strong style="font-weight: 600;">Altitude:</strong> ' + roundedAltitude + 'm</div>'
             + '<div style="margin-bottom: 4px;"><strong style="font-weight: 600;">Land Lat:</strong> ' + roundedLat + '°</div>'
             + '<div style="margin-bottom: 4px;"><strong style="font-weight: 600;">Land Lon:</strong> ' + roundedLon + '°</div>'
-            + '<div><strong style="font-weight: 600;">Land Time:</strong> ' + formattedTime + ' ' + tzAbbr + '</div>'
+            + '<div style="margin-bottom: 4px;"><strong style="font-weight: 600;">Land Altitude:</strong> ' + roundedAltitude + 'm</div>'
+            + '<div style="margin-bottom: 4px;"><strong style="font-weight: 600;">Land Time:</strong> ' + formattedTime + ' ' + tzAbbr + '</div>'
             + launchSection
             + '</div>';
         var info = new google.maps.InfoWindow({ content: contentHtml });
