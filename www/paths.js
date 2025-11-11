@@ -258,10 +258,10 @@ function showWaypoints() {
                         
                         var infowindow = new google.maps.InfoWindow({
                             content: '<div style="font-family: -apple-system, BlinkMacSystemFont, \'Segoe UI\', Roboto, \'Helvetica Neue\', Arial, sans-serif; padding: 4px 6px; line-height: 1.5;">' +
-                                     '<div style="margin-bottom: 4px;"><strong style="font-weight: 600;">Land Lat:</strong> ' + roundedLat + '°</div>' +
-                                     '<div style="margin-bottom: 4px;"><strong style="font-weight: 600;">Land Lon:</strong> ' + roundedLon + '°</div>' +
-                                     '<div style="margin-bottom: 4px;"><strong style="font-weight: 600;">Land Altitude:</strong> ' + roundedAltitude + 'm</div>' +
-                                     '<div><strong style="font-weight: 600;">Land Time:</strong> ' + formattedTime + ' ' + tzAbbr + '</div>' +
+                                     '<div style="margin-bottom: 4px;"><strong style="font-weight: 600;">Wayp. Lat:</strong> ' + roundedLat + '°</div>' +
+                                     '<div style="margin-bottom: 4px;"><strong style="font-weight: 600;">Wayp. Lon:</strong> ' + roundedLon + '°</div>' +
+                                     '<div style="margin-bottom: 4px;"><strong style="font-weight: 600;">Wayp. Altitude:</strong> ' + roundedAltitude + ' m</div>' +
+                                     '<div><strong style="font-weight: 600;">Wayp. Time:</strong> ' + formattedTime + ' ' + tzAbbr + '</div>' +
                                      '</div>'
                         });
                         circle.addListener("mouseover", function () {
