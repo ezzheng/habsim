@@ -7,6 +7,9 @@ rawpathcacheModels = []
 // End pin state
 var endPinMarker = null;
 var endPinInfoWindow = null;
+// Support multiple end pins in Multi mode
+var endPinMarkers = [];
+var endPinInfoWindows = [];
 // Launch info captured at simulate-time
 var lastLaunchInfo = null;
 
@@ -213,21 +216,27 @@ function showWaypoints() {
 
 function clearEndPin() {
     try {
-        if (endPinInfoWindow) {
-            endPinInfoWindow.close();
-            endPinInfoWindow = null;
+        if (endPinInfoWindow) { endPinInfoWindow.close(); endPinInfoWindow = null; }
+        if (endPinMarker) { endPinMarker.setMap(null); endPinMarker = null; }
+        // Also clear multi markers
+        if (endPinInfoWindows && endPinInfoWindows.length) {
+            endPinInfoWindows.forEach(iw => { try { iw.close(); } catch(e){} });
         }
-        if (endPinMarker) {
-            endPinMarker.setMap(null);
-            endPinMarker = null;
+        if (endPinMarkers && endPinMarkers.length) {
+            endPinMarkers.forEach(m => { try { m.setMap(null); } catch(e){} });
         }
+        endPinInfoWindows = [];
+        endPinMarkers = [];
     } catch (e) {}
 }
 
 function setEndPin(endPoint, color) {
     // endPoint: [time, lat, lon, alt]
     try {
-        clearEndPin();
+        // In Multi mode, we keep all end pins; otherwise clear previous
+        if (!window.multiActive) {
+            clearEndPin();
+        }
         var position = new google.maps.LatLng(endPoint[1], endPoint[2]);
         // Square icon
         var icon = {
@@ -238,7 +247,7 @@ function setEndPin(endPoint, color) {
             strokeWeight: 2,
             scale: 1
         };
-        endPinMarker = new google.maps.Marker({
+        var marker = new google.maps.Marker({
             position: position,
             map: map,
             icon: icon,
@@ -290,10 +299,17 @@ function setEndPin(endPoint, color) {
             + '<div><strong style="font-weight: 600;">Time:</strong> ' + formattedTime + ' ' + tzAbbr + '</div>'
             + launchSection
             + '</div>';
-        endPinInfoWindow = new google.maps.InfoWindow({ content: contentHtml });
-        endPinMarker.addListener('click', function() {
-            endPinInfoWindow.open(map, endPinMarker);
+        var info = new google.maps.InfoWindow({ content: contentHtml });
+        marker.addListener('click', function() {
+            info.open(map, marker);
         });
+        if (window.multiActive) {
+            endPinMarkers.push(marker);
+            endPinInfoWindows.push(info);
+        } else {
+            endPinMarker = marker;
+            endPinInfoWindow = info;
+        }
     } catch (e) {
         console.warn('Failed to set end pin', e);
     }
@@ -1250,6 +1266,41 @@ async function simulate() {
         }
         var onlyonce = true;
         if(checkNumPos(allValues) && checkasc(asc,alt,equil)){
+            // If "Multi" label is active AND the button is enabled, run multi
+            const multiRequested = (window.ensembleEnabled === true) && (window.ensembleMultiLabel === true);
+            if (multiRequested) {
+                // Multi is only supported for STANDARD/ZPB
+                if (btype !== 'STANDARD' && btype !== 'ZPB') {
+                    alert('Multi mode is only available for STANDARD or ZPB.');
+                } else {
+                    window.multiActive = true;
+                    // 9 staggered runs: 0,3,6,...,24 hours
+                    const offsets = [0,3,6,9,12,15,18,21,24];
+                    for (const h of offsets) {
+                        const t2 = time + h * 3600;
+                        const url2 = URL_ROOT + "/singlezpb?timestamp="
+                            + t2 + "&lat=" + lat + "&lon=" + lon + "&alt=" + alt + "&equil=" + equil + "&eqtime=" + (eqtime || 0) + "&asc=" + asc + "&desc=" + desc
+                            + "&model=0";
+                        try {
+                            const response = await fetch(url2, { signal: window.__simAbort.signal });
+                            const payload = await response.json();
+                            if (payload && payload !== "error" && payload !== "alt error") {
+                                // Always treat as model 0 for coloring/end-pin logic
+                                showpath(payload, 0);
+                            }
+                        } catch (e) {
+                            if (e && (e.name === 'AbortError' || e.message === 'The operation was aborted.')) {
+                                break;
+                            }
+                            console.warn('Multi fetch failed for offset', h, e);
+                        }
+                    }
+                    window.multiActive = false;
+                    // Skip the rest of ensemble/single flow after multi
+                    if (waypointsToggle) { showWaypoints(); }
+                    return;
+                }
+            }
             const isHistorical = Number(document.getElementById('yr').value) < 2019;
             // Determine which models to run based on server configuration
             const ensembleEnabled = window.ensembleEnabled || false;

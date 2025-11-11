@@ -1161,13 +1161,35 @@
             // Ensemble toggle - defaults to OFF
             const ensembleBtn = document.getElementById('ensemble-toggle');
             if (ensembleBtn) {
+                // Click toggles activation (green border)
                 ensembleBtn.addEventListener('click', () => {
                     window.ensembleEnabled = !window.ensembleEnabled;
                     ensembleBtn.classList.toggle('on', window.ensembleEnabled);
+                    // If enabling, set multiActive false until simulate decides
+                    if (!window.ensembleEnabled) window.multiActive = false;
+                });
+                // Long-press toggles label between Ensemble and Multi
+                let pressTimer = null;
+                const longPressMs = 500;
+                const cancelTimer = () => { if (pressTimer) { clearTimeout(pressTimer); pressTimer = null; } };
+                ensembleBtn.addEventListener('mousedown', () => {
+                    cancelTimer();
+                    pressTimer = setTimeout(() => {
+                        window.ensembleMultiLabel = !window.ensembleMultiLabel;
+                        ensembleBtn.textContent = window.ensembleMultiLabel ? 'Multi' : 'Ensemble';
+                        // Do not auto-enable; user must click to toggle active state
+                    }, longPressMs);
+                });
+                ['mouseup','mouseleave','touchend','touchcancel'].forEach(evt => {
+                    ensembleBtn.addEventListener(evt, cancelTimer);
                 });
             }
             // Initialize ensemble state to false (not enabled by default)
             window.ensembleEnabled = false;
+            // Label mode: false = "Ensemble", true = "Multi"
+            window.ensembleMultiLabel = false;
+            // Runtime: are we currently executing multi run
+            window.multiActive = false;
         });
         
         // Helper function to get timezone abbreviation
