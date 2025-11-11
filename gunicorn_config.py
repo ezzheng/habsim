@@ -61,6 +61,14 @@ def on_starting(server):
 
 def post_fork(server, worker):
     """Called just after a worker has been forked."""
-    # Reduced verbosity - worker spawn is normal, no need to log each one
-    pass
+    # CRITICAL: Reset cache trim thread flag so each worker starts its own thread
+    # With preload_app=True, module-level code runs before fork, so threads don't get inherited
+    # We need to reset the flag so each worker can start its own periodic cleanup thread
+    try:
+        import simulate
+        simulate._cache_trim_thread_started = False
+        simulate._start_cache_trim_thread()
+        print(f"[WORKER {worker.pid}] Cache trim thread started in post_fork hook", flush=True)
+    except Exception as e:
+        print(f"[WORKER {worker.pid}] Failed to start cache trim thread in post_fork: {e}", flush=True)
 

@@ -644,36 +644,27 @@ def _trim_cache_to_normal():
                     logging.info(f"Memory before trim: {rss_before:.1f} MB RSS")
                 print(f"[WORKER {worker_pid}] Scheduled {evicted_count} simulators for delayed cleanup (will process after {_CLEANUP_DELAY}s)", flush=True)
                 logging.info(f"Scheduled {evicted_count} simulators for delayed cleanup (will process after {_CLEANUP_DELAY}s)")
-            else:
-                # Log even when no eviction needed (for visibility)
-                worker_pid = os.getpid()
-                cache_size = len(_simulator_cache)
-                print(f"[WORKER {worker_pid}] Trim check: cache size {cache_size} <= limit {_current_max_cache}, no trimming needed", flush=True)
 
 def _periodic_cache_trim():
     """Background thread that periodically trims cache when ensemble mode expires.
     This ensures idle workers trim their cache even if they don't receive requests.
     Without this, each worker process maintains its own cache, and idle workers never trim.
     """
-    worker_pid = os.getpid()
-    print(f"[WORKER {worker_pid}] Cache trim background thread started (periodic idle cleanup active)", flush=True)
-    logging.info(f"[WORKER {worker_pid}] Cache trim background thread started")
+    logging.info("Cache trim background thread started")
     consecutive_trim_failures = 0
     global _last_idle_cleanup
     while True:
         try:
             now = time.time()
             idle_duration = now - _last_activity_timestamp
-            # Log idle status periodically for debugging (every 30s when idle, or when close to threshold)
-            should_log_idle = (idle_duration > 30 and int(idle_duration) % 30 < 2) or (idle_duration >= _IDLE_RESET_TIMEOUT - 10 and idle_duration < _IDLE_RESET_TIMEOUT + 10)
-            if should_log_idle:
+            # Log idle status only when close to threshold (reduces log noise)
+            if idle_duration >= _IDLE_RESET_TIMEOUT - 10 and idle_duration < _IDLE_RESET_TIMEOUT + 10:
                 with _cache_lock:
                     cache_size = len(_simulator_cache)
                 last_cleanup_ago = (now - _last_idle_cleanup) if _last_idle_cleanup > 0 else 0
                 should_trigger = idle_duration >= _IDLE_RESET_TIMEOUT and (last_cleanup_ago >= _IDLE_CLEAN_COOLDOWN or _last_idle_cleanup == 0)
                 worker_pid = os.getpid()
-                print(f"[WORKER {worker_pid}] Idle check: {idle_duration:.1f}s idle (threshold: {_IDLE_RESET_TIMEOUT}s), cache size: {cache_size}, last_cleanup: {last_cleanup_ago:.1f}s ago, should_trigger: {should_trigger}", flush=True)
-                logging.info(f"Idle check: {idle_duration:.1f}s idle (threshold: {_IDLE_RESET_TIMEOUT}s), cache size: {cache_size}, last_cleanup: {last_cleanup_ago:.1f}s ago, should_trigger: {should_trigger}")
+                print(f"[WORKER {worker_pid}] Idle check: {idle_duration:.1f}s idle (threshold: {_IDLE_RESET_TIMEOUT}s), cache size: {cache_size}, should_trigger: {should_trigger}", flush=True)
             # Fix: Handle case where cleanup never ran (_last_idle_cleanup = 0)
             # If cleanup never ran, allow it immediately if idle threshold reached
             if _last_idle_cleanup == 0:
@@ -817,12 +808,6 @@ def _periodic_cache_trim():
                 _process_cleanup_queue()  # Process cleanup queue every cycle
                 _trim_cache_to_normal()
                 consecutive_trim_failures = 0
-                # Log periodic check occasionally (every 5 cycles = ~100 seconds) to confirm thread is running
-                worker_pid = os.getpid()
-                if int(time.time()) % 100 < 20:  # Log roughly every 100 seconds
-                    with _cache_lock:
-                        cache_size = len(_simulator_cache)
-                    print(f"[WORKER {worker_pid}] Periodic check: idle {idle_duration:.1f}s, cache size: {cache_size}", flush=True)
                 time.sleep(20)  # Check more frequently (reduced from 30s)
         except Exception as e:
             logging.error(f"Cache trim thread error: {e}", exc_info=True)
@@ -911,9 +896,11 @@ def _start_cache_trim_thread():
     global _cache_trim_thread_started
     if not _cache_trim_thread_started:
         _cache_trim_thread_started = True
-        thread = threading.Thread(target=_periodic_cache_trim, daemon=True, name="CacheTrimThread")
+        worker_pid = os.getpid()
+        thread = threading.Thread(target=_periodic_cache_trim, daemon=True, name=f"CacheTrimThread-{worker_pid}")
         thread.start()
-        logging.info("Cache trim background thread started (idle cleanup will run after 120s of inactivity)")
+        print(f"[WORKER {worker_pid}] Cache trim background thread started (idle cleanup will run after 120s of inactivity)", flush=True)
+        logging.info(f"[WORKER {worker_pid}] Cache trim background thread started (idle cleanup will run after 120s of inactivity)")
 
 # Start cleanup thread immediately when module is imported (after function definition)
 # This ensures idle cleanup works even if no simulators are accessed
