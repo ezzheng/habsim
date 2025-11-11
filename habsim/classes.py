@@ -89,61 +89,110 @@ class ElevationFile:
     def __init__(self, path): # store
         # Use memory-mapped read-only mode to avoid loading 430MB into RAM
         # This allows OS to manage page cache instead of Python holding full array
-        self.data = np.load(path, mmap_mode='r')
-        self.resolution = 60
+        if path is None:
+            import logging
+            logging.error("ElevationFile.__init__(): path is None")
+            self.data = None
+            self.resolution = 60
+            return
+        try:
+            self.data = np.load(path, mmap_mode='r')
+            if self.data is None:
+                import logging
+                logging.error("ElevationFile.__init__(): np.load() returned None")
+                self.resolution = 60
+                return
+            # Validate array dimensions match expected resolution (60 points per degree)
+            # Expected: 180 degrees latitude * 60 = 10800 points, 360 degrees longitude * 60 = 21600 points
+            expected_height = 180 * self.resolution  # 10800 for 60 resolution
+            expected_width = 360 * self.resolution   # 21600 for 60 resolution
+            actual_shape = self.data.shape
+            if len(actual_shape) != 2:
+                import logging
+                logging.error(f"ElevationFile.__init__(): Invalid shape {actual_shape}, expected 2D array")
+                self.data = None
+            elif actual_shape[0] != expected_height or actual_shape[1] != expected_width:
+                import logging
+                logging.error(f"ElevationFile.__init__(): Resolution mismatch! Expected shape ({expected_height}, {expected_width}) for resolution {self.resolution}, but got {actual_shape}")
+                # Don't set data to None - still try to use it, but log the error
+            self.resolution = 60
+        except Exception as e:
+            import logging
+            logging.error(f"ElevationFile.__init__(): Failed to load elevation data from {path}: {e}", exc_info=True)
+            self.data = None
+            self.resolution = 60
 
     def elev(self, lat, lon): # return elevation
         """Get elevation with bilinear interpolation for smoother, more accurate results"""
-        # Normalize longitude to [-180, 180] range
-        lon = ((lon + 180) % 360) - 180
-        
-        # Clamp latitude to valid range
-        lat = max(-90, min(90, lat))
-        
-        # Convert to grid coordinates (continuous)
-        x_float = (lon + 180) * self.resolution
-        y_float = (90 - lat) * self.resolution - 1
-        
-        # Get integer indices and fractional parts for interpolation
-        x0 = int(math.floor(x_float))
-        y0 = int(math.floor(y_float))
-        x1 = x0 + 1
-        y1 = y0 + 1
-        fx = x_float - x0  # fractional part in x
-        fy = y_float - y0  # fractional part in y
-        
-        # Clamp indices to valid array bounds
-        shape = self.data.shape
-        x0 = max(0, min(x0, shape[1] - 1))
-        y0 = max(0, min(y0, shape[0] - 1))
-        x1 = max(0, min(x1, shape[1] - 1))
-        y1 = max(0, min(y1, shape[0] - 1))
+        # Validate data is loaded
+        if self.data is None:
+            import logging
+            logging.error(f"ElevationFile.elev(): data is None for ({lat}, {lon})")
+            return 0
         
         try:
-            # Bilinear interpolation: sample 4 corners and blend
-            v00 = float(self.data[y0, x0])  # bottom-left
-            v10 = float(self.data[y0, x1])  # bottom-right
-            v01 = float(self.data[y1, x0])  # top-left
-            v11 = float(self.data[y1, x1])  # top-right
+            # Normalize longitude to [-180, 180] range
+            lon = ((lon + 180) % 360) - 180
             
-            # Interpolate in x direction
-            v0 = v00 * (1 - fx) + v10 * fx  # bottom edge
-            v1 = v01 * (1 - fx) + v11 * fx  # top edge
+            # Clamp latitude to valid range
+            lat = max(-90, min(90, lat))
             
-            # Interpolate in y direction
-            result = v0 * (1 - fy) + v1 * fy
+            # Convert to grid coordinates (continuous)
+            x_float = (lon + 180) * self.resolution
+            y_float = (90 - lat) * self.resolution - 1
             
-            return max(0, result)
-        except Exception:
-            # Fallback to nearest neighbor if interpolation fails
-            x = int(round(x_float))
-            y = int(round(y_float))
-            x = max(0, min(x, shape[1] - 1))
-            y = max(0, min(y, shape[0] - 1))
-            try:
-                return max(0, float(self.data[y, x]))
-            except Exception:
+            # Get integer indices and fractional parts for interpolation
+            x0 = int(math.floor(x_float))
+            y0 = int(math.floor(y_float))
+            x1 = x0 + 1
+            y1 = y0 + 1
+            fx = x_float - x0  # fractional part in x
+            fy = y_float - y0  # fractional part in y
+            
+            # Clamp indices to valid array bounds
+            shape = self.data.shape
+            if shape is None or len(shape) != 2:
+                import logging
+                logging.error(f"ElevationFile.elev(): Invalid shape {shape} for ({lat}, {lon})")
                 return 0
+            x0 = max(0, min(x0, shape[1] - 1))
+            y0 = max(0, min(y0, shape[0] - 1))
+            x1 = max(0, min(x1, shape[1] - 1))
+            y1 = max(0, min(y1, shape[0] - 1))
+            
+            try:
+                # Bilinear interpolation: sample 4 corners and blend
+                v00 = float(self.data[y0, x0])  # bottom-left
+                v10 = float(self.data[y0, x1])  # bottom-right
+                v01 = float(self.data[y1, x0])  # top-left
+                v11 = float(self.data[y1, x1])  # top-right
+                
+                # Interpolate in x direction
+                v0 = v00 * (1 - fx) + v10 * fx  # bottom edge
+                v1 = v01 * (1 - fx) + v11 * fx  # top edge
+                
+                # Interpolate in y direction
+                result = v0 * (1 - fy) + v1 * fy
+                
+                return max(0, result)
+            except Exception as e:
+                # Fallback to nearest neighbor if interpolation fails
+                import logging
+                logging.warning(f"ElevationFile.elev(): Bilinear interpolation failed for ({lat}, {lon}): {e}, falling back to nearest neighbor")
+                x = int(round(x_float))
+                y = int(round(y_float))
+                x = max(0, min(x, shape[1] - 1))
+                y = max(0, min(y, shape[0] - 1))
+                try:
+                    return max(0, float(self.data[y, x]))
+                except Exception as e2:
+                    import logging
+                    logging.error(f"ElevationFile.elev(): Nearest neighbor fallback also failed for ({lat}, {lon}): {e2}")
+                    return 0
+        except Exception as e:
+            import logging
+            logging.error(f"ElevationFile.elev(): Failed to get elevation for ({lat}, {lon}): {e}")
+            return 0
 
 class Balloon:
     def __init__(self, time=None, location=None, alt=0, ascent_rate=0, air_vector=(0,0), wind_vector=None, ground_elev=None):
