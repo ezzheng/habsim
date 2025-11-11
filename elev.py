@@ -85,17 +85,30 @@ def getElevation(lat, lon):
         fy = y_float - y0  # fractional part in y
         
         # Clamp indices to valid range
-        x0 = max(0, min(x0, shape[1] - 1))
-        y0 = max(0, min(y0, shape[0] - 1))
-        x1 = max(0, min(x1, shape[1] - 1))
-        y1 = max(0, min(y1, shape[0] - 1))
+        x0_clamped = max(0, min(x0, shape[1] - 1))
+        y0_clamped = max(0, min(y0, shape[0] - 1))
+        x1_clamped = max(0, min(x1, shape[1] - 1))
+        y1_clamped = max(0, min(y1, shape[0] - 1))
+        
+        # Debug logging for first few calls
+        import logging
+        if not hasattr(getElevation, '_debug_count'):
+            getElevation._debug_count = 0
+        if getElevation._debug_count < 3:
+            logging.info(f"Elevation lookup: lat={lat}, lon={lon}, res_lat={_RESOLUTION_LAT:.2f}, res_lon={_RESOLUTION_LON:.2f}, "
+                        f"x_float={x_float:.2f}, y_float={y_float:.2f}, x0={x0}, y0={y0}, shape={shape}")
+            getElevation._debug_count += 1
         
         try:
             # Bilinear interpolation: sample 4 corners and blend
-            v00 = float(data[y0, x0])  # bottom-left
-            v10 = float(data[y0, x1])  # bottom-right
-            v01 = float(data[y1, x0])  # top-left
-            v11 = float(data[y1, x1])  # top-right
+            v00 = float(data[y0_clamped, x0_clamped])  # bottom-left
+            v10 = float(data[y0_clamped, x1_clamped])  # bottom-right
+            v01 = float(data[y1_clamped, x0_clamped])  # top-left
+            v11 = float(data[y1_clamped, x1_clamped])  # top-right
+            
+            if getElevation._debug_count <= 3:
+                logging.info(f"Elevation values: v00={v00}, v10={v10}, v01={v01}, v11={v11}, "
+                            f"indices: ({y0_clamped},{x0_clamped}), ({y0_clamped},{x1_clamped}), ({y1_clamped},{x0_clamped}), ({y1_clamped},{x1_clamped})")
             
             # Interpolate in x direction
             v0 = v00 * (1 - fx) + v10 * fx  # bottom edge
@@ -104,6 +117,9 @@ def getElevation(lat, lon):
             # Interpolate in y direction
             result = v0 * (1 - fy) + v1 * fy
             
+            if getElevation._debug_count <= 3:
+                logging.info(f"Elevation interpolation: fx={fx:.3f}, fy={fy:.3f}, v0={v0:.2f}, v1={v1:.2f}, result={result:.2f}")
+            
             return max(0, round(result, 2))
         except Exception as e:
             # Fallback to nearest neighbor if interpolation fails
@@ -111,10 +127,13 @@ def getElevation(lat, lon):
             logging.warning(f"Bilinear interpolation failed for ({lat}, {lon}): {e}, falling back to nearest neighbor")
             x = int(round(x_float))
             y = int(round(y_float))
-            x = max(0, min(x, shape[1] - 1))
-            y = max(0, min(y, shape[0] - 1))
+            x_clamped = max(0, min(x, shape[1] - 1))
+            y_clamped = max(0, min(y, shape[0] - 1))
             try:
-                return max(0, round(float(data[y, x]), 2))
+                result = float(data[y_clamped, x_clamped])
+                if getElevation._debug_count <= 3:
+                    logging.info(f"Nearest neighbor fallback: x={x}, y={y}, clamped to ({y_clamped},{x_clamped}), value={result}")
+                return max(0, round(result, 2))
             except Exception as e2:
                 import logging
                 logging.error(f"Nearest neighbor fallback also failed for ({lat}, {lon}): {e2}")
