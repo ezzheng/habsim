@@ -22,46 +22,38 @@ def _get_elev_data():
 
 def getElevation(lat, lon):
     """
-    Returns interpolated elevation (in meters) for given lat/lon.
-    Uses bilinear interpolation. Clamps to [0, max elevation].
+    Returns interpolated elevation (meters) for given lat/lon using downsampled array.
     """
     data, shape = _get_elev_data()
+    rows, cols = shape
     
     # Clamp latitude/longitude
     lat = max(-90.0, min(90.0, lat))
     lon = ((lon + 180.0) % 360.0) - 180.0  # normalize to [-180, 180]
     
-    # Convert lat/lon to float pixel indices
-    y_float = (90.0 - lat) / 180.0 * (shape[0] - 1)   # 0=top (90N), max=bottom (-90S)
-    x_float = (lon + 180.0) / 360.0 * (shape[1] - 1)  # 0=left (-180), max=right (180)
+    # Convert lat/lon to fractional row/col
+    row_f = (90.0 - lat) / 180.0 * (rows - 1)   # 0=top (90N), max=bottom (-90S)
+    col_f = (lon + 180.0) / 360.0 * (cols - 1)  # 0=left (-180), max=right (180)
     
-    # Integer indices and fractional parts
-    x0 = int(np.floor(x_float))
-    y0 = int(np.floor(y_float))
-    x1 = min(x0 + 1, shape[1] - 1)
-    y1 = min(y0 + 1, shape[0] - 1)
-    fx = x_float - x0
-    fy = y_float - y0
+    # Clamp to valid range
+    row_f = np.clip(row_f, 0, rows - 1)
+    col_f = np.clip(col_f, 0, cols - 1)
     
-    try:
-        # Bilinear interpolation
-        v00 = float(data[y0, x0])  # top-left
-        v10 = float(data[y0, x1])  # top-right
-        v01 = float(data[y1, x0])  # bottom-left
-        v11 = float(data[y1, x1])  # bottom-right
-        
-        # Interpolate along x
-        v_top = v00 * (1 - fx) + v10 * fx
-        v_bottom = v01 * (1 - fx) + v11 * fx
-        
-        # Interpolate along y
-        elev = v_top * (1 - fy) + v_bottom * fy
-        
-        return max(0.0, round(elev, 2))
-    except Exception:
-        # fallback to nearest neighbor
-        xi = int(round(x_float))
-        yi = int(round(y_float))
-        xi = max(0, min(shape[1] - 1, xi))
-        yi = max(0, min(shape[0] - 1, yi))
-        return max(0.0, float(data[yi, xi]))
+    # Integer indices and fractional offsets
+    row0 = int(np.floor(row_f))
+    col0 = int(np.floor(col_f))
+    row1 = min(row0 + 1, rows - 1)
+    col1 = min(col0 + 1, cols - 1)
+    dr = row_f - row0
+    dc = col_f - col0
+    
+    # Bilinear interpolation
+    v00 = data[row0, col0]
+    v10 = data[row0, col1]
+    v01 = data[row1, col0]
+    v11 = data[row1, col1]
+    v_top = v00 * (1 - dc) + v10 * dc
+    v_bottom = v01 * (1 - dc) + v11 * dc
+    elev = v_top * (1 - dr) + v_bottom * dr
+    
+    return float(max(0, elev))

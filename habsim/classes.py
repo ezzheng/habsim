@@ -90,25 +90,31 @@ class ElevationFile:
 
     def elev(self, lat, lon): # return elevation
         """
-        Returns elevation (in meters) for given lat/lon using nearest neighbor lookup.
+        Returns elevation (meters) for given lat/lon using downsampled array.
+        Uses nearest neighbor lookup for speed.
         """
         shape = self.data.shape
+        rows, cols = shape
         
         # Clamp latitude/longitude
         lat = max(-90.0, min(90.0, lat))
         lon = ((lon + 180.0) % 360.0) - 180.0  # normalize to [-180, 180]
         
-        # Convert lat/lon to float pixel indices
-        y_float = (90.0 - lat) / 180.0 * (shape[0] - 1)   # 0=top (90N), max=bottom (-90S)
-        x_float = (lon + 180.0) / 360.0 * (shape[1] - 1)  # 0=left (-180), max=right (180)
+        # Convert lat/lon to fractional row/col
+        row_f = (90.0 - lat) / 180.0 * (rows - 1)   # 0=top (90N), max=bottom (-90S)
+        col_f = (lon + 180.0) / 360.0 * (cols - 1)  # 0=left (-180), max=right (180)
+        
+        # Clamp to valid range
+        row_f = np.clip(row_f, 0, rows - 1)
+        col_f = np.clip(col_f, 0, cols - 1)
         
         # Nearest neighbor lookup
-        xi = int(round(x_float))
-        yi = int(round(y_float))
-        xi = max(0, min(shape[1] - 1, xi))
-        yi = max(0, min(shape[0] - 1, yi))
+        row_i = int(round(row_f))
+        col_i = int(round(col_f))
+        row_i = max(0, min(rows - 1, row_i))
+        col_i = max(0, min(cols - 1, col_i))
         
-        return max(0, float(self.data[yi, xi]))
+        return max(0, float(self.data[row_i, col_i]))
 
 class Balloon:
     def __init__(self, time=None, location=None, alt=0, ascent_rate=0, air_vector=(0,0), wind_vector=None, ground_elev=None):
