@@ -35,8 +35,9 @@ DATA_STEP = 6 # hrs
 ### Dynamic multi-simulator LRU cache: small for single model, expands for ensemble ###
 _simulator_cache = {}  # {model_id: simulator}
 _simulator_access_times = {}  # {model_id: access_time}
-MAX_SIMULATOR_CACHE_NORMAL = 5  # Normal cache size for single model runs (~750MB)
-MAX_SIMULATOR_CACHE_ENSEMBLE = 25  # Expanded cache for ensemble runs (~3.75GB)
+# Increased cache sizes for 32GB RAM system
+MAX_SIMULATOR_CACHE_NORMAL = 10  # Normal cache size for single model runs (~1.5GB, increased from 5)
+MAX_SIMULATOR_CACHE_ENSEMBLE = 30  # Expanded cache for ensemble runs (~4.5GB, increased from 25)
 _current_max_cache = MAX_SIMULATOR_CACHE_NORMAL  # Current cache limit (dynamic)
 _ensemble_mode_until = 0  # Timestamp when ensemble mode expires
 _ensemble_mode_started = 0  # Timestamp when ensemble mode first started (for max duration tracking)
@@ -59,7 +60,7 @@ _idle_cleanup_lock = threading.Lock()
 # This ensures simulators are only cleaned up after they're definitely not in use
 _cleanup_queue = {}  # {model_id: (simulator, cleanup_timestamp)}
 _cleanup_queue_lock = threading.Lock()
-_CLEANUP_DELAY = 5.0  # Wait 5 seconds after eviction before actually cleaning up
+_CLEANUP_DELAY = 2.0  # Wait 2 seconds after eviction before actually cleaning up (reduced for faster memory release)
 
 # Prediction cache - increased for 32GB RAM
 _prediction_cache = {}
@@ -333,15 +334,19 @@ def set_ensemble_mode(duration_seconds=60):
     Note: Maximum ensemble mode duration is capped at 5 minutes to prevent memory bloat
     from consecutive ensemble calls. After 5 minutes, cache will trim even if ensemble mode
     is still being extended.
+    
+    Also triggers background prefetching of all 21 models for faster ensemble runs.
     """
     global _current_max_cache, _ensemble_mode_until, _ensemble_mode_started
     now = time.time()
     MAX_ENSEMBLE_DURATION = 300  # 5 minutes maximum
+    is_new_ensemble = False
     with _cache_lock:
         _current_max_cache = MAX_SIMULATOR_CACHE_ENSEMBLE
         # Track when ensemble mode first started
         if _ensemble_mode_until <= now:
             # Starting new ensemble mode
+            is_new_ensemble = True
             _ensemble_mode_started = now
             _ensemble_mode_until = now + duration_seconds
         else:
@@ -354,12 +359,39 @@ def set_ensemble_mode(duration_seconds=60):
                 new_expiry = now + duration_seconds
                 max_allowed_expiry = _ensemble_mode_started + MAX_ENSEMBLE_DURATION
                 _ensemble_mode_until = min(new_expiry, max_allowed_expiry)
+    
+    # Prefetch all models in background when starting new ensemble mode
+    if is_new_ensemble:
+        _prefetch_ensemble_models()
 
 def _is_ensemble_mode():
     """Check if currently in ensemble mode"""
     global _ensemble_mode_until
     now = time.time()
     return _ensemble_mode_until > 0 and now < _ensemble_mode_until
+
+def _prefetch_ensemble_models():
+    """Prefetch all 21 ensemble models in background thread for faster ensemble runs.
+    This pre-warms the cache so simulations don't wait for downloads."""
+    def prefetch_worker():
+        try:
+            # Prefetch models 0-20 in background
+            for model in range(21):
+                try:
+                    # Try to get simulator (will download if needed, but won't block main thread)
+                    # Use a short timeout to avoid blocking if model is unavailable
+                    _get_simulator(model)
+                    logging.debug(f"Prefetched model {model} for ensemble mode")
+                except Exception as e:
+                    # Non-critical: some models might not be available yet
+                    logging.debug(f"Could not prefetch model {model}: {e}")
+        except Exception as e:
+            logging.warning(f"Ensemble prefetch error: {e}")
+    
+    # Start background thread (daemon so it doesn't block shutdown)
+    thread = threading.Thread(target=prefetch_worker, daemon=True, name="EnsemblePrefetch")
+    thread.start()
+    logging.info("Started background prefetching of ensemble models")
 
 def _get_rss_memory_mb():
     """Get current RSS memory usage in MB (if psutil available)"""
@@ -836,8 +868,9 @@ def _get_simulator(model):
             gc.collect()  # Help GC reclaim memory from evicted simulator
     
     # Load new simulator (outside lock to avoid blocking other threads)
-    # Use memory-mapped access to keep memory low and avoid large preloads
-    preload_arrays = False
+    # Preload arrays in ensemble mode for CPU-bound performance (faster simulations)
+    # Use memory-mapping in normal mode for memory efficiency
+    preload_arrays = _is_ensemble_mode()
     
     try:
         load_start = time.time()

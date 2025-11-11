@@ -45,9 +45,10 @@ if not _AWS_SECRET_ACCESS_KEY:
     raise ValueError("AWS_SECRET_ACCESS_KEY environment variable is not set. Please configure it in Railway settings.")
 
 # Configure boto3 with retries and connection pooling
+# Increased to 64 connections for ensemble workloads (2 devices × 21 models = 42 concurrent downloads)
 _S3_CONFIG = Config(
     retries={'max_attempts': 3, 'mode': 'adaptive'},
-    max_pool_connections=32,
+    max_pool_connections=64,  # Increased from 32 for high concurrency
     connect_timeout=15,
     read_timeout=60,
 )
@@ -281,11 +282,11 @@ def _cleanup_old_cache_files():
         
         # Check size limit: Allow more headroom for concurrent old/new GEFS cycles
         # During GEFS change: old 21 files (~6.5GB) + new 21 files (~6.5GB) = ~13GB temporarily
-        # Trigger at 21GB to avoid deleting freshly downloaded files
-        MAX_NPZ_SIZE_GB = 21  # Trigger cleanup at 21GB
+        # Increased limits for 32GB RAM system
+        MAX_NPZ_SIZE_GB = 25  # Trigger cleanup at 25GB (increased from 21GB)
         if total_size_gb > MAX_NPZ_SIZE_GB:
-            # Remove files until we're under 20GB (leaves room for growth)
-            TARGET_SIZE_GB = 20
+            # Remove files until we're under 24GB (leaves room for growth)
+            TARGET_SIZE_GB = 24
             current_size = total_size_gb
             for i, f in enumerate(cached_files):
                 if current_size <= TARGET_SIZE_GB:

@@ -173,6 +173,8 @@ class WindFile:
                     pass
         
         # Need to extract from NPZ (slow, but only happens once per file)
+        # Note: Background extraction removed - npz file handle can't be safely shared across threads
+        # Synchronous extraction is acceptable since it only happens once per file
         lock = _get_memmap_lock(memmap_path)
         with lock:
             # Double-check after acquiring lock (another thread might have extracted it)
