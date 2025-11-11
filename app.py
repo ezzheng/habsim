@@ -319,7 +319,8 @@ def cache_status():
             'started': ensemble_started,
             'expires_at': ensemble_until,
             'seconds_until_expiry': max(0, round(ensemble_until - now, 1)) if ensemble_until > 0 else 0,
-            'seconds_since_start': round(now - ensemble_started, 1) if ensemble_started > 0 else 0
+            'seconds_since_start': round(now - ensemble_started, 1) if ensemble_started > 0 else 0,
+            'note': 'Status is per-worker (Gunicorn multi-worker). This worker may differ from the one handling ensemble requests.'
         },
         'idle_cleanup': {
             'idle_duration_seconds': round(idle_duration, 1),

@@ -181,6 +181,13 @@ def _idle_memory_cleanup(idle_duration):
     if not _idle_cleanup_lock.acquire(blocking=False):
         return
     try:
+        # Safety check: ensure no simulators are currently in use
+        with _in_use_lock:
+            models_in_use = _in_use_models.copy()
+        if models_in_use:
+            logging.warning(f"Idle cleanup skipped: {len(models_in_use)} models still in use: {models_in_use}")
+            return
+        
         rss_before = _get_rss_memory_mb()
         if rss_before is not None:
             logging.info(f"Idle memory cleanup triggered after {idle_duration:.1f}s without requests (RSS: {rss_before:.1f} MB)")
@@ -588,12 +595,16 @@ def _periodic_cache_trim():
                 should_trigger = idle_duration >= _IDLE_RESET_TIMEOUT and (last_cleanup_ago >= _IDLE_CLEAN_COOLDOWN or _last_idle_cleanup == 0)
                 logging.info(f"Idle check: {idle_duration:.1f}s idle (threshold: {_IDLE_RESET_TIMEOUT}s), cache size: {cache_size}, last_cleanup: {last_cleanup_ago:.1f}s ago, should_trigger: {should_trigger}")
             # Fix: Handle case where cleanup never ran (_last_idle_cleanup = 0)
-            # If cleanup never ran, allow it immediately (0 means "never")
+            # If cleanup never ran, allow it immediately if idle threshold reached
             if _last_idle_cleanup == 0:
                 # Cleanup never ran - allow it immediately if idle threshold reached
                 time_since_last_cleanup = float('inf')
             else:
                 time_since_last_cleanup = now - _last_idle_cleanup
+            
+            # Check if idle cleanup should run
+            should_run_idle_cleanup = (idle_duration >= _IDLE_RESET_TIMEOUT and 
+                                      (time_since_last_cleanup >= _IDLE_CLEAN_COOLDOWN or _last_idle_cleanup == 0))
             
             # Emergency cleanup: if idle >600s and cleanup never ran, force it immediately
             if idle_duration > 600 and _last_idle_cleanup == 0:
@@ -611,7 +622,7 @@ def _periodic_cache_trim():
                 time.sleep(5)
                 continue
             
-            if idle_duration >= _IDLE_RESET_TIMEOUT and time_since_last_cleanup >= _IDLE_CLEAN_COOLDOWN:
+            if should_run_idle_cleanup:
                 with _cache_lock:
                     cache_size = len(_simulator_cache)
                 logging.info(f"Idle threshold reached: {idle_duration:.1f}s without user activity, cache size: {cache_size}, triggering cleanup")
@@ -705,9 +716,11 @@ def _periodic_cache_trim():
                 try:
                     _idle_memory_cleanup(idle_duration_error)
                     _last_idle_cleanup = time.time()
+                    logging.info(f"Emergency cleanup completed after thread error")
                 except Exception as emergency_error:
                     logging.error(f"Emergency cleanup also failed: {emergency_error}", exc_info=True)
-            time.sleep(60)  # Wait longer on error
+                    _last_idle_cleanup = time.time()  # Mark as attempted even on failure
+            time.sleep(10)  # Wait shorter on error to retry faster
 
 def _force_aggressive_trim():
     """Force aggressive cache trimming - removes all but 1 most recently used simulator"""
