@@ -87,6 +87,12 @@ class ElevationFile:
         # Use memory-mapped read-only mode to avoid loading 430MB into RAM
         # This allows OS to manage page cache instead of Python holding full array
         self.data = np.load(path, mmap_mode='r')
+        rows, cols = self.data.shape
+        # Create transform for global grid: (-180, 90) at upper left, covering full globe
+        # Affine(a, b, c, d, e, f) where:
+        # a = pixel width in x (lon), b = rotation, c = upper left x (lon)
+        # d = rotation, e = pixel height in y (lat, negative for north-up), f = upper left y (lat)
+        self.transform = Affine(360.0 / cols, 0, -180.0, 0, -180.0 / rows, 90.0)
 
     def elev(self, lat, lon): # return elevation
         """
@@ -95,10 +101,7 @@ class ElevationFile:
         rows, cols = self.data.shape
         
         # Convert lat/lon to fractional row/col
-        # Equivalent to: row_f, col_f = rowcol(transform, lon, lat, op=float)
-        # For global grid: transform maps pixel (0,0) at top-left to (-180, 90)
-        row_f = (90.0 - lat) / 180.0 * rows
-        col_f = (lon + 180.0) / 360.0 * cols
+        row_f, col_f = rowcol(self.transform, lon, lat, op=float)
         
         # Clamp to valid range
         row_f = np.clip(row_f, 0, rows - 1)
