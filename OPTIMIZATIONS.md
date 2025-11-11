@@ -99,28 +99,34 @@ HABSIM uses a multi-layer caching strategy optimized for Railway (max 32GB RAM, 
 **Eviction**: LRU with aggressive cleanup, guarded by `_cache_lock`
 
 **Dynamic behavior**
-- **Normal mode**: 5 simulators (~750 MB per worker). Only model 0 is built during startup warm-up.
-- **Ensemble mode**: `/sim/spaceshot` raises the cap to 25 for 60 s (auto-extends, hard cap 5 min). Ensemble mode preloads wind arrays into RAM so runs stay CPU-bound.
-- **Auto-trim**: `_periodic_cache_trim()` wakes roughly every 20 s (or 3 s when trims fail) and shrinks back to 5 simulators once the ensemble window closes.
-- **Idle reset**: If the worker is idle for ≥180 s, `_idle_memory_cleanup()` clears every simulator, resets limits, runs multi-pass GC, and calls `malloc_trim(0)` to release memory while keeping `worldelev.npy` mapped.
+- **Normal mode**: 10 simulators (~1.5 GB per worker, increased from 5 for 32GB RAM system). Only model 0 is built during startup warm-up.
+- **Ensemble mode**: `/sim/spaceshot` raises the cap to 30 for 60 s (auto-extends, hard cap 5 min). Ensemble mode preloads wind arrays into RAM so runs stay CPU-bound (5-10s vs 50-80s with memory-mapping).
+- **Model prefetching**: Background thread prefetches all 21 models when ensemble mode starts, pre-warming cache.
+- **Auto-trim**: `_periodic_cache_trim()` wakes roughly every 20 s (or 3 s when trims fail) and shrinks back to 10 simulators once the ensemble window closes.
+- **Delayed cleanup**: 2-second delay after eviction (reduced from 5s) to prevent race conditions while ensuring faster memory release.
+- **Idle reset**: If the worker is idle for ≥120 s (reduced from 180s), `_idle_memory_cleanup()` clears every simulator, resets limits, runs multi-pass GC, and calls `malloc_trim(0)` to release memory while keeping `worldelev.npy` mapped.
+- **Defensive checks**: Validates simulator wind_file is not None at multiple points to prevent race condition crashes.
 
 **Memory usage**
-- ~150 MB per simulator when preloaded; memory-mapped access keeps single runs lighter.
-- Worst case (25 simulators) ≈ 3.75 GB per worker; idle cleanup drops usage back near the cold-start baseline automatically.
+- ~150 MB per simulator when memory-mapped (normal mode)
+- ~460 MB per simulator when preloaded (ensemble mode, faster CPU-bound performance)
+- Worst case (30 simulators preloaded) ≈ 13.8 GB per worker; idle cleanup drops usage back near the cold-start baseline automatically.
 
 ### 2. GEFS File Cache (`gefs.py`) - **Disk Cache**
 
 **Location**: `/app/data/gefs` on Railway persistent volume (or `/tmp/habsim-gefs/` fallback if PV not mounted)
 **Storage**: 21 `.npz` wind files + `worldelev.npy`
-**Capacity**: 25 `.npz` files (~7.7 GB) + `worldelev.npy` (451 MB, never evicted)
+**Capacity**: 30 `.npz` files (~9.2 GB, increased from 25 for 32GB RAM system) + `worldelev.npy` (451 MB, never evicted)
+**Size Limits**: Triggers cleanup at 25GB total size, cleans down to 24GB (increased from 21GB/20GB)
 **Eviction**: LRU by file access time (`worldelev.npy` exempt)
 **Thread safety**: `_CACHE_LOCK` plus inter-process file locks stop duplicate downloads
-**Reliability**: Extended timeouts (30 min read), stall detection, resumable downloads, corruption checks, download progress logging
+**Reliability**: Extended timeouts (30 min read), stall detection, resumable downloads, corruption checks, download progress logging, temp file race condition protection
+**Connection Pool**: 64 connections (increased from 32) for high concurrency (supports 2 devices × 21 models = 42 concurrent downloads)
 **Persistent Volume Benefits**: Lower S3 egress, faster warmups, shared cache across workers and restarts. Mount at `/app/data` to enable.
 
 **Memory Usage**:  
 - 308MB per `.npz` file
-- 25 `.npz` files: ~7.7 GB on disk
+- 30 `.npz` files: ~9.2 GB on disk
 - 430MB for `worldelev.npy`; loaded via memory-mapping (minimal RAM)
 - **Files on disk don't directly consume RAM**, but OS page cache may load accessed portions into memory
 
@@ -153,41 +159,41 @@ HABSIM uses a multi-layer caching strategy optimized for Railway (max 32GB RAM, 
 ## Memory Management
 
 ### Cache Priority
-1. **Simulator Cache** (RAM) - Dynamic: 5 normal (~750MB), 25 ensemble (~3.75GB per worker)
-   - Normal mode: Memory-mapped (I/O-bound, memory-efficient)
-   - Ensemble mode: Memory-mapped (I/O-bound, memory-efficient, manageable RAM usage)
-2. **File Cache** (Disk) - 25 files (~7.7GB on disk, no direct RAM cost)
+1. **Simulator Cache** (RAM) - Dynamic: 10 normal (~1.5GB), 30 ensemble (~13.8GB per worker when preloaded)
+   - Normal mode: Memory-mapped (I/O-bound, memory-efficient, ~150MB per simulator)
+   - Ensemble mode: Preloaded arrays (CPU-bound, faster, ~460MB per simulator, 5-10s vs 50-80s)
+2. **File Cache** (Disk) - 30 files (~9.2GB on disk, no direct RAM cost)
 3. **Prediction Cache** (RAM) - 200 entries (~40-60MB)
 4. **Math Cache** (RAM) - Minimal overhead (<1MB)
 
 ### Memory Usage Breakdown
 
 **Normal Mode (Single Model Runs):**
-- **Simulator Cache**: ~750MB per worker × 4 workers = ~3GB total (worst case if all workers cache different models)
+- **Simulator Cache**: ~1.5GB per worker × 4 workers = ~6GB total (worst case if all workers cache different models)
 - **File Cache**: 0MB direct (on disk, OS page cache managed separately)
 - **Prediction Cache**: ~40-60MB per worker
 - **Math Cache**: <2MB per worker
 - **Flask/Python**: ~200-300MB (4 workers, preload_app=True shares code)
 - **OS Overhead**: ~200-300MB
-- **Total**: ~3.5-4GB (worst case), typically ~1.5-2GB (models distributed across workers)
+- **Total**: ~6.5-7GB (worst case), typically ~2-3GB (models distributed across workers)
 
 **Ensemble Mode (Active Ensemble Runs):**
-- **Simulator Cache**: ~3.75GB per worker × 4 workers = ~15GB total (worst case - all workers cache all 21 models)
-  - Each simulator: ~150MB (includes WindFile metadata + memory-mapped data)
-  - Uses memory-mapping for memory efficiency (I/O-bound, but manageable RAM usage)
+- **Simulator Cache**: ~13.8GB per worker × 4 workers = ~55GB total (worst case - all workers cache all 30 models with preloaded arrays)
+  - Each simulator: ~460MB when preloaded (includes WindFile full array in RAM)
+  - Preloading enables CPU-bound performance (5-10s simulations vs 50-80s with memory-mapping)
 - **File Cache**: 0MB direct (on disk, OS page cache managed separately)
 - **Prediction Cache**: ~40-60MB per worker
 - **Math Cache**: <2MB per worker
 - **Flask/Python**: ~200-300MB (4 workers, preload_app=True shares code)
 - **OS Overhead**: ~200-300MB
-- **Total**: ~15-16GB (worst case), typically ~5-6GB (models distributed across workers)
+- **Total**: ~55-56GB (worst case), typically ~15-20GB (models distributed across workers, not all preloaded simultaneously)
 
 **After Ensemble Mode Expires (60 seconds):**
-- Background thread trims cache in all workers every 30 seconds
-- Simulators are evicted → memory automatically freed
-- Each worker auto-trims back to normal mode: ~750MB per worker
-- Total: ~3GB (4 workers × 750MB) after trimming
-- Frees ~12GB RAM automatically (from 15GB → 3GB worst case)
+- Background thread trims cache in all workers every 20 seconds
+- Simulators are evicted → memory automatically freed (2-second delayed cleanup)
+- Each worker auto-trims back to normal mode: ~1.5GB per worker
+- Total: ~6GB (4 workers × 1.5GB) after trimming
+- Frees ~49GB RAM automatically (from 55GB → 6GB worst case)
 
 ## Performance Optimizations
 
@@ -202,8 +208,9 @@ HABSIM uses a multi-layer caching strategy optimized for Railway (max 32GB RAM, 
 
 ### Ensemble Execution (`app.py`)
 - **ThreadPoolExecutor**: 32 workers for parallel ensemble simulation execution (fully utilizes all 32 CPUs)
-- **Dynamic Cache Expansion**: Automatically expands simulator cache to 25 when ensemble is called
-- **Memory-mapping**: Uses memory-mapped files for memory efficiency (I/O-bound, but manageable RAM usage)
+- **Dynamic Cache Expansion**: Automatically expands simulator cache to 30 when ensemble is called
+- **Preloading**: Ensemble mode preloads wind arrays into RAM for CPU-bound performance (5-10s vs 50-80s with memory-mapping)
+- **Model Prefetching**: Background thread prefetches all 21 models when ensemble mode starts, pre-warming cache
 - **Monte Carlo Integration**: `/sim/spaceshot` now runs both:
   - 21 ensemble paths (for line plotting)
   - 420 Monte Carlo simulations (20 perturbations × 21 models) for heatmap visualization
@@ -245,14 +252,17 @@ HABSIM uses a multi-layer caching strategy optimized for Railway (max 32GB RAM, 
 - `threads = 8` in `gunicorn_config.py` (8 threads per worker = 32 concurrent capacity, threads share memory)
 
 **File Cache**:
-- `_MAX_CACHED_FILES = 25` in `gefs.py` (allows 25 weather files for 21-model ensemble + buffer)
-- Cache directory: `/app/data/gefs` on Railway (ephemeral storage)
+- `_MAX_CACHED_FILES = 30` in `gefs.py` (allows 30 weather files for 21-model ensemble + buffer, increased for 32GB RAM)
+- Size limits: 25GB trigger, 24GB target (increased from 21GB/20GB)
+- Cache directory: `/app/data/gefs` on Railway (persistent volume if mounted)
+- Connection pool: 64 connections (increased from 32) for high concurrency
 
 **Simulator Cache**:
-- `MAX_SIMULATOR_CACHE_NORMAL = 5` in `simulate.py` (normal mode: 5 simulators, ~750MB per worker)
-- `MAX_SIMULATOR_CACHE_ENSEMBLE = 25` in `simulate.py` (ensemble mode: 25 simulators, ~3.75GB per worker)
+- `MAX_SIMULATOR_CACHE_NORMAL = 10` in `simulate.py` (normal mode: 10 simulators, ~1.5GB per worker, increased from 5)
+- `MAX_SIMULATOR_CACHE_ENSEMBLE = 30` in `simulate.py` (ensemble mode: 30 simulators, ~13.8GB per worker when preloaded, increased from 25)
 - Dynamic expansion/contraction based on ensemble mode
-- **Memory-mapping**: Uses memory-mapped files for memory efficiency (I/O-bound, but manageable RAM usage)
+- **Normal mode**: Memory-mapped files for memory efficiency (I/O-bound, ~150MB per simulator)
+- **Ensemble mode**: Preloaded arrays for CPU-bound performance (5-10s vs 50-80s, ~460MB per simulator)
 
 **Prediction Cache**:
 - `MAX_CACHE_SIZE = 200` in `simulate.py` (increased from 30)
@@ -274,31 +284,34 @@ HABSIM uses a multi-layer caching strategy optimized for Railway (max 32GB RAM, 
 
 ### First Ensemble Run (21 Models + Monte Carlo)
 - **Speed**: ~5-15 minutes (if files on disk) or ~5-20 minutes (if files need download)
-  - 21 ensemble paths: ~30-60 seconds
+  - 21 ensemble paths: ~5-10 seconds (with preloading, vs 30-60s with memory-mapping)
   - 420 Monte Carlo simulations: ~4-14 minutes (20× more simulations)
   - Both run in parallel using same 32-worker pool
-- **RAM**: Expands to ~20-25GB peak (worst case: 4 workers × 5-6GB each)
-  - All 25 simulators with pre-loaded arrays (100-200MB each) = ~3.75GB per worker
+  - Model prefetching pre-warms cache, eliminating download wait times
+- **RAM**: Expands to ~55GB peak (worst case: 4 workers × 13.8GB each with all 30 simulators preloaded)
+  - All 30 simulators with pre-loaded arrays (460MB each) = ~13.8GB per worker
   - Additional overhead: Python objects, elevation data, thread overhead = ~1-2GB per worker
-  - Total: 4 workers × 5-6GB = 20-25GB peak
+  - Total: 4 workers × 14-15GB = 55-60GB peak (worst case)
+  - Typical usage: ~15-20GB (models distributed across workers, not all preloaded simultaneously)
   - Monte Carlo adds trajectory computation overhead (~420KB-2MB for results)
 - **CPU**: High (32 ThreadPoolExecutor workers + 32 Gunicorn threads, CPU-bound with pre-loaded arrays)
 - **Process**: 
-  - Check if files exist on disk → download from S3 via `get_object()` if missing (streaming, 1MB chunks)
+  - Check if files exist on disk → download from S3 via `get_object()` if missing (streaming, 1MB chunks, 64 connection pool)
+  - Background prefetching loads all 21 models when ensemble mode starts
   - Create simulators with pre-loaded arrays (ensemble mode) → cache in RAM
   - **Monte Carlo Generation**: Generate 20 parameter perturbations (random variations in launch conditions)
   - Run 21 ensemble paths + 420 Monte Carlo simulations in parallel (441 total)
-  - Simulation runs CPU-bound (arrays in RAM, no disk I/O during simulation)
+  - Simulation runs CPU-bound (arrays in RAM, no disk I/O during simulation, 5-10s per simulation)
   - Files cached on disk for subsequent runs (no additional S3 egress)
 - **Output**: Returns both `paths` (21 ensemble trajectories) and `heatmap_data` (420 landing positions)
-  - **Monte Carlo Perturbations**: ±0.1° lat/lon (≈ ±11km), ±50m altitude, ±200m equilibrium altitude, ±10% equilibrium time, ±0.1 m/s ascent/descent rates
-  - **Heatmap Visualization**: 420 landing positions aggregated into probability density contours (cyan → red gradient)
+  - **Monte Carlo Perturbations**: ±0.001° lat/lon (≈ ±111m), ±50m altitude, ±200m equilibrium altitude, ±0.5h equilibrium time, ±0.5 m/s ascent/descent rates, floating coefficient 0.9-1.0 (weighted)
+  - **Heatmap Visualization**: 420 landing positions aggregated into probability density contours (green → red gradient)
 
 ### Subsequent Ensemble Runs (Within 60 Seconds)
 - **Speed**: ~5-15 minutes (simulators cached, but still need to run all simulations)
-- **RAM**: ~20-25GB peak (worst case), maintained from first run
+- **RAM**: ~55GB peak (worst case), maintained from first run
 - **CPU**: High (32 ThreadPoolExecutor workers + 32 Gunicorn threads, CPU-bound)
-- **Why Faster**: All 25 simulators already in RAM cache across workers (pre-loaded arrays)
+- **Why Faster**: All 30 simulators already in RAM cache across workers (pre-loaded arrays, 5-10s per simulation)
 
 ### After Ensemble Completes
 - **Trim window**: `_periodic_cache_trim()` collapses the cache back to 5 simulators once the 60 s ensemble timer expires (still capped at 5 min total).

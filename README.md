@@ -25,18 +25,22 @@ This is an offshoot of the prediction server developed for the Stanford Space In
 
 ### Simulation Engine
 - **`simulate.py`** - Simulation orchestrator
-  - Multi-simulator LRU cache: 5 simulators in normal mode, 25 during ensemble (per worker)
-  - Ensemble window auto-expires after 60s (capped at 5 minutes). When idle >3 minutes, a deep cleanup clears simulators, resets cache limits, and trims RSS via `malloc_trim(0)`
-  - Uses memory-mapped wind files by default; ensemble mode temporarily preloads arrays into RAM for speed
+  - Multi-simulator LRU cache: 10 simulators in normal mode, 30 during ensemble (per worker, optimized for 32GB RAM)
+  - Ensemble window auto-expires after 60s (capped at 5 minutes). When idle >2 minutes, a deep cleanup clears simulators, resets cache limits, and trims RSS via `malloc_trim(0)`
+  - **Normal mode**: Uses memory-mapped wind files for memory efficiency (~150MB per simulator)
+  - **Ensemble mode**: Preloads arrays into RAM for CPU-bound performance (~460MB per simulator, 5-10s simulations vs 50-80s with memory-mapping)
+  - Model prefetching: Background thread prefetches all 21 models when ensemble mode starts
   - `_periodic_cache_trim()` runs every ~20s, enforces limits, and calls the idle cleaner when appropriate
+  - Delayed cleanup queue: 2-second delay after eviction to prevent race conditions
   - Prediction cache: 200 entries, 1hr TTL; refreshed whenever GEFS cycle changes
+  - Defensive checks: Validates simulator wind_file is not None to prevent race condition crashes
   - Coordinates `WindFile`, `ElevationFile`, and `Simulator`, returning `[timestamp, lat, lon, alt]` paths
 
 - **`windfile.py`** - GEFS data parser with 4D interpolation
   - Loads NumPy-compressed `.npz` files (wind vectors at pressure levels)
   - 4D linear interpolation (4-dimensional): (latitude, longitude, altitude, time) → (u, v) wind components
   - **Normal mode**: Uses `mmap_mode='r'` (memory-mapped read-only mode) for memory-efficient access (~150MB per simulator)
-  - **Ensemble mode**: Pre-loads full arrays into RAM (~460MB per simulator) for faster CPU-bound simulation (eliminates disk I/O)
+  - **Ensemble mode**: Pre-loads full arrays into RAM (~460MB per simulator) for faster CPU-bound simulation (eliminates disk I/O, 5-10s vs 50-80s)
 
 - **`habsim/classes.py`** - Core physics classes
   - `Balloon`: State container (lat, lon, alt, time, ascent_rate, burst_alt)
@@ -49,10 +53,10 @@ This is an offshoot of the prediction server developed for the Stanford Space In
   - **Storage Backend**: AWS S3 via boto3 SDK (`boto3.client('s3')`)
   - **Authentication**: IAM credentials (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`) with region (`AWS_REGION`)
   - **Bucket**: Configurable via `S3_BUCKET_NAME` env var (default: `habsim-storage`)
-  - **Client Configuration**: Dual S3 clients - main client (32 connections, 3 retries) for large files, status client (4 connections, 2 retries) for `whichgefs` checks
+  - **Client Configuration**: Dual S3 clients - main client (64 connections, 3 retries) for large files, status client (4 connections, 2 retries) for `whichgefs` checks
   - **Operations**: `get_object()` for downloads (streaming), `upload_file()` for uploads (auto-multipart), `delete_object()` for cleanup, `list_objects_v2()` for listing
   - **Error Handling**: `ClientError` exceptions with `NoSuchKey` detection for missing files
-  - **LRU Eviction**: Max 25 weather files (~7.7GB), `worldelev.npy` (451MB) always kept
+  - **LRU Eviction**: Max 30 weather files (~9.2GB), `worldelev.npy` (451MB) always kept
   - **Caching**: Files cached on disk with access-time tracking, automatic cleanup before new downloads
   - **Download Features**: Per-file locking (fcntl), extended timeouts (30 min for large files), progress logging, stall detection (120s), NPZ validation
   - **Pre-warming**: Pre-downloads `worldelev.npy` at startup to avoid on-demand failures
@@ -152,9 +156,9 @@ This is an offshoot of the prediction server developed for the Stanford Space In
 
 ### Railway Instance (Local Disk Cache)
 - **Location**: `/app/data/gefs` on Railway (persistent volume if mounted, otherwise ephemeral storage)
-- **Files**: Up to 25 `.npz` files (~7.7GB) cached on disk
+- **Files**: Up to 30 `.npz` files (~9.2GB) cached on disk (increased for 32GB RAM system)
 - **Purpose**: Fast local access, eliminates download delays after first download
-- **Eviction**: LRU when cache exceeds 25 files (`worldelev.npy` is exempt)
+- **Eviction**: LRU when cache exceeds 30 files or 25GB total size (`worldelev.npy` is exempt)
 - **Download Strategy**: Files download on-demand with per-file locking, extended timeouts, and stall detection
 - **Model Change Cleanup**: Automatically deletes old model files when GEFS updates every 6 hours
 - **Idle effect**: Idle worker cleanup does not delete disk cache; simulators are rebuilt from these on next request
