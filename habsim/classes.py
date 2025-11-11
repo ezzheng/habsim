@@ -94,21 +94,32 @@ class ElevationFile:
         self.resolution_lon = 60
 
     def elev(self, lat, lon): # return elevation
-        # Normalize longitude to [-180, 180] range
-        lon = ((lon + 180) % 360) - 180
+        """
+        Nearest-neighbor elevation lookup that treats array pixels as CELL CENTERS.
         
-        # Clamp latitude to valid range
-        lat = max(-90, min(90, lat))
-        
-        # Convert to array indices
-        # Use (shape - 1) because array has n points covering n-1 intervals
+        Works for arbitrary (h, w) shapes that span [-90..+90] lat and [-180..+180] lon.
+        """
         shape = self.data.shape
-        x = int(round((lon + 180) / 360.0 * (shape[1] - 1)))
-        y = int(round((90 - lat) / 180.0 * (shape[0] - 1)))
+        h, w = shape
+        
+        # Normalize inputs
+        lon = ((lon + 180.0) % 360.0) - 180.0
+        lat = max(-90.0, min(90.0, lat))
+        
+        # Pixel-center mapping:
+        # Pixel centers are located at:
+        #   lon_center_i = -180 + (i + 0.5) * (360 / w)  for i in [0..w-1]
+        # So invert that mapping to get continuous index coordinate:
+        x_float = ( (lon + 180.0) / 360.0 ) * w - 0.5
+        y_float = ( (90.0 - lat) / 180.0 ) * h - 0.5
+        
+        # Nearest neighbor lookup
+        x = int(round(x_float))
+        y = int(round(y_float))
         
         # Clamp indices to valid array bounds
-        x = max(0, min(x, shape[1] - 1))
-        y = max(0, min(y, shape[0] - 1))
+        x = max(0, min(x, w - 1))
+        y = max(0, min(y, h - 1))
         
         return max(0, self.data[y, x])
 

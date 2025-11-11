@@ -1,4 +1,5 @@
 import threading
+import warnings
 import numpy as np
 from gefs import load_gefs
 
@@ -22,56 +23,72 @@ def _get_elev_data():
         return _ELEV_DATA, _ELEV_SHAPE
 
 def getElevation(lat, lon):
-    """Get elevation with bilinear interpolation for smoother results"""
+    """
+    Bilinear-interpolated elevation lookup that treats array pixels as CELL CENTERS.
+    
+    Works for arbitrary (h, w) shapes that span [-90..+90] lat and [-180..+180] lon.
+    
+    Returns elevation rounded to 2 decimals, min 0.
+    """
     data, shape = _get_elev_data()
+    h, w = shape
     
-    # Normalize longitude to [-180, 180] range
-    lon = ((lon + 180) % 360) - 180
+    # Diagnostic: compute and warn about coarse resolution
+    res_lat_deg = 180.0 / h  # degrees per pixel in latitude
+    res_lon_deg = 360.0 / w  # degrees per pixel in longitude
+    if (res_lat_deg > 1.0 or res_lon_deg > 1.0):
+        # warn once or log; using warnings.warn so it can be captured
+        warnings.warn(
+            f"Elevation grid is coarse: lat_res={res_lat_deg:.4f}°, lon_res={res_lon_deg:.4f}°. "
+            "Consider using higher-resolution elevation for accurate results."
+        )
     
-    # Clamp latitude to valid range
-    lat = max(-90, min(90, lat))
+    # Normalize inputs
+    lon = ((lon + 180.0) % 360.0) - 180.0
+    lat = max(-90.0, min(90.0, lat))
     
-    # Convert lat/lon to grid coordinates (continuous)
-    # Use (shape - 1) because array has n points covering n-1 intervals
-    x_float = (lon + 180) / 360.0 * (shape[1] - 1)
-    y_float = (90 - lat) / 180.0 * (shape[0] - 1)
+    # Pixel-center mapping:
+    # Pixel centers are located at:
+    #   lon_center_i = -180 + (i + 0.5) * (360 / w)  for i in [0..w-1]
+    # So invert that mapping to get continuous index coordinate:
+    x_float = ( (lon + 180.0) / 360.0 ) * w - 0.5
+    y_float = ( (90.0 - lat) / 180.0 ) * h - 0.5
     
-    # Get integer indices and fractional parts for interpolation
+    # Now standard bilinear interpolation using floor indices
     x0 = int(np.floor(x_float))
     y0 = int(np.floor(y_float))
-    x1 = x0 + 1
-    y1 = y0 + 1
-    fx = x_float - x0  # fractional part in x
-    fy = y_float - y0  # fractional part in y
+    fx = x_float - x0
+    fy = y_float - y0
     
-    # Clamp indices to valid range
-    x0 = max(0, min(x0, shape[1] - 1))
-    y0 = max(0, min(y0, shape[0] - 1))
-    x1 = max(0, min(x1, shape[1] - 1))
-    y1 = max(0, min(y1, shape[0] - 1))
+    # Neighbor indices (clamped)
+    x0_clamped = max(0, min(x0, w - 1))
+    y0_clamped = max(0, min(y0, h - 1))
+    x1_clamped = max(0, min(x0 + 1, w - 1))
+    y1_clamped = max(0, min(y0 + 1, h - 1))
     
     try:
-        # Bilinear interpolation: sample 4 corners and blend
-        v00 = float(data[y0, x0])  # bottom-left
-        v10 = float(data[y0, x1])  # bottom-right
-        v01 = float(data[y1, x0])  # top-left
-        v11 = float(data[y1, x1])  # top-right
+        v00 = float(data[y0_clamped, x0_clamped])
+        v10 = float(data[y0_clamped, x1_clamped])
+        v01 = float(data[y1_clamped, x0_clamped])
+        v11 = float(data[y1_clamped, x1_clamped])
         
-        # Interpolate in x direction
-        v0 = v00 * (1 - fx) + v10 * fx  # bottom edge
-        v1 = v01 * (1 - fx) + v11 * fx  # top edge
+        # If original x0/y0 were out-of-bounds, fx/fy might be outside [0,1].
+        # Clamp interpolation fractions to [0,1] to avoid weird extrapolation.
+        fx = min(max(fx, 0.0), 1.0)
+        fy = min(max(fy, 0.0), 1.0)
         
-        # Interpolate in y direction
-        result = v0 * (1 - fy) + v1 * fy
+        v0 = v00 * (1.0 - fx) + v10 * fx
+        v1 = v01 * (1.0 - fx) + v11 * fx
+        val = v0 * (1.0 - fy) + v1 * fy
         
-        return max(0, round(result, 2))
+        return max(0.0, round(float(val), 2))
     except Exception:
-        # Fallback to nearest neighbor if interpolation fails
-        x = int(round(x_float))
-        y = int(round(y_float))
-        x = max(0, min(x, shape[1] - 1))
-        y = max(0, min(y, shape[0] - 1))
+        # Fallback to nearest neighbor
+        xi = int(round(x_float))
+        yi = int(round(y_float))
+        xi = max(0, min(xi, w - 1))
+        yi = max(0, min(yi, h - 1))
         try:
-            return max(0, round(float(data[y, x]), 2))
+            return max(0.0, round(float(data[yi, xi]), 2))
         except Exception:
-            return 0
+            return 0.0
