@@ -2,6 +2,13 @@
 
 // Cache of compount paths
 rawpathcache = []
+// Track model ids corresponding to each entry in rawpathcache
+rawpathcacheModels = []
+// End pin state
+var endPinMarker = null;
+var endPinInfoWindow = null;
+// Launch info captured at simulate-time
+var lastLaunchInfo = null;
 
 // Shows a single compound path, mode unaware
 function makepaths(btype, allpaths, isControl = false){
@@ -35,6 +42,8 @@ function makepaths(btype, allpaths, isControl = false){
 function clearAllVisualizations() {
     // Clear waypoints
     clearWaypoints();
+    // Clear end pin
+    clearEndPin();
     
     // Clear all paths
     for (let path in currpaths) {
@@ -68,6 +77,7 @@ function clearAllVisualizations() {
     
     // Clear raw path cache
     rawpathcache = new Array();
+    rawpathcacheModels = new Array();
     
     console.log("Cleared all visualizations (paths, heatmap, contours)");
 }
@@ -83,6 +93,7 @@ function clearWaypoints() {
 function showWaypoints() {
     for (i in rawpathcache) {
         allpaths = rawpathcache[i]
+        var modelIdForEntry = rawpathcacheModels[i];
         for (index in allpaths) {
             for (point in allpaths[index]){
                 (function () {
@@ -91,6 +102,41 @@ function showWaypoints() {
                         lng: allpaths[index][point][2],
                     };
                     if(waypointsToggle){
+                        // Determine if this is the last point overall for this model's path
+                        var isLastPointForThisModel = false;
+                        try {
+                            var segments = allpaths;
+                            var lastSegIdx = -1;
+                            for (var si = segments.length - 1; si >= 0; si--) {
+                                if (segments[si] && segments[si].length && segments[si].length > 0) {
+                                    lastSegIdx = si;
+                                    break;
+                                }
+                            }
+                            if (lastSegIdx >= 0) {
+                                var lastPtIdx = segments[lastSegIdx].length - 1;
+                                if (String(index) === String(lastSegIdx) && Number(point) === lastPtIdx) {
+                                    isLastPointForThisModel = true;
+                                }
+                            }
+                        } catch (e) {}
+                        // Skip drawing the last waypoint circle when it's the end pin candidate:
+                        // - always in single model mode
+                        // - only for control model (modelId 0) in ensemble mode
+                        var shouldSkipForEndPin = false;
+                        try {
+                            var isEnsemble = Array.isArray(window.availableModels) && window.availableModels.length > 1 && (window.ensembleEnabled || false);
+                            if (isLastPointForThisModel) {
+                                if (!isEnsemble) {
+                                    shouldSkipForEndPin = true;
+                                } else if (modelIdForEntry === 0) {
+                                    shouldSkipForEndPin = true;
+                                }
+                            }
+                        } catch (e) {}
+                        if (shouldSkipForEndPin) {
+                            return;
+                        }
                         var circle = new google.maps.Circle({
                             strokeColor: getcolor(index),
                             strokeOpacity: 0.8,
@@ -165,6 +211,94 @@ function showWaypoints() {
     }
 }
 
+function clearEndPin() {
+    try {
+        if (endPinInfoWindow) {
+            endPinInfoWindow.close();
+            endPinInfoWindow = null;
+        }
+        if (endPinMarker) {
+            endPinMarker.setMap(null);
+            endPinMarker = null;
+        }
+    } catch (e) {}
+}
+
+function setEndPin(endPoint, color) {
+    // endPoint: [time, lat, lon, alt]
+    try {
+        clearEndPin();
+        var position = new google.maps.LatLng(endPoint[1], endPoint[2]);
+        // Square icon
+        var icon = {
+            path: "M -8,-8 L 8,-8 L 8,8 L -8,8 Z",
+            fillColor: color || "#000000",
+            fillOpacity: 0.9,
+            strokeColor: "#ffffff",
+            strokeWeight: 2,
+            scale: 1
+        };
+        endPinMarker = new google.maps.Marker({
+            position: position,
+            map: map,
+            icon: icon,
+            zIndex: 1500
+        });
+        // Build info content on click (no hover)
+        var date = new Date(endPoint[0] * 1000);
+        var hours = date.getHours();
+        var minutes = "0" + date.getMinutes();
+        var seconds = "0" + date.getSeconds();
+        var formattedTime = hours + ':' + minutes.substr(-2) + ':' + seconds.substr(-2);
+        var tzAbbr = 'UTC';
+        try {
+            var timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+            var now = new Date();
+            var formatter = new Intl.DateTimeFormat('en-US', { timeZone: timeZone, timeZoneName: 'short' });
+            var parts = formatter.formatToParts(now);
+            var tzPart = parts.find(function(part) { return part.type === 'timeZoneName'; });
+            tzAbbr = (tzPart && tzPart.value) || 'UTC';
+        } catch (e) {}
+        var altitude = parseFloat(endPoint[3]);
+        var roundedAltitude = isNaN(altitude) ? endPoint[3] : altitude.toFixed(2);
+        var lat = parseFloat(endPoint[1]);
+        var lon = parseFloat(endPoint[2]);
+        var roundedLat = isNaN(lat) ? endPoint[1] : lat.toFixed(5);
+        var roundedLon = isNaN(lon) ? endPoint[2] : lon.toFixed(5);
+        var launchSection = '';
+        if (lastLaunchInfo && typeof lastLaunchInfo.time === 'number') {
+            var ldate = new Date(lastLaunchInfo.time * 1000);
+            var lhours = ldate.getHours();
+            var lminutes = "0" + ldate.getMinutes();
+            var lseconds = "0" + ldate.getSeconds();
+            var lformattedTime = lhours + ':' + lminutes.substr(-2) + ':' + lseconds.substr(-2);
+            var llat = parseFloat(lastLaunchInfo.lat);
+            var llon = parseFloat(lastLaunchInfo.lon);
+            var lroundedLat = isNaN(llat) ? lastLaunchInfo.lat : llat.toFixed(5);
+            var lroundedLon = isNaN(llon) ? lastLaunchInfo.lon : llon.toFixed(5);
+            launchSection = ''
+                + '<div style="margin-top: 6px; padding-top: 6px; border-top: 1px solid #eee;">'
+                + '<div style="margin-bottom: 4px;"><strong style="font-weight: 600;">Launch time:</strong> ' + lformattedTime + ' ' + tzAbbr + '</div>'
+                + '<div style="margin-bottom: 4px;"><strong style="font-weight: 600;">Launch lat:</strong> ' + lroundedLat + '°</div>'
+                + '<div><strong style="font-weight: 600;">Launch lon:</strong> ' + lroundedLon + '°</div>'
+                + '</div>';
+        }
+        var contentHtml = '<div style="font-family: -apple-system, BlinkMacSystemFont, \'Segoe UI\', Roboto, \'Helvetica Neue\', Arial, sans-serif; padding: 6px 8px; line-height: 1.5;">'
+            + '<div style="margin-bottom: 4px;"><strong style="font-weight: 600;">Altitude:</strong> ' + roundedAltitude + 'm</div>'
+            + '<div style="margin-bottom: 4px;"><strong style="font-weight: 600;">Latitude:</strong> ' + roundedLat + '°</div>'
+            + '<div style="margin-bottom: 4px;"><strong style="font-weight: 600;">Longitude:</strong> ' + roundedLon + '°</div>'
+            + '<div><strong style="font-weight: 600;">Time:</strong> ' + formattedTime + ' ' + tzAbbr + '</div>'
+            + launchSection
+            + '</div>';
+        endPinInfoWindow = new google.maps.InfoWindow({ content: contentHtml });
+        endPinMarker.addListener('click', function() {
+            endPinInfoWindow.open(map, endPinMarker);
+        });
+    } catch (e) {
+        console.warn('Failed to set end pin', e);
+    }
+}
+
 
 // Cache of circles
 circleslist = [];
@@ -194,8 +328,31 @@ function showpath(path, modelId = 1) {
     }
     var allpaths = [rise, equil, fall, fpath];
     const isControl = (modelId === 0);
+    // Track model id for this path entry to support end pin exclusion logic
+    rawpathcacheModels.push(modelId);
     makepaths(btype, allpaths, isControl);
 
+    // Determine the last point of this model's trajectory and set end pin when applicable
+    try {
+        var segments = allpaths;
+        var lastSegIdx = -1;
+        for (var si = segments.length - 1; si >= 0; si--) {
+            if (segments[si] && segments[si].length && segments[si].length > 0) {
+                lastSegIdx = si;
+                break;
+            }
+        }
+        if (lastSegIdx >= 0) {
+            var endPoint = segments[lastSegIdx][segments[lastSegIdx].length - 1]; // [t, lat, lon, alt]
+            var isEnsemble = Array.isArray(window.availableModels) && window.availableModels.length > 1 && (window.ensembleEnabled || false);
+            if (!isEnsemble || modelId === 0) {
+                // Set a single end pin: always for single; in ensemble only for control model
+                setEndPin(endPoint, getcolor('0'));
+            }
+        }
+    } catch (e) {
+        console.warn('Could not determine end point for end pin', e);
+    }
 }
 
 function getcolor(index){
@@ -1008,6 +1165,8 @@ async function simulate() {
         var lat = document.getElementById('lat').value;
         var lon = document.getElementById('lon').value;
         var alt = document.getElementById('alt').value;
+        // Capture launch info for end pin details
+        lastLaunchInfo = { time: time, lat: lat, lon: lon };
         
         // Update location marker and center map if coordinates are provided
         if (lat && lon && !isNaN(parseFloat(lat)) && !isNaN(parseFloat(lon))) {

@@ -316,6 +316,12 @@ function displayCoordinates(pnt) {
     for (path in currpaths) {currpaths[path].setMap(null);}
     currpaths = new Array();
     rawpathcache = new Array();
+        if (typeof clearEndPin === 'function') {
+            try { clearEndPin(); } catch (e) {}
+        }
+        if (typeof rawpathcacheModels !== 'undefined') {
+            rawpathcacheModels = new Array();
+        }
         if (heatmapLayer) {
             try {
                 if (heatmapLayer.setMap) {
