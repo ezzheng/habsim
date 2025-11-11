@@ -27,13 +27,10 @@ def getElevation(lat, lon):
     data, shape = _get_elev_data()
     rows, cols = shape
     
-    # Clamp latitude/longitude
-    lat = max(-90.0, min(90.0, lat))
-    lon = ((lon + 180.0) % 360.0) - 180.0  # normalize to [-180, 180]
-    
     # Convert lat/lon to fractional row/col
-    row_f = (90.0 - lat) / 180.0 * (rows - 1)   # 0=top (90N), max=bottom (-90S)
-    col_f = (lon + 180.0) / 360.0 * (cols - 1)  # 0=left (-180), max=right (180)
+    # (equivalent to rowcol(transform, lon, lat, op=float))
+    row_f = (90.0 - lat) / 180.0 * (rows - 1)
+    col_f = (lon + 180.0) / 360.0 * (cols - 1)
     
     # Clamp to valid range
     row_f = np.clip(row_f, 0, rows - 1)

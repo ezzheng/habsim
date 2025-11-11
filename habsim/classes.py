@@ -90,31 +90,37 @@ class ElevationFile:
 
     def elev(self, lat, lon): # return elevation
         """
-        Returns elevation (meters) for given lat/lon using downsampled array.
-        Uses nearest neighbor lookup for speed.
+        Returns interpolated elevation (meters) for given lat/lon using downsampled array.
         """
-        shape = self.data.shape
-        rows, cols = shape
-        
-        # Clamp latitude/longitude
-        lat = max(-90.0, min(90.0, lat))
-        lon = ((lon + 180.0) % 360.0) - 180.0  # normalize to [-180, 180]
+        rows, cols = self.data.shape
         
         # Convert lat/lon to fractional row/col
-        row_f = (90.0 - lat) / 180.0 * (rows - 1)   # 0=top (90N), max=bottom (-90S)
-        col_f = (lon + 180.0) / 360.0 * (cols - 1)  # 0=left (-180), max=right (180)
+        # (equivalent to rowcol(transform, lon, lat, op=float))
+        row_f = (90.0 - lat) / 180.0 * (rows - 1)
+        col_f = (lon + 180.0) / 360.0 * (cols - 1)
         
         # Clamp to valid range
         row_f = np.clip(row_f, 0, rows - 1)
         col_f = np.clip(col_f, 0, cols - 1)
         
-        # Nearest neighbor lookup
-        row_i = int(round(row_f))
-        col_i = int(round(col_f))
-        row_i = max(0, min(rows - 1, row_i))
-        col_i = max(0, min(cols - 1, col_i))
+        # Integer indices and fractional offsets
+        row0 = int(np.floor(row_f))
+        col0 = int(np.floor(col_f))
+        row1 = min(row0 + 1, rows - 1)
+        col1 = min(col0 + 1, cols - 1)
+        dr = row_f - row0
+        dc = col_f - col0
         
-        return max(0, float(self.data[row_i, col_i]))
+        # Bilinear interpolation
+        v00 = self.data[row0, col0]
+        v10 = self.data[row0, col1]
+        v01 = self.data[row1, col0]
+        v11 = self.data[row1, col1]
+        v_top = v00 * (1 - dc) + v10 * dc
+        v_bottom = v01 * (1 - dc) + v11 * dc
+        elev = v_top * (1 - dr) + v_bottom * dr
+        
+        return float(max(0, elev))
 
 class Balloon:
     def __init__(self, time=None, location=None, alt=0, ascent_rate=0, air_vector=(0,0), wind_vector=None, ground_elev=None):
