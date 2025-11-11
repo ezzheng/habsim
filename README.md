@@ -62,7 +62,7 @@ This is an offshoot of the prediction server developed for the Stanford Space In
   - **Pre-warming**: Pre-downloads `worldelev.npy` at startup to avoid on-demand failures
 
 - **`elev.py`** - Elevation data loader
-  - Loads preprocessed `worldelev.npy` (global 0.008° resolution array)
+  - Loads preprocessed `worldelev.npy` (global ~0.017° resolution array, ~60 arc-seconds)
   - Fast bilinear interpolation (2D interpolation method) for lat/lon → meters above sea level
   - Results rounded to nearest hundredth (2 decimal places)
 

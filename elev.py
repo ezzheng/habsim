@@ -5,7 +5,7 @@ from gefs import load_gefs
 _ELEV_DATA = None
 _ELEV_SHAPE = None
 _ELEV_LOCK = threading.Lock()
-_RESOLUTION = 120  # points per degree
+_RESOLUTION = 60  # points per degree (30 arc-second source halved = 60 arc-seconds)
 
 def _get_elev_data():
     global _ELEV_DATA, _ELEV_SHAPE

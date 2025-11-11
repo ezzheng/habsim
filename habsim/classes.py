@@ -83,14 +83,14 @@ class Location(tuple): # subclass of tuple, override __iter__
         return EARTH_RADIUS * c
 
 class ElevationFile:
-    # res may not be 120
-    resolution = 120 ## points per degree
+    # res may not be 60
+    resolution = 60  # points per degree (30 arc-second source halved = 60 arc-seconds)
 
     def __init__(self, path): # store
         # Use memory-mapped read-only mode to avoid loading 430MB into RAM
         # This allows OS to manage page cache instead of Python holding full array
         self.data = np.load(path, mmap_mode='r')
-        self.resolution = 120
+        self.resolution = 60
 
     def elev(self, lat, lon): # return elevation
         """Get elevation with bilinear interpolation for smoother, more accurate results"""
