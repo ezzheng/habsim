@@ -571,29 +571,29 @@ def _ensure_cached(file_name: str) -> Path:
                             # Non-critical: socket timeout not supported, continue anyway
                             pass
                     
-                # Create temp file and download with proper resource management
-                tmp_path.parent.mkdir(parents=True, exist_ok=True)
-                bytes_written = 0
-                last_chunk_time = time.time()
-                
-                # Use context manager for file handle to ensure it's always closed
-                with open(tmp_path, 'wb') as fh:
-                    try:
-                        while True:
-                            chunk = body.read(_CHUNK_SIZE)
-                            if not chunk:
-                                break
-                            
-                            current_time = time.time()
-                            
-                            # Check for connection timeout (no data for 120 seconds)
-                            # This detects stalled downloads (retryable)
-                            if is_large_file and (current_time - last_chunk_time) > 120:
-                                raise IOError(f"Download stalled: no data received for 120 seconds (retryable)")
-                            
-                            fh.write(chunk)
-                            bytes_written += len(chunk)
-                            last_chunk_time = current_time
+                    # Create temp file and download with proper resource management
+                    tmp_path.parent.mkdir(parents=True, exist_ok=True)
+                    bytes_written = 0
+                    last_chunk_time = time.time()
+                    
+                    # Use context manager for file handle to ensure it's always closed
+                    with open(tmp_path, 'wb') as fh:
+                        try:
+                            while True:
+                                chunk = body.read(_CHUNK_SIZE)
+                                if not chunk:
+                                    break
+                                
+                                current_time = time.time()
+                                
+                                # Check for connection timeout (no data for 120 seconds)
+                                # This detects stalled downloads (retryable)
+                                if is_large_file and (current_time - last_chunk_time) > 120:
+                                    raise IOError(f"Download stalled: no data received for 120 seconds (retryable)")
+                                
+                                fh.write(chunk)
+                                bytes_written += len(chunk)
+                                last_chunk_time = current_time
                                 
                                 # Flush periodically for large files to ensure data is written to disk
                                 # This prevents data loss if process crashes mid-download
@@ -609,20 +609,20 @@ def _ensure_cached(file_name: str) -> Path:
                                     else:
                                         logging.info(f"Downloading {file_name}: {mb_written:.1f}MB")
                             
-                        # Flush and sync to disk before closing (ensures data is persisted)
-                        fh.flush()
-                        try:
-                            # os.fsync() ensures data is written to disk, not just buffer
-                            # This is critical for large files to prevent data loss
-                            os.fsync(fh.fileno())
-                        except (OSError, AttributeError):
-                            # Non-critical: fsync failed (e.g., on some file systems)
-                            # Data should still be written due to flush()
-                            pass
-                    except Exception as write_error:
-                        # Write error during download - clean up partial file
-                        # This is a retryable error
-                        raise IOError(f"Error writing {file_name} (wrote {bytes_written} bytes): {write_error}")
+                            # Flush and sync to disk before closing (ensures data is persisted)
+                            fh.flush()
+                            try:
+                                # os.fsync() ensures data is written to disk, not just buffer
+                                # This is critical for large files to prevent data loss
+                                os.fsync(fh.fileno())
+                            except (OSError, AttributeError):
+                                # Non-critical: fsync failed (e.g., on some file systems)
+                                # Data should still be written due to flush()
+                                pass
+                        except Exception as write_error:
+                            # Write error during download - clean up partial file
+                            # This is a retryable error
+                            raise IOError(f"Error writing {file_name} (wrote {bytes_written} bytes): {write_error}")
                 except ClientError as s3_error:
                     # S3 API errors (throttling, network issues, etc.) - retryable
                     error_code = s3_error.response.get('Error', {}).get('Code', '')
