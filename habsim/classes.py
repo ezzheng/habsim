@@ -84,7 +84,8 @@ class Location(tuple): # subclass of tuple, override __iter__
 
 class ElevationFile:
     # res may not be 60
-    resolution = 60  # points per degree (30 arc-second source halved = 60 arc-seconds)
+    resolution_lat = 60  # points per degree for latitude (will be calculated from file)
+    resolution_lon = 60  # points per degree for longitude (will be calculated from file)
 
     def __init__(self, path): # store
         # Use memory-mapped read-only mode to avoid loading 430MB into RAM
@@ -93,14 +94,16 @@ class ElevationFile:
             import logging
             logging.error("ElevationFile.__init__(): path is None")
             self.data = None
-            self.resolution = 60
+            self.resolution_lat = 60
+            self.resolution_lon = 60
             return
         try:
             self.data = np.load(path, mmap_mode='r')
             if self.data is None:
                 import logging
                 logging.error("ElevationFile.__init__(): np.load() returned None")
-                self.resolution = 60
+                self.resolution_lat = 60
+                self.resolution_lon = 60
                 return
             # Calculate actual resolution from file dimensions
             # Resolution = points per degree = array_size / degrees
@@ -109,28 +112,31 @@ class ElevationFile:
                 import logging
                 logging.error(f"ElevationFile.__init__(): Invalid shape {actual_shape}, expected 2D array")
                 self.data = None
-                self.resolution = 60
+                self.resolution_lat = 60
+                self.resolution_lon = 60
                 return
             
             actual_height, actual_width = actual_shape
             actual_resolution_lat = actual_height / 180.0  # points per degree for latitude
             actual_resolution_lon = actual_width / 360.0  # points per degree for longitude
             
-            # Use the actual resolution from the file instead of hardcoded value
+            # Use the actual resolutions from the file (they may differ)
             # This ensures coordinate calculations match the actual data
+            self.resolution_lat = actual_resolution_lat
+            self.resolution_lon = actual_resolution_lon
+            
             if abs(actual_resolution_lat - actual_resolution_lon) > 0.01:
                 import logging
-                logging.warning(f"ElevationFile: file has different lat/lon resolutions: {actual_resolution_lat} vs {actual_resolution_lon}, using lat resolution")
-            self.resolution = actual_resolution_lat
-            
-            if abs(self.resolution - 60) > 1:
+                logging.info(f"ElevationFile: file has different lat/lon resolutions: {actual_resolution_lat:.2f} (lat) vs {actual_resolution_lon:.2f} (lon) - using both correctly")
+            if abs(actual_resolution_lat - 60) > 1 or abs(actual_resolution_lon - 60) > 1:
                 import logging
-                logging.warning(f"ElevationFile: file resolution ({self.resolution:.2f} points/degree) differs from expected (60). Using actual resolution from file.")
+                logging.info(f"ElevationFile: file resolutions (lat: {actual_resolution_lat:.2f}, lon: {actual_resolution_lon:.2f} pts/deg) differ from expected (60). Using actual resolutions from file.")
         except Exception as e:
             import logging
             logging.error(f"ElevationFile.__init__(): Failed to load elevation data from {path}: {e}", exc_info=True)
             self.data = None
-            self.resolution = 60
+            self.resolution_lat = 60
+            self.resolution_lon = 60
 
     def elev(self, lat, lon): # return elevation
         """Get elevation with bilinear interpolation for smoother, more accurate results"""
@@ -148,8 +154,9 @@ class ElevationFile:
             lat = max(-90, min(90, lat))
             
             # Convert to grid coordinates (continuous)
-            x_float = (lon + 180) * self.resolution
-            y_float = (90 - lat) * self.resolution - 1
+            # Use separate resolutions for latitude and longitude
+            x_float = (lon + 180) * self.resolution_lon
+            y_float = (90 - lat) * self.resolution_lat - 1
             
             # Get integer indices and fractional parts for interpolation
             x0 = int(math.floor(x_float))

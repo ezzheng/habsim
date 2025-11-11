@@ -5,7 +5,8 @@ from gefs import load_gefs
 _ELEV_DATA = None
 _ELEV_SHAPE = None
 _ELEV_LOCK = threading.Lock()
-_RESOLUTION = 60  # points per degree (30 arc-second source halved = 60 arc-seconds)
+_RESOLUTION_LAT = 60  # points per degree for latitude (will be calculated from file)
+_RESOLUTION_LON = 60  # points per degree for longitude (will be calculated from file)
 
 def _get_elev_data():
     global _ELEV_DATA, _ELEV_SHAPE
@@ -38,17 +39,18 @@ def _get_elev_data():
             actual_resolution_lat = actual_height / 180.0  # points per degree for latitude
             actual_resolution_lon = actual_width / 360.0  # points per degree for longitude
             
-            # Use the actual resolution from the file instead of hardcoded value
+            # Use the actual resolutions from the file (they may differ)
             # This ensures coordinate calculations match the actual data
-            global _RESOLUTION
+            global _RESOLUTION_LAT, _RESOLUTION_LON
+            _RESOLUTION_LAT = actual_resolution_lat
+            _RESOLUTION_LON = actual_resolution_lon
+            
             if abs(actual_resolution_lat - actual_resolution_lon) > 0.01:
                 import logging
-                logging.warning(f"Elevation file has different lat/lon resolutions: {actual_resolution_lat} vs {actual_resolution_lon}, using lat resolution")
-            _RESOLUTION = actual_resolution_lat
-            
-            if abs(_RESOLUTION - 60) > 1:
+                logging.info(f"Elevation file has different lat/lon resolutions: {actual_resolution_lat:.2f} (lat) vs {actual_resolution_lon:.2f} (lon) - using both correctly")
+            if abs(actual_resolution_lat - 60) > 1 or abs(actual_resolution_lon - 60) > 1:
                 import logging
-                logging.warning(f"Elevation file resolution ({_RESOLUTION:.2f} points/degree) differs from expected (60). Using actual resolution from file.")
+                logging.info(f"Elevation file resolutions (lat: {actual_resolution_lat:.2f}, lon: {actual_resolution_lon:.2f} pts/deg) differ from expected (60). Using actual resolutions from file.")
             
             return _ELEV_DATA, _ELEV_SHAPE
         except Exception as e:
@@ -68,8 +70,9 @@ def getElevation(lat, lon):
             return 0
         
         # Convert lat/lon to grid coordinates (continuous)
-        x_float = (lon + 180) * _RESOLUTION
-        y_float = (90 - lat) * _RESOLUTION - 1
+        # Use separate resolutions for latitude and longitude
+        x_float = (lon + 180) * _RESOLUTION_LON
+        y_float = (90 - lat) * _RESOLUTION_LAT - 1
         
         # Get integer indices and fractional parts for interpolation
         x0 = int(np.floor(x_float))
