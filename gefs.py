@@ -753,58 +753,65 @@ def _ensure_cached(file_name: str) -> Path:
                     raise
         
         # If we get here, download succeeded (tmp_path exists from successful attempt)
+        # Note: tmp_path is defined in the loop, so we need to reconstruct it here
+        tmp_path = cache_path.with_suffix(cache_path.suffix + ".tmp")
         if not tmp_path.exists():
             raise IOError(f"Download failed: temp file not created for {file_name} after {max_retries} attempts")
         
         # Rename temp file to final cache location
+        # Double-check temp file exists right before rename to avoid race conditions
         try:
+            if not tmp_path.exists():
+                raise IOError(f"Download failed: temp file {tmp_path} was deleted before rename (race condition or cleanup issue)")
+            
+            # Get file size before rename for verification
+            tmp_size = tmp_path.stat().st_size
+            if tmp_size == 0:
+                raise IOError(f"Download failed: temp file {file_name} is empty before rename")
+            
             os.replace(tmp_path, cache_path)
             
             # Verify final file exists and is not empty
-            if not cache_path.exists() or cache_path.stat().st_size == 0:
-                raise IOError(f"Downloaded file {file_name} is missing or empty after rename")
+            if not cache_path.exists():
+                raise IOError(f"Downloaded file {file_name} is missing after rename (temp file was {tmp_size} bytes)")
+            
+            if cache_path.stat().st_size == 0:
+                raise IOError(f"Downloaded file {file_name} is empty after rename (temp file was {tmp_size} bytes)")
+            
+            if cache_path.stat().st_size != tmp_size:
+                raise IOError(f"Downloaded file {file_name} size mismatch after rename (expected {tmp_size} bytes, got {cache_path.stat().st_size} bytes)")
             
             download_time = time.time() - download_start
             logging.info(f"Cached {file_name} to disk in {download_time:.1f}s: {cache_path} (future reads will use zero egress)")
-            
-            # Release the file lock after successful download and rename
-            if lock_fd:
-                try:
-                    import fcntl
-                    fcntl.flock(lock_fd.fileno(), fcntl.LOCK_UN)
-                    lock_fd.close()
-                    logging.debug(f"Released download lock for {file_name}")
-                    
-                    # Clean up lock file on successful download to prevent accumulation
-                    # Lock files are small but can accumulate over time
-                    if lock_file and lock_file.exists():
-                        try:
-                            lock_file.unlink()
-                            logging.debug(f"Removed lock file: {lock_file.name}")
-                        except:
-                            pass  # Non-critical if cleanup fails
-                except Exception as lock_error:
-                    logging.warning(f"Error releasing lock for {file_name}: {lock_error}")
-        except Exception as e:
-            # Clean up partial download and release lock
-            if lock_fd:
-                try:
-                    import fcntl
-                    fcntl.flock(lock_fd.fileno(), fcntl.LOCK_UN)
-                    lock_fd.close()
-                except:
-                    pass
-            if tmp_path.exists():
-                try:
-                    tmp_path.unlink()
-                except:
-                    pass
-            if cache_path.exists() and cache_path.stat().st_size == 0:
-                try:
-                    cache_path.unlink()
-                except:
-                    pass
-            raise
+        except FileNotFoundError as e:
+            # Temp file was deleted between check and rename (race condition)
+            error_msg = f"Download failed: temp file {tmp_path} not found during rename for {file_name}. This may indicate a race condition or premature cleanup."
+            logging.error(error_msg)
+            raise IOError(error_msg) from e
+        except OSError as e:
+            # File system error during rename
+            error_msg = f"Download failed: error renaming temp file for {file_name}: {e}"
+            logging.error(error_msg)
+            raise IOError(error_msg) from e
+        
+        # Release the file lock after successful download and rename
+        if lock_fd:
+            try:
+                import fcntl
+                fcntl.flock(lock_fd.fileno(), fcntl.LOCK_UN)
+                lock_fd.close()
+                logging.debug(f"Released download lock for {file_name}")
+                
+                # Clean up lock file on successful download to prevent accumulation
+                # Lock files are small but can accumulate over time
+                if lock_file and lock_file.exists():
+                    try:
+                        lock_file.unlink()
+                        logging.debug(f"Removed lock file: {lock_file.name}")
+                    except:
+                        pass  # Non-critical if cleanup fails
+            except Exception as lock_error:
+                logging.warning(f"Error releasing lock for {file_name}: {lock_error}")
 
         # Final check that file exists
         if not cache_path.exists():
