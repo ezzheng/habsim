@@ -655,7 +655,9 @@ def _periodic_cache_trim():
     This ensures idle workers trim their cache even if they don't receive requests.
     Without this, each worker process maintains its own cache, and idle workers never trim.
     """
-    logging.info("Cache trim background thread started")
+    worker_pid = os.getpid()
+    print(f"[WORKER {worker_pid}] Cache trim background thread started (periodic idle cleanup active)", flush=True)
+    logging.info(f"[WORKER {worker_pid}] Cache trim background thread started")
     consecutive_trim_failures = 0
     global _last_idle_cleanup
     while True:
@@ -815,6 +817,12 @@ def _periodic_cache_trim():
                 _process_cleanup_queue()  # Process cleanup queue every cycle
                 _trim_cache_to_normal()
                 consecutive_trim_failures = 0
+                # Log periodic check occasionally (every 5 cycles = ~100 seconds) to confirm thread is running
+                worker_pid = os.getpid()
+                if int(time.time()) % 100 < 20:  # Log roughly every 100 seconds
+                    with _cache_lock:
+                        cache_size = len(_simulator_cache)
+                    print(f"[WORKER {worker_pid}] Periodic check: idle {idle_duration:.1f}s, cache size: {cache_size}", flush=True)
                 time.sleep(20)  # Check more frequently (reduced from 30s)
         except Exception as e:
             logging.error(f"Cache trim thread error: {e}", exc_info=True)
