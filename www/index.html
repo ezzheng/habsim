@@ -255,6 +255,9 @@
             background: var(--bg);
             border-color: #10b981;
         }
+        /* Keep normal background on hover/active for non-on state to avoid lingering gray on mobile */
+        #ensemble-toggle:hover { background: var(--bg); }
+        #ensemble-toggle:active { background: var(--bg); }
         /* Segmented button styles - commented out for Standard-only version
         .segmented {
             display: inline-flex;
