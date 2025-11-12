@@ -386,10 +386,11 @@ initMap();
         // Toggle search input on button click
         searchButton.onclick = function(e) {
             e.stopPropagation();
-            const isVisible = searchInputContainer.style.display !== 'none';
-            searchInputContainer.style.display = isVisible ? 'none' : 'block';
-            
-            if (!isVisible) {
+            const isVisible = searchInputContainer.style.display !== 'none' && searchInputContainer.style.display !== '';
+            if (isVisible) {
+                searchInputContainer.style.display = 'none';
+            } else {
+                searchInputContainer.style.display = 'block';
                 // Initialize autocomplete when search is opened (lazy initialization)
                 initAutocomplete();
                 
