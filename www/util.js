@@ -179,6 +179,164 @@ google.maps.event.addListener(map, 'click', function (event) {
     });
 })();
 
+// Custom search control with Google Places Autocomplete
+(function() {
+    // Wait for map to be ready
+    google.maps.event.addListenerOnce(map, 'idle', function() {
+        // Create search control container
+        const searchDiv = document.createElement('div');
+        searchDiv.id = 'custom-search-control';
+        searchDiv.className = 'custom-search-container';
+        searchDiv.style.cssText = 'margin: 10px; position: absolute; bottom: 0; left: 50px; z-index: 1000;';
+        
+        // Create search button
+        const searchButton = document.createElement('button');
+        searchButton.type = 'button';
+        searchButton.id = 'search-button';
+        searchButton.style.cssText = `
+            background-color: white;
+            border: none;
+            border-radius: 2px;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+            cursor: pointer;
+            padding: 0;
+            width: 40px;
+            height: 40px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+            color: #5B5B5B;
+            transition: background-color 0.1s;
+            font-family: Roboto, Arial, sans-serif;
+        `;
+        searchButton.innerHTML = '🔍';
+        searchButton.title = 'Search location';
+        
+        // Hover effect for button
+        searchButton.onmouseenter = function() {
+            this.style.backgroundColor = '#f5f5f5';
+        };
+        searchButton.onmouseleave = function() {
+            this.style.backgroundColor = 'white';
+        };
+        
+        // Create search input container (hidden by default)
+        const searchInputContainer = document.createElement('div');
+        searchInputContainer.id = 'search-input-container';
+        searchInputContainer.style.cssText = `
+            position: absolute;
+            left: 0;
+            bottom: 45px;
+            background-color: white;
+            border-radius: 2px;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+            padding: 0;
+            display: none;
+            z-index: 1001;
+            font-family: Roboto, Arial, sans-serif;
+            width: 300px;
+        `;
+        
+        // Create search input
+        const searchInput = document.createElement('input');
+        searchInput.type = 'text';
+        searchInput.id = 'search-input';
+        searchInput.placeholder = 'Search for a location...';
+        searchInput.style.cssText = `
+            width: 100%;
+            padding: 10px 16px;
+            border: none;
+            outline: none;
+            font-size: 14px;
+            color: #5B5B5B;
+            font-family: Roboto, Arial, sans-serif;
+            box-sizing: border-box;
+        `;
+        
+        searchInputContainer.appendChild(searchInput);
+        
+        // Initialize Places Autocomplete
+        let autocomplete = null;
+        function initAutocomplete() {
+            if (typeof google !== 'undefined' && google.maps && google.maps.places) {
+                autocomplete = new google.maps.places.Autocomplete(searchInput, {
+                    types: ['geocode']
+                });
+                
+                autocomplete.addListener('place_changed', function() {
+                    const place = autocomplete.getPlace();
+                    if (!place.geometry) {
+                        console.warn('No details available for input: ' + place.name);
+                        return;
+                    }
+                    
+                    // Get location
+                    const location = place.geometry.location;
+                    const lat = location.lat();
+                    const lng = location.lng();
+                    
+                    // Set pin to location
+                    displayCoordinates(new google.maps.LatLng(lat, lng));
+                    
+                    // Pan map to location
+                    map.panTo(location);
+                    
+                    // Close search input
+                    searchInputContainer.style.display = 'none';
+                    searchInput.value = '';
+                });
+            } else {
+                // Retry if Places library not loaded yet
+                setTimeout(initAutocomplete, 100);
+            }
+        }
+        
+        // Toggle search input on button click
+        searchButton.onclick = function(e) {
+            e.stopPropagation();
+            const isVisible = searchInputContainer.style.display !== 'none';
+            searchInputContainer.style.display = isVisible ? 'none' : 'block';
+            
+            if (!isVisible) {
+                // Initialize autocomplete if not already done
+                if (!autocomplete) {
+                    initAutocomplete();
+                }
+                // Focus input after a brief delay to ensure it's visible
+                setTimeout(function() {
+                    searchInput.focus();
+                }, 100);
+            }
+        };
+        
+        // Close search input when clicking outside
+        document.addEventListener('click', function(e) {
+            if (!searchDiv.contains(e.target)) {
+                searchInputContainer.style.display = 'none';
+            }
+        });
+        
+        // Close search input on Escape key
+        searchInput.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') {
+                searchInputContainer.style.display = 'none';
+                searchInput.value = '';
+            }
+        });
+        
+        // Assemble control
+        searchDiv.appendChild(searchButton);
+        searchDiv.appendChild(searchInputContainer);
+        
+        // Add to map
+        map.controls[google.maps.ControlPosition.BOTTOM_LEFT].push(searchDiv);
+        
+        // Initialize autocomplete
+        initAutocomplete();
+    });
+})();
+
 // Custom fullscreen control (desktop only)
 (function() {
     // Wait for map to be ready
