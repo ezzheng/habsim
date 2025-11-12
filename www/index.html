@@ -96,6 +96,15 @@
             /* Position is set by JavaScript using fixed positioning */
         }
         
+        /* Hide "Powered by Google" text in autocomplete dropdown */
+        .pac-container .pac-logo,
+        .pac-container [class*="attribution"],
+        .pac-container [class*="logo"],
+        .pac-container a[href*="google"] {
+            display: none !important;
+            visibility: hidden !important;
+        }
+        
         @media (max-width: 768px) {
             .custom-map-type-container {
                 bottom: auto !important;
