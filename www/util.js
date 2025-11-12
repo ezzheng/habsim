@@ -352,8 +352,12 @@ initMap();
                 // Configure autocomplete - bind to input element
                 autocomplete = new google.maps.places.Autocomplete(searchInput, {
                     types: ['geocode'],
-                    fields: ['geometry', 'name', 'formatted_address']
+                    fields: ['geometry', 'name', 'formatted_address'],
+                    componentRestrictions: null // Allow all countries
                 });
+                
+                // Ensure autocomplete is properly attached to the input
+                // The autocomplete should automatically show predictions when typing
                 
                 // Ensure input is properly bound to autocomplete and map bounds
                 try {
