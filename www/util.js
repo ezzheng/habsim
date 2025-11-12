@@ -237,7 +237,7 @@ initMap();
         const searchDiv = document.createElement('div');
         searchDiv.id = 'custom-search-control';
         searchDiv.className = 'custom-search-container';
-        searchDiv.style.cssText = 'margin: 10px; position: absolute; bottom: 0; left: 50px; z-index: 1000; display: flex; align-items: center;';
+        searchDiv.style.cssText = 'margin: 10px; position: absolute; bottom: 0; left: 50px; z-index: 1000; display: flex; align-items: center; gap: 8px;';
         
         // Create search button
         const searchButton = document.createElement('button');
@@ -266,36 +266,19 @@ initMap();
         let autocomplete = null;
         let autocompleteInitialized = false;
         
-        // Function to aggressively hide "Powered by Google" bar
+        // Function to aggressively hide "Powered by Google" bar (but NOT the dropdown suggestions)
         function hidePoweredByGoogle() {
             // Check multiple times to catch dynamically added elements
             const hideAttempts = [0, 50, 100, 200, 500, 1000];
             hideAttempts.forEach(function(delay) {
                 setTimeout(function() {
-                    // Hide pac-logo and all variations
-                    const pacLogos = document.querySelectorAll('.pac-logo, [class*="pac-logo"], [class*="attribution"], [class*="logo"]');
+                    // Hide pac-logo and all variations, but NOT pac-item (suggestions)
+                    const pacLogos = document.querySelectorAll('.pac-logo, [class*="pac-logo"]:not([class*="pac-item"]), [class*="attribution"]:not([class*="pac-item"]), [class*="logo"]:not([class*="pac-item"])');
                     pacLogos.forEach(function(el) {
-                        const text = el.textContent || el.innerText || '';
-                        if (text.toLowerCase().includes('powered by') || text.toLowerCase().includes('google') || el.classList.contains('pac-logo')) {
-                            el.style.display = 'none';
-                            el.style.visibility = 'hidden';
-                            el.style.height = '0';
-                            el.style.width = '0';
-                            el.style.overflow = 'hidden';
-                            el.style.opacity = '0';
-                            el.style.pointerEvents = 'none';
-                            el.style.position = 'absolute';
-                            el.style.top = '-9999px';
-                            el.style.left = '-9999px';
-                        }
-                    });
-                    // Also check pac-container children
-                    const pacContainer = document.querySelector('.pac-container');
-                    if (pacContainer) {
-                        const allChildren = pacContainer.querySelectorAll('*');
-                        allChildren.forEach(function(el) {
+                        // Skip if it's part of a suggestion item
+                        if (!el.closest('.pac-item') && !el.classList.contains('pac-item')) {
                             const text = el.textContent || el.innerText || '';
-                            if (text.toLowerCase().includes('powered by google')) {
+                            if (text.toLowerCase().includes('powered by') || text.toLowerCase().includes('google') || el.classList.contains('pac-logo')) {
                                 el.style.display = 'none';
                                 el.style.visibility = 'hidden';
                                 el.style.height = '0';
@@ -303,9 +286,26 @@ initMap();
                                 el.style.overflow = 'hidden';
                                 el.style.opacity = '0';
                                 el.style.pointerEvents = 'none';
-                                el.style.position = 'absolute';
-                                el.style.top = '-9999px';
-                                el.style.left = '-9999px';
+                            }
+                        }
+                    });
+                    // Also check pac-container children, but preserve pac-item elements
+                    const pacContainer = document.querySelector('.pac-container');
+                    if (pacContainer) {
+                        const allChildren = pacContainer.querySelectorAll('*:not(.pac-item):not([class*="pac-item"])');
+                        allChildren.forEach(function(el) {
+                            // Skip if it's part of a suggestion item
+                            if (!el.closest('.pac-item') && !el.classList.contains('pac-item')) {
+                                const text = el.textContent || el.innerText || '';
+                                if (text.toLowerCase().includes('powered by google')) {
+                                    el.style.display = 'none';
+                                    el.style.visibility = 'hidden';
+                                    el.style.height = '0';
+                                    el.style.width = '0';
+                                    el.style.overflow = 'hidden';
+                                    el.style.opacity = '0';
+                                    el.style.pointerEvents = 'none';
+                                }
                             }
                         });
                     }
@@ -360,8 +360,8 @@ initMap();
                         pacContainer.style.visibility = 'visible';
                         pacContainer.style.opacity = '1';
                         
-                        // Hide "Powered by Google" text - extremely aggressive approach
-                        // Hide the entire pac-logo container (the bar that appears)
+                        // Hide "Powered by Google" text - target only the logo/attribution, not the dropdown
+                        // Hide the pac-logo container (the bar that appears separately)
                         const pacLogo = pacContainer.querySelector('.pac-logo');
                         if (pacLogo) {
                             pacLogo.style.display = 'none';
@@ -371,59 +371,39 @@ initMap();
                             pacLogo.style.overflow = 'hidden';
                             pacLogo.style.opacity = '0';
                             pacLogo.style.pointerEvents = 'none';
-                            pacLogo.style.position = 'absolute';
-                            pacLogo.style.top = '-9999px';
-                            pacLogo.style.left = '-9999px';
                         }
-                        // Hide all attribution/logo elements - including the entire bar
-                        const allAttribution = pacContainer.querySelectorAll('[class*="pac-logo"], [class*="attribution"], [class*="logo"], a[href*="google"], a[href*="maps"], [id*="logo"], [id*="attribution"], [class*="pac-item"] a');
+                        // Hide attribution/logo elements, but NOT pac-item elements (those are the suggestions)
+                        const allAttribution = pacContainer.querySelectorAll('[class*="pac-logo"], [class*="attribution"], [class*="logo"]:not([class*="pac-item"]), a[href*="google"]:not([class*="pac-item"]), a[href*="maps"]:not([class*="pac-item"])');
                         allAttribution.forEach(function(el) {
-                            const text = el.textContent || el.innerText || '';
-                            if (text.toLowerCase().includes('powered by') || text.toLowerCase().includes('google') || el.href || el.classList.contains('pac-logo')) {
-                                el.style.display = 'none';
-                                el.style.visibility = 'hidden';
-                                el.style.height = '0';
-                                el.style.width = '0';
-                                el.style.overflow = 'hidden';
-                                el.style.opacity = '0';
-                                el.style.pointerEvents = 'none';
-                                el.style.position = 'absolute';
-                                el.style.top = '-9999px';
-                                el.style.left = '-9999px';
+                            // Only hide if it's not a suggestion item
+                            if (!el.closest('.pac-item') && !el.classList.contains('pac-item')) {
+                                const text = el.textContent || el.innerText || '';
+                                if (text.toLowerCase().includes('powered by') || text.toLowerCase().includes('google') || el.classList.contains('pac-logo')) {
+                                    el.style.display = 'none';
+                                    el.style.visibility = 'hidden';
+                                    el.style.height = '0';
+                                    el.style.width = '0';
+                                    el.style.overflow = 'hidden';
+                                    el.style.opacity = '0';
+                                    el.style.pointerEvents = 'none';
+                                }
                             }
                         });
-                        // Hide any parent containers that might be the bar
-                        const allChildren = pacContainer.querySelectorAll('*');
-                        allChildren.forEach(function(el) {
-                            const text = el.textContent || el.innerText || '';
-                            if (text.toLowerCase().includes('powered by google') || el.classList.contains('pac-logo')) {
-                                el.style.display = 'none';
-                                el.style.visibility = 'hidden';
-                                el.style.height = '0';
-                                el.style.width = '0';
-                                el.style.overflow = 'hidden';
-                                el.style.opacity = '0';
-                                el.style.pointerEvents = 'none';
-                                el.style.position = 'absolute';
-                                el.style.top = '-9999px';
-                                el.style.left = '-9999px';
-                            }
-                        });
-                        // Also check for any divs that might be the bar container
-                        const allDivs = pacContainer.querySelectorAll('div');
+                        // Hide any divs that contain "Powered by Google" but are NOT pac-item containers
+                        const allDivs = pacContainer.querySelectorAll('div:not(.pac-item):not([class*="pac-item"])');
                         allDivs.forEach(function(el) {
-                            const text = el.textContent || el.innerText || '';
-                            if (text.toLowerCase().includes('powered by') && text.toLowerCase().includes('google')) {
-                                el.style.display = 'none';
-                                el.style.visibility = 'hidden';
-                                el.style.height = '0';
-                                el.style.width = '0';
-                                el.style.overflow = 'hidden';
-                                el.style.opacity = '0';
-                                el.style.pointerEvents = 'none';
-                                el.style.position = 'absolute';
-                                el.style.top = '-9999px';
-                                el.style.left = '-9999px';
+                            // Skip if it's a suggestion item or contains suggestion items
+                            if (!el.closest('.pac-item') && !el.querySelector('.pac-item')) {
+                                const text = el.textContent || el.innerText || '';
+                                if (text.toLowerCase().includes('powered by') && text.toLowerCase().includes('google')) {
+                                    el.style.display = 'none';
+                                    el.style.visibility = 'hidden';
+                                    el.style.height = '0';
+                                    el.style.width = '0';
+                                    el.style.overflow = 'hidden';
+                                    el.style.opacity = '0';
+                                    el.style.pointerEvents = 'none';
+                                }
                             }
                         });
                         
