@@ -21,6 +21,13 @@ Compress(app)  # Automatically compress responses (10x size reduction)
 # Password for authentication
 LOGIN_PASSWORD = os.environ.get('HABSIM_PASSWORD')
 
+# Maximum concurrent ensemble calls across all workers (configurable via environment variable)
+MAX_CONCURRENT_ENSEMBLE_CALLS = int(os.environ.get('MAX_CONCURRENT_ENSEMBLE_CALLS', '4'))
+
+# File-based counter for tracking active ensemble calls across workers
+_ENSEMBLE_COUNTER_FILE = '/tmp/ensemble_active_count'
+_ENSEMBLE_COUNTER_LOCK_FILE = '/tmp/ensemble_active_count.lock'
+
 # Log password status at startup (without revealing the actual password)
 if LOGIN_PASSWORD:
     # Use a simple print since app.logger might not be ready yet
@@ -584,6 +591,65 @@ def singlezpbh():
         return make_response(jsonify({"error": "Model file not available. The requested model may not have been uploaded yet. Please check if the model timestamp is correct."}), 404)
 
 
+def _increment_ensemble_counter():
+    """Atomically increment the ensemble call counter. Returns True if under limit, False if limit exceeded."""
+    try:
+        import fcntl
+        # Use lock file for atomic operations
+        lock_file = open(_ENSEMBLE_COUNTER_LOCK_FILE, 'w')
+        try:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)  # Exclusive lock
+            
+            # Read current count
+            try:
+                with open(_ENSEMBLE_COUNTER_FILE, 'r') as f:
+                    current_count = int(f.read().strip() or '0')
+            except (FileNotFoundError, ValueError):
+                current_count = 0
+            
+            # Check if we're at the limit
+            if current_count >= MAX_CONCURRENT_ENSEMBLE_CALLS:
+                return False
+            
+            # Increment and write back
+            current_count += 1
+            with open(_ENSEMBLE_COUNTER_FILE, 'w') as f:
+                f.write(str(current_count))
+            
+            return True
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)  # Release lock
+            lock_file.close()
+    except Exception as e:
+        # If file locking fails, log warning but allow request (fail open for reliability)
+        app.logger.warning(f"Failed to check ensemble counter: {e}. Allowing request.")
+        return True
+
+def _decrement_ensemble_counter():
+    """Atomically decrement the ensemble call counter."""
+    try:
+        import fcntl
+        lock_file = open(_ENSEMBLE_COUNTER_LOCK_FILE, 'w')
+        try:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            
+            try:
+                with open(_ENSEMBLE_COUNTER_FILE, 'r') as f:
+                    current_count = int(f.read().strip() or '0')
+            except (FileNotFoundError, ValueError):
+                current_count = 0
+            
+            # Decrement (don't go below 0)
+            current_count = max(0, current_count - 1)
+            
+            with open(_ENSEMBLE_COUNTER_FILE, 'w') as f:
+                f.write(str(current_count))
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+            lock_file.close()
+    except Exception as e:
+        app.logger.warning(f"Failed to decrement ensemble counter: {e}")
+
 @app.route('/sim/spaceshot')
 # NO CACHING - This is a real-time simulation with progress tracking
 def spaceshot():
@@ -654,11 +720,11 @@ def spaceshot():
     sys.stdout.flush()  # Ensure log appears immediately
     sys.stderr.flush()
     
-    # CRITICAL: Activate ensemble mode BEFORE any simulations start
-    # This must happen synchronously before ThreadPoolExecutor begins
-    # Use longer duration (5 minutes) to ensure ensemble mode doesn't expire during long simulations
-    # Ensemble runs can take 5-15 minutes, especially with slow S3 downloads on first run
-    simulate.set_ensemble_mode(duration_seconds=300)  # 5 minutes to cover slow downloads + simulations
+        # CRITICAL: Activate ensemble mode BEFORE any simulations start
+        # This must happen synchronously before ThreadPoolExecutor begins
+        # Use longer duration (5 minutes) to ensure ensemble mode doesn't expire during long simulations
+        # Ensemble runs can take 5-15 minutes, especially with slow S3 downloads on first run
+        simulate.set_ensemble_mode(duration_seconds=300)  # 5 minutes to cover slow downloads + simulations
     
     # Verify ensemble mode was activated (for debugging)
     with simulate._cache_lock:
