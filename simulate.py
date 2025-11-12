@@ -112,7 +112,7 @@ def _cache_prediction(cache_key, result):
 def refresh():
     global currgefs
     f = open_gefs('whichgefs')
-    s = f.readline()
+    s = f.readline().strip()  # Strip newline and whitespace
     f.close()
     if s != currgefs:
         old_currgefs = currgefs  # Save old timestamp for cleanup
@@ -924,6 +924,10 @@ def _get_simulator(model):
         refresh_time = time.time() - refresh_start
         if refresh_time > 1.0:
             logging.warning(f"[PERF] refresh() slow: time={refresh_time:.2f}s")
+    
+    # Safety check: ensure currgefs is valid before using it
+    if not currgefs or currgefs == "Unavailable":
+        raise RuntimeError(f"GEFS timestamp not available (currgefs='{currgefs}'). Cannot load model files.")
     
     # Only trim cache if ensemble mode has expired (don't trim during active use)
     # The background thread handles periodic trimming, so we only check here if ensemble expired
