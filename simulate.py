@@ -918,7 +918,7 @@ def _get_simulator(model):
     
     # Refresh GEFS data if needed
     refresh_start = time.time()
-    if currgefs == "Unavailable" or now - _last_refresh_check > 300:
+    if not currgefs or currgefs == "Unavailable" or now - _last_refresh_check > 300:
         refresh()
         _last_refresh_check = now
         refresh_time = time.time() - refresh_start
