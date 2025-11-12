@@ -1,25 +1,50 @@
-//Maps initialization
-var element = document.getElementById("map");
-var map = new google.maps.Map(element, {
-    center: new google.maps.LatLng(37.4, -121.5),
-    zoom: 9,
-    mapTypeId: "OSM",
-    zoomControl: false, // Disable default - we'll use custom
-    gestureHandling: 'greedy',
-    mapTypeControl: false, // Disable default control - we'll use custom
-    fullscreenControl: false, // Disable default - we'll use custom
-    streetViewControl: false
-});
+//Maps initialization - wait for Google Maps API to load
+var map = null;
 var clickMarker = null;
 var heatmapLayer = null; // Global heatmap layer for Monte Carlo visualization
-google.maps.event.addListener(map, 'click', function (event) {
-    displayCoordinates(event.latLng);
-});
+
+function initMap() {
+    if (typeof google === 'undefined' || !google.maps) {
+        console.warn('Google Maps API not loaded yet, retrying...');
+        setTimeout(initMap, 100);
+        return;
+    }
+    
+    var element = document.getElementById("map");
+    if (!element) {
+        console.warn('Map element not found, retrying...');
+        setTimeout(initMap, 100);
+        return;
+    }
+    
+    map = new google.maps.Map(element, {
+        center: new google.maps.LatLng(37.4, -121.5),
+        zoom: 9,
+        mapTypeId: "OSM",
+        zoomControl: false, // Disable default - we'll use custom
+        gestureHandling: 'greedy',
+        mapTypeControl: false, // Disable default control - we'll use custom
+        fullscreenControl: false, // Disable default - we'll use custom
+        streetViewControl: false
+    });
+    
+    google.maps.event.addListener(map, 'click', function (event) {
+        displayCoordinates(event.latLng);
+    });
+}
+
+// Start initialization
+initMap();
 
 // Custom map type control with drop-up menu
 (function() {
-    // Wait for map to be ready
-    google.maps.event.addListenerOnce(map, 'idle', function() {
+    function initMapTypeControl() {
+        if (!map) {
+            setTimeout(initMapTypeControl, 100);
+            return;
+        }
+        // Wait for map to be ready
+        google.maps.event.addListenerOnce(map, 'idle', function() {
         // Create custom control container
         const controlDiv = document.createElement('div');
         controlDiv.id = 'custom-map-type-control';
@@ -176,18 +201,25 @@ google.maps.event.addListener(map, 'click', function (event) {
         
         // Initialize active state
         updateActiveMapType(map.getMapTypeId());
-    });
+        });
+    }
+    initMapTypeControl();
 })();
 
 // Custom search control with Google Places Autocomplete
 (function() {
-    // Wait for map to be ready
-    google.maps.event.addListenerOnce(map, 'idle', function() {
+    function initSearchControl() {
+        if (!map) {
+            setTimeout(initSearchControl, 100);
+            return;
+        }
+        // Wait for map to be ready
+        google.maps.event.addListenerOnce(map, 'idle', function() {
         // Create search control container
         const searchDiv = document.createElement('div');
         searchDiv.id = 'custom-search-control';
         searchDiv.className = 'custom-search-container';
-        searchDiv.style.cssText = 'margin: 10px; position: absolute; bottom: 0; left: 50px; z-index: 1000;';
+        searchDiv.style.cssText = 'margin: 10px; position: absolute; bottom: 0; left: 55px; z-index: 1000;';
         
         // Create search button
         const searchButton = document.createElement('button');
@@ -258,37 +290,52 @@ google.maps.event.addListener(map, 'click', function (event) {
         
         // Initialize Places Autocomplete
         let autocomplete = null;
+        let initAttempts = 0;
+        const maxInitAttempts = 50; // Try for up to 5 seconds
+        
         function initAutocomplete() {
-            if (typeof google !== 'undefined' && google.maps && google.maps.places) {
-                autocomplete = new google.maps.places.Autocomplete(searchInput, {
-                    types: ['geocode']
-                });
-                
-                autocomplete.addListener('place_changed', function() {
-                    const place = autocomplete.getPlace();
-                    if (!place.geometry) {
-                        console.warn('No details available for input: ' + place.name);
-                        return;
+            initAttempts++;
+            if (typeof google !== 'undefined' && google.maps && google.maps.places && google.maps.places.Autocomplete) {
+                try {
+                    autocomplete = new google.maps.places.Autocomplete(searchInput, {
+                        types: ['geocode']
+                    });
+                    
+                    autocomplete.addListener('place_changed', function() {
+                        const place = autocomplete.getPlace();
+                        if (!place.geometry) {
+                            console.warn('No details available for input: ' + place.name);
+                            return;
+                        }
+                        
+                        // Get location
+                        const location = place.geometry.location;
+                        const lat = location.lat();
+                        const lng = location.lng();
+                        
+                        // Set pin to location
+                        displayCoordinates(new google.maps.LatLng(lat, lng));
+                        
+                        // Pan map to location
+                        map.panTo(location);
+                        
+                        // Close search input
+                        searchInputContainer.style.display = 'none';
+                        searchInput.value = '';
+                    });
+                } catch (e) {
+                    console.error('Error initializing Places Autocomplete:', e);
+                    if (initAttempts < maxInitAttempts) {
+                        setTimeout(initAutocomplete, 100);
                     }
-                    
-                    // Get location
-                    const location = place.geometry.location;
-                    const lat = location.lat();
-                    const lng = location.lng();
-                    
-                    // Set pin to location
-                    displayCoordinates(new google.maps.LatLng(lat, lng));
-                    
-                    // Pan map to location
-                    map.panTo(location);
-                    
-                    // Close search input
-                    searchInputContainer.style.display = 'none';
-                    searchInput.value = '';
-                });
+                }
             } else {
                 // Retry if Places library not loaded yet
-                setTimeout(initAutocomplete, 100);
+                if (initAttempts < maxInitAttempts) {
+                    setTimeout(initAutocomplete, 100);
+                } else {
+                    console.error('Places library failed to load after ' + maxInitAttempts + ' attempts');
+                }
             }
         }
         
@@ -334,13 +381,20 @@ google.maps.event.addListener(map, 'click', function (event) {
         
         // Initialize autocomplete
         initAutocomplete();
-    });
+        });
+    }
+    initSearchControl();
 })();
 
 // Custom fullscreen control (desktop only)
 (function() {
-    // Wait for map to be ready
-    google.maps.event.addListenerOnce(map, 'idle', function() {
+    function initFullscreenControl() {
+        if (!map) {
+            setTimeout(initFullscreenControl, 100);
+            return;
+        }
+        // Wait for map to be ready
+        google.maps.event.addListenerOnce(map, 'idle', function() {
         // Create controls container
         const controlsContainer = document.createElement('div');
         controlsContainer.id = 'custom-map-controls';
@@ -433,7 +487,9 @@ google.maps.event.addListener(map, 'click', function (event) {
         
         // Initialize fullscreen icon
         updateFullscreenIcon();
-    });
+        });
+    }
+    initFullscreenControl();
 })();
 
 
