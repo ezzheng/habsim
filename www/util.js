@@ -533,6 +533,8 @@ initMap();
             initAutocomplete();
             setTimeout(function() {
                 searchInput.focus();
+                // Aggressively hide "Powered by Google" bar when search opens
+                hidePoweredByGoogle();
             }, 150);
         }
         
