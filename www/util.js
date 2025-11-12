@@ -219,7 +219,7 @@ initMap();
         const searchDiv = document.createElement('div');
         searchDiv.id = 'custom-search-control';
         searchDiv.className = 'custom-search-container';
-        searchDiv.style.cssText = 'margin: 10px; position: absolute; bottom: 0; left: 50px; z-index: 1000;';
+        searchDiv.style.cssText = 'margin: 10px; position: absolute; bottom: 0; left: 50px; z-index: 1000; display: flex; align-items: center;';
         
         // Create search button
         const searchButton = document.createElement('button');
@@ -295,18 +295,37 @@ initMap();
                         pacContainer.style.visibility = 'visible';
                         pacContainer.style.opacity = '1';
                         
-                        // Hide "Powered by Google" text
+                        // Hide "Powered by Google" text - more aggressive approach
                         const pacLogo = pacContainer.querySelector('.pac-logo');
                         if (pacLogo) {
                             pacLogo.style.display = 'none';
                             pacLogo.style.visibility = 'hidden';
+                            pacLogo.style.height = '0';
+                            pacLogo.style.width = '0';
+                            pacLogo.style.overflow = 'hidden';
                         }
-                        // Also hide any attribution text
-                        const attribution = pacContainer.querySelectorAll('[class*="attribution"], [class*="logo"], [class*="pac-item"] [href*="google"]');
-                        attribution.forEach(function(el) {
-                            if (el.textContent && el.textContent.toLowerCase().includes('powered by')) {
+                        // Hide all attribution/logo elements
+                        const allAttribution = pacContainer.querySelectorAll('[class*="pac-logo"], [class*="attribution"], [class*="logo"], a[href*="google"], a[href*="maps"], [id*="logo"], [id*="attribution"]');
+                        allAttribution.forEach(function(el) {
+                            const text = el.textContent || el.innerText || '';
+                            if (text.toLowerCase().includes('powered by') || text.toLowerCase().includes('google') || el.href) {
                                 el.style.display = 'none';
                                 el.style.visibility = 'hidden';
+                                el.style.height = '0';
+                                el.style.width = '0';
+                                el.style.overflow = 'hidden';
+                                el.style.opacity = '0';
+                            }
+                        });
+                        // Also hide any child elements that might contain the text
+                        const allChildren = pacContainer.querySelectorAll('*');
+                        allChildren.forEach(function(el) {
+                            const text = el.textContent || el.innerText || '';
+                            if (text.toLowerCase().includes('powered by google')) {
+                                el.style.display = 'none';
+                                el.style.visibility = 'hidden';
+                                el.style.height = '0';
+                                el.style.overflow = 'hidden';
                             }
                         });
                         
