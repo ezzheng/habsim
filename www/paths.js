@@ -1377,20 +1377,25 @@ function updateContourVisibility() {
 
 // Self explanatory
 async function simulate() {
-    // Clear previous simulation results immediately (paths, heatmap, and contours)
-    clearAllVisualizations();
-    
-    // If a simulation is already running, interpret this call as a cancel request
-    if (window.__simRunning && window.__simAbort) {
-        try { window.__simAbort.abort(); } catch (e) {}
-        // Note: Ensemble mode on server will still expire after 60 seconds from when it was set
+    // Prevent duplicate/overlapping simulation calls (race condition protection)
+    // Check and set atomically to prevent multiple simultaneous calls
+    if (window.__simRunning) {
+        // If a simulation is already running, interpret this call as a cancel request
+        if (window.__simAbort) {
+            try { window.__simAbort.abort(); } catch (e) {}
+        }
+        // Note: Ensemble mode on server will still expire after duration from when it was set
         // This is expected behavior - server doesn't know about client-side cancellation
         return;
     }
-
-    // Setup abort controller for this run
-    window.__simAbort = new AbortController();
+    
+    // Set running flag IMMEDIATELY to prevent race conditions
+    // This must happen before any async operations
     window.__simRunning = true;
+    window.__simAbort = new AbortController();
+    
+    // Clear previous simulation results immediately (paths, heatmap, and contours)
+    clearAllVisualizations();
 
     const simBtn = document.getElementById('simulate-btn');
     const spinner = document.getElementById('sim-spinner');
