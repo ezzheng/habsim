@@ -739,27 +739,28 @@ def _ensure_cached(file_name: str) -> Path:
                     except:
                         pass
                 last_error = e
-            else:
-                # Last attempt failed - release lock and clean up
-                logging.error(f"Download failed after {max_retries} attempts for {file_name}: {last_error}")
-                if lock_fd:
-                    try:
-                        import fcntl
-                        fcntl.flock(lock_fd.fileno(), fcntl.LOCK_UN)
-                        lock_fd.close()
-                    except:
-                        pass
-                raise IOError(f"Download failed: temp file not created for {file_name} after {max_retries} attempts")
+                if attempt < max_retries - 1:
+                    # Retry unexpected errors
+                    wait_time = 2 ** (attempt + 1)
+                    logging.warning(f"Unexpected error on attempt {attempt + 1}/{max_retries} for {file_name}: {e}. Retrying in {wait_time}s...")
+                    time.sleep(wait_time)
+                else:
+                    # Last attempt failed - release lock and clean up
+                    logging.error(f"Download failed after {max_retries} attempts for {file_name}: {last_error}")
+                    if lock_fd:
+                        try:
+                            import fcntl
+                            fcntl.flock(lock_fd.fileno(), fcntl.LOCK_UN)
+                            lock_fd.close()
+                        except:
+                            pass
+                    raise IOError(f"Download failed: temp file not created for {file_name} after {max_retries} attempts: {last_error}")
         
-        # If we got here without error, file should exist
-        if not tmp_path.exists():
-            raise IOError(f"Download logic error: loop completed but temp file not found for {file_name}")
-        
-        # If we get here, download succeeded (tmp_path exists from successful attempt)
-        # Note: tmp_path is defined in the loop, so we need to reconstruct it here
+        # If we got here without error, file should exist (successful download broke out of loop)
+        # Reconstruct tmp_path since it was defined in the loop scope
         tmp_path = cache_path.with_suffix(cache_path.suffix + ".tmp")
         if not tmp_path.exists():
-            raise IOError(f"Download failed: temp file not created for {file_name} after {max_retries} attempts")
+            raise IOError(f"Download logic error: loop completed but temp file not found for {file_name}")
         
         # Rename temp file to final cache location
         # Double-check temp file exists right before rename to avoid race conditions
