@@ -237,7 +237,7 @@ initMap();
         const searchDiv = document.createElement('div');
         searchDiv.id = 'custom-search-control';
         searchDiv.className = 'custom-search-container';
-        searchDiv.style.cssText = 'margin: 10px; position: absolute; bottom: 0; left: 50px; z-index: 1000; display: flex; align-items: center; gap: 8px;';
+        searchDiv.style.cssText = 'margin: 10px; position: absolute; bottom: 0; left: 48px; z-index: 1000; display: flex; align-items: center; gap: 8px;';
         
         // Create search button
         const searchButton = document.createElement('button');
