@@ -313,7 +313,8 @@ initMap();
                         pacContainer.style.visibility = 'visible';
                         pacContainer.style.opacity = '1';
                         
-                        // Hide "Powered by Google" text - more aggressive approach
+                        // Hide "Powered by Google" text - extremely aggressive approach
+                        // Hide the entire pac-logo container (the bar that appears)
                         const pacLogo = pacContainer.querySelector('.pac-logo');
                         if (pacLogo) {
                             pacLogo.style.display = 'none';
@@ -321,29 +322,61 @@ initMap();
                             pacLogo.style.height = '0';
                             pacLogo.style.width = '0';
                             pacLogo.style.overflow = 'hidden';
+                            pacLogo.style.opacity = '0';
+                            pacLogo.style.pointerEvents = 'none';
+                            pacLogo.style.position = 'absolute';
+                            pacLogo.style.top = '-9999px';
+                            pacLogo.style.left = '-9999px';
                         }
-                        // Hide all attribution/logo elements
-                        const allAttribution = pacContainer.querySelectorAll('[class*="pac-logo"], [class*="attribution"], [class*="logo"], a[href*="google"], a[href*="maps"], [id*="logo"], [id*="attribution"]');
+                        // Hide all attribution/logo elements - including the entire bar
+                        const allAttribution = pacContainer.querySelectorAll('[class*="pac-logo"], [class*="attribution"], [class*="logo"], a[href*="google"], a[href*="maps"], [id*="logo"], [id*="attribution"], [class*="pac-item"] a');
                         allAttribution.forEach(function(el) {
                             const text = el.textContent || el.innerText || '';
-                            if (text.toLowerCase().includes('powered by') || text.toLowerCase().includes('google') || el.href) {
+                            if (text.toLowerCase().includes('powered by') || text.toLowerCase().includes('google') || el.href || el.classList.contains('pac-logo')) {
                                 el.style.display = 'none';
                                 el.style.visibility = 'hidden';
                                 el.style.height = '0';
                                 el.style.width = '0';
                                 el.style.overflow = 'hidden';
                                 el.style.opacity = '0';
+                                el.style.pointerEvents = 'none';
+                                el.style.position = 'absolute';
+                                el.style.top = '-9999px';
+                                el.style.left = '-9999px';
                             }
                         });
-                        // Also hide any child elements that might contain the text
+                        // Hide any parent containers that might be the bar
                         const allChildren = pacContainer.querySelectorAll('*');
                         allChildren.forEach(function(el) {
                             const text = el.textContent || el.innerText || '';
-                            if (text.toLowerCase().includes('powered by google')) {
+                            if (text.toLowerCase().includes('powered by google') || el.classList.contains('pac-logo')) {
                                 el.style.display = 'none';
                                 el.style.visibility = 'hidden';
                                 el.style.height = '0';
+                                el.style.width = '0';
                                 el.style.overflow = 'hidden';
+                                el.style.opacity = '0';
+                                el.style.pointerEvents = 'none';
+                                el.style.position = 'absolute';
+                                el.style.top = '-9999px';
+                                el.style.left = '-9999px';
+                            }
+                        });
+                        // Also check for any divs that might be the bar container
+                        const allDivs = pacContainer.querySelectorAll('div');
+                        allDivs.forEach(function(el) {
+                            const text = el.textContent || el.innerText || '';
+                            if (text.toLowerCase().includes('powered by') && text.toLowerCase().includes('google')) {
+                                el.style.display = 'none';
+                                el.style.visibility = 'hidden';
+                                el.style.height = '0';
+                                el.style.width = '0';
+                                el.style.overflow = 'hidden';
+                                el.style.opacity = '0';
+                                el.style.pointerEvents = 'none';
+                                el.style.position = 'absolute';
+                                el.style.top = '-9999px';
+                                el.style.left = '-9999px';
                             }
                         });
                         
@@ -389,6 +422,8 @@ initMap();
                 // Also check when search bar expands - use MutationObserver to catch dynamically added elements
                 const observer = new MutationObserver(function() {
                     styleDropdown();
+                    // Also hide "Powered by Google" when mutations occur
+                    hidePoweredByGoogle();
                 });
                 
                 // Observe the pac-container for changes (when it's created)
@@ -400,6 +435,8 @@ initMap();
                             subtree: true,
                             attributes: false
                         });
+                        // Immediately hide "Powered by Google" when container is found
+                        hidePoweredByGoogle();
                     } else {
                         // Check again if container doesn't exist yet
                         setTimeout(observePacContainer, 100);

@@ -96,13 +96,36 @@
             /* Position is set by JavaScript using fixed positioning */
         }
         
-        /* Hide "Powered by Google" text in autocomplete dropdown */
+        /* Hide "Powered by Google" text in autocomplete dropdown - extremely aggressive */
         .pac-container .pac-logo,
+        .pac-container [class*="pac-logo"],
         .pac-container [class*="attribution"],
         .pac-container [class*="logo"],
-        .pac-container a[href*="google"] {
+        .pac-container a[href*="google"],
+        .pac-container a[href*="maps"],
+        .pac-container div[class*="logo"],
+        .pac-container div[class*="attribution"],
+        .pac-container div:has-text("Powered by Google"),
+        .pac-container *[class*="pac-logo"],
+        .pac-logo,
+        [class*="pac-logo"] {
             display: none !important;
             visibility: hidden !important;
+            height: 0 !important;
+            width: 0 !important;
+            overflow: hidden !important;
+            opacity: 0 !important;
+            pointer-events: none !important;
+            position: absolute !important;
+            top: -9999px !important;
+            left: -9999px !important;
+        }
+        
+        /* Hide any bar/container that contains "Powered by Google" text */
+        .pac-container div:has(a[href*="google"]),
+        .pac-container div:has-text("Powered by"),
+        .pac-container > div:last-child {
+            /* Check if last child is the logo bar and hide it */
         }
         
         /* Hide zoom/pan controls globally - extremely aggressive */
