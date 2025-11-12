@@ -1252,12 +1252,8 @@
                 };
                 modeDropdownLabel.textContent = modeLabels[window.currentMode];
                 
-                // Update button active state (green border for ensemble/multi)
-                if (window.currentMode === 'ensemble' || window.currentMode === 'multi') {
-                    modeDropdownButton.classList.add('active');
-                } else {
-                    modeDropdownButton.classList.remove('active');
-                }
+                // Update button active state (green border for all modes when selected)
+                modeDropdownButton.classList.add('active');
                 
                 // Update selected option in dropdown
                 modeOptions.forEach(option => {
