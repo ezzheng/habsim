@@ -266,6 +266,53 @@ initMap();
         let autocomplete = null;
         let autocompleteInitialized = false;
         
+        // Function to aggressively hide "Powered by Google" bar
+        function hidePoweredByGoogle() {
+            // Check multiple times to catch dynamically added elements
+            const hideAttempts = [0, 50, 100, 200, 500, 1000];
+            hideAttempts.forEach(function(delay) {
+                setTimeout(function() {
+                    // Hide pac-logo and all variations
+                    const pacLogos = document.querySelectorAll('.pac-logo, [class*="pac-logo"], [class*="attribution"], [class*="logo"]');
+                    pacLogos.forEach(function(el) {
+                        const text = el.textContent || el.innerText || '';
+                        if (text.toLowerCase().includes('powered by') || text.toLowerCase().includes('google') || el.classList.contains('pac-logo')) {
+                            el.style.display = 'none';
+                            el.style.visibility = 'hidden';
+                            el.style.height = '0';
+                            el.style.width = '0';
+                            el.style.overflow = 'hidden';
+                            el.style.opacity = '0';
+                            el.style.pointerEvents = 'none';
+                            el.style.position = 'absolute';
+                            el.style.top = '-9999px';
+                            el.style.left = '-9999px';
+                        }
+                    });
+                    // Also check pac-container children
+                    const pacContainer = document.querySelector('.pac-container');
+                    if (pacContainer) {
+                        const allChildren = pacContainer.querySelectorAll('*');
+                        allChildren.forEach(function(el) {
+                            const text = el.textContent || el.innerText || '';
+                            if (text.toLowerCase().includes('powered by google')) {
+                                el.style.display = 'none';
+                                el.style.visibility = 'hidden';
+                                el.style.height = '0';
+                                el.style.width = '0';
+                                el.style.overflow = 'hidden';
+                                el.style.opacity = '0';
+                                el.style.pointerEvents = 'none';
+                                el.style.position = 'absolute';
+                                el.style.top = '-9999px';
+                                el.style.left = '-9999px';
+                            }
+                        });
+                    }
+                }, delay);
+            });
+        }
+        
         function initAutocomplete() {
             // Check if Places library is available
             if (typeof google === 'undefined' || !google.maps || !google.maps.places || !google.maps.places.Autocomplete) {
