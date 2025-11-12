@@ -93,7 +93,16 @@
             display: block !important;
             visibility: visible !important;
             opacity: 1 !important;
+            pointer-events: auto !important;
             /* Position is set by JavaScript using fixed positioning */
+        }
+        
+        /* Ensure pac-item (suggestions) are visible and clickable */
+        .pac-container .pac-item {
+            display: block !important;
+            visibility: visible !important;
+            opacity: 1 !important;
+            pointer-events: auto !important;
         }
         
         /* Hide "Powered by Google" text in autocomplete dropdown - extremely aggressive */
