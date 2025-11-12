@@ -110,6 +110,10 @@
                 left: 45px !important;
             }
             
+            .search-input-container.search-expanded {
+                width: 250px !important;
+            }
+            
             /* On mobile, autocomplete dropdown should appear below */
             .pac-container {
                 top: 100% !important;
@@ -152,6 +156,82 @@
         
         .custom-fullscreen-button:active {
             background-color: #e0e0e0;
+        }
+        
+        .custom-fullscreen-button:focus,
+        .custom-fullscreen-button:focus-visible {
+            outline: none;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+        }
+        
+        /* Search button styling */
+        .custom-search-button {
+            background-color: white;
+            border: none;
+            border-radius: 2px;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+            cursor: pointer;
+            padding: 0;
+            width: 40px;
+            height: 40px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+            color: #5B5B5B;
+            transition: background-color 0.1s;
+            font-family: Roboto, Arial, sans-serif;
+        }
+        
+        .custom-search-button:hover {
+            background-color: #f5f5f5;
+        }
+        
+        .custom-search-button:active {
+            background-color: #e0e0e0;
+        }
+        
+        .custom-search-button:focus,
+        .custom-search-button:focus-visible {
+            outline: none;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+        }
+        
+        /* Search input container - smooth expansion */
+        .search-input-container {
+            position: absolute;
+            left: 45px;
+            bottom: 0;
+            background-color: white;
+            border-radius: 2px;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+            padding: 0;
+            z-index: 1001;
+            font-family: Roboto, Arial, sans-serif;
+            width: 0;
+            overflow: hidden;
+            opacity: 0;
+            transition: width 0.3s ease, opacity 0.3s ease;
+        }
+        
+        .search-input-container.search-expanded {
+            width: 300px;
+            opacity: 1;
+        }
+        
+        .search-input-field {
+            width: 100%;
+            padding: 10px 16px;
+            border: none;
+            outline: none;
+            font-size: 14px;
+            color: #5B5B5B;
+            font-family: Roboto, Arial, sans-serif;
+            box-sizing: border-box;
+        }
+        
+        .search-input-field:focus {
+            outline: none;
         }
         
         /* Hide fullscreen button on mobile */

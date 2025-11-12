@@ -225,66 +225,21 @@ initMap();
         const searchButton = document.createElement('button');
         searchButton.type = 'button';
         searchButton.id = 'search-button';
-        searchButton.style.cssText = `
-            background-color: white;
-            border: none;
-            border-radius: 2px;
-            box-shadow: 0 1px 4px rgba(0,0,0,0.3);
-            cursor: pointer;
-            padding: 0;
-            width: 40px;
-            height: 40px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 18px;
-            color: #5B5B5B;
-            transition: background-color 0.1s;
-            font-family: Roboto, Arial, sans-serif;
-        `;
+        searchButton.className = 'custom-search-button';
         searchButton.innerHTML = '🔍';
         searchButton.title = 'Search location';
         
-        // Hover effect for button
-        searchButton.onmouseenter = function() {
-            this.style.backgroundColor = '#f5f5f5';
-        };
-        searchButton.onmouseleave = function() {
-            this.style.backgroundColor = 'white';
-        };
-        
-        // Create search input container (hidden by default)
+        // Create search input container (hidden by default, will expand smoothly)
         const searchInputContainer = document.createElement('div');
         searchInputContainer.id = 'search-input-container';
-        searchInputContainer.style.cssText = `
-            position: absolute;
-            left: 45px;
-            bottom: 0;
-            background-color: white;
-            border-radius: 2px;
-            box-shadow: 0 2px 6px rgba(0,0,0,0.3);
-            padding: 0;
-            display: none;
-            z-index: 1001;
-            font-family: Roboto, Arial, sans-serif;
-            width: 300px;
-        `;
+        searchInputContainer.className = 'search-input-container';
         
         // Create search input
         const searchInput = document.createElement('input');
         searchInput.type = 'text';
         searchInput.id = 'search-input';
         searchInput.placeholder = 'Search for a location...';
-        searchInput.style.cssText = `
-            width: 100%;
-            padding: 10px 16px;
-            border: none;
-            outline: none;
-            font-size: 14px;
-            color: #5B5B5B;
-            font-family: Roboto, Arial, sans-serif;
-            box-sizing: border-box;
-        `;
+        searchInput.className = 'search-input-field';
         
         searchInputContainer.appendChild(searchInput);
         
@@ -296,7 +251,6 @@ initMap();
             // Check if Places library is available
             if (typeof google === 'undefined' || !google.maps || !google.maps.places || !google.maps.places.Autocomplete) {
                 console.warn('Places library not loaded yet');
-                // Show user-friendly message
                 searchInput.placeholder = 'Loading search...';
                 setTimeout(function() {
                     if (typeof google !== 'undefined' && google.maps && google.maps.places && google.maps.places.Autocomplete) {
@@ -314,87 +268,46 @@ initMap();
             }
             
             try {
-                // Reset placeholder
                 searchInput.placeholder = 'Search for a location...';
                 
-                // Configure autocomplete with custom styling for dropdown position
+                // Configure autocomplete
                 autocomplete = new google.maps.places.Autocomplete(searchInput, {
                     types: ['geocode'],
                     fields: ['geometry', 'name', 'formatted_address']
                 });
                 
-                // Force dropdown to appear above on desktop, below on mobile
-                // This is done by manipulating the pac-container element after it's created
-                const styleDropdown = function() {
-                    const pacContainer = document.querySelector('.pac-container');
-                    if (pacContainer) {
-                        // Ensure dropdown is visible
-                        pacContainer.style.display = 'block';
-                        pacContainer.style.visibility = 'visible';
-                        pacContainer.style.opacity = '1';
-                        pacContainer.style.zIndex = '1002';
-                        
-                        // Check if mobile (screen width <= 768px)
-                        const isMobile = window.innerWidth <= 768;
-                        if (isMobile) {
-                            // Mobile: dropdown appears below
-                            pacContainer.style.top = '100%';
-                            pacContainer.style.bottom = 'auto';
-                            pacContainer.style.marginTop = '5px';
-                            pacContainer.style.marginBottom = '0';
-                        } else {
-                            // Desktop: dropdown appears above
-                            pacContainer.style.top = 'auto';
-                            pacContainer.style.bottom = '100%';
-                            pacContainer.style.marginTop = '0';
-                            pacContainer.style.marginBottom = '5px';
-                        }
-                    }
-                };
-                
-                // Use MutationObserver to watch for pac-container creation
-                const observer = new MutationObserver(function(mutations) {
-                    mutations.forEach(function(mutation) {
-                        if (mutation.addedNodes.length) {
-                            mutation.addedNodes.forEach(function(node) {
-                                if (node.nodeType === 1) {
-                                    if (node.classList && node.classList.contains('pac-container')) {
-                                        setTimeout(styleDropdown, 50);
-                                    } else if (node.querySelector && node.querySelector('.pac-container')) {
-                                        setTimeout(styleDropdown, 50);
-                                    }
-                                }
-                            });
+                // Style dropdown when it appears (simple approach)
+                function styleDropdown() {
+                    // Use requestAnimationFrame to check after DOM updates
+                    requestAnimationFrame(function() {
+                        const pacContainer = document.querySelector('.pac-container');
+                        if (pacContainer) {
+                            pacContainer.style.zIndex = '1002';
+                            
+                            // Check if mobile
+                            const isMobile = window.innerWidth <= 768;
+                            if (isMobile) {
+                                // Mobile: dropdown appears below
+                                pacContainer.style.top = '100%';
+                                pacContainer.style.bottom = 'auto';
+                                pacContainer.style.marginTop = '5px';
+                                pacContainer.style.marginBottom = '0';
+                            } else {
+                                // Desktop: dropdown appears above
+                                pacContainer.style.top = 'auto';
+                                pacContainer.style.bottom = '100%';
+                                pacContainer.style.marginTop = '0';
+                                pacContainer.style.marginBottom = '5px';
+                            }
                         }
                     });
-                });
+                }
                 
-                // Observe the document body for pac-container creation
-                observer.observe(document.body, {
-                    childList: true,
-                    subtree: true
-                });
+                // Style dropdown on input events
+                searchInput.addEventListener('input', styleDropdown);
+                searchInput.addEventListener('focus', styleDropdown);
                 
-                // Also style dropdown when input is focused or typed in
-                const styleOnInteraction = function() {
-                    setTimeout(function() {
-                        styleDropdown();
-                        // Also check periodically while typing
-                        let checkCount = 0;
-                        const checkInterval = setInterval(function() {
-                            checkCount++;
-                            styleDropdown();
-                            if (checkCount > 10) { // Stop after 1 second
-                                clearInterval(checkInterval);
-                            }
-                        }, 100);
-                    }, 100);
-                };
-                
-                searchInput.addEventListener('focus', styleOnInteraction);
-                searchInput.addEventListener('input', styleOnInteraction);
-                searchInput.addEventListener('keydown', styleOnInteraction);
-                
+                // Handle place selection
                 autocomplete.addListener('place_changed', function() {
                     const place = autocomplete.getPlace();
                     if (!place.geometry) {
@@ -402,7 +315,6 @@ initMap();
                         return;
                     }
                     
-                    // Get location
                     const location = place.geometry.location;
                     const lat = location.lat();
                     const lng = location.lng();
@@ -414,51 +326,56 @@ initMap();
                     map.panTo(location);
                     
                     // Close search input
-                    searchInputContainer.style.display = 'none';
-                    searchInput.value = '';
+                    closeSearch();
                 });
                 
                 autocompleteInitialized = true;
             } catch (e) {
                 console.error('Error initializing Places Autocomplete:', e);
                 searchInput.placeholder = 'Search error - please refresh';
-                // Don't retry - let user try again when they click search button
             }
+        }
+        
+        // Function to open search bar with smooth expansion
+        function openSearch() {
+            searchInputContainer.classList.add('search-expanded');
+            searchButton.classList.add('search-active');
+            initAutocomplete();
+            setTimeout(function() {
+                searchInput.focus();
+            }, 150);
+        }
+        
+        // Function to close search bar
+        function closeSearch() {
+            searchInputContainer.classList.remove('search-expanded');
+            searchButton.classList.remove('search-active');
+            searchInput.value = '';
+            searchButton.blur();
+            searchInput.blur();
         }
         
         // Toggle search input on button click
         searchButton.onclick = function(e) {
             e.stopPropagation();
-            const isVisible = searchInputContainer.style.display !== 'none' && searchInputContainer.style.display !== '';
-            if (isVisible) {
-                searchInputContainer.style.display = 'none';
-                searchInput.value = '';
-                // Remove focus/highlight from button
-                searchButton.blur();
+            if (searchInputContainer.classList.contains('search-expanded')) {
+                closeSearch();
             } else {
-                searchInputContainer.style.display = 'block';
-                // Initialize autocomplete when search is opened (lazy initialization)
-                initAutocomplete();
-                
-                // Focus input after a brief delay to ensure it's visible
-                setTimeout(function() {
-                    searchInput.focus();
-                }, 100);
+                openSearch();
             }
         };
         
         // Close search input when clicking outside
         document.addEventListener('click', function(e) {
-            if (!searchDiv.contains(e.target)) {
-                searchInputContainer.style.display = 'none';
+            if (!searchDiv.contains(e.target) && !document.querySelector('.pac-container')?.contains(e.target)) {
+                closeSearch();
             }
         });
         
         // Close search input on Escape key
         searchInput.addEventListener('keydown', function(e) {
             if (e.key === 'Escape') {
-                searchInputContainer.style.display = 'none';
-                searchInput.value = '';
+                closeSearch();
             }
         });
         
@@ -468,9 +385,6 @@ initMap();
         
         // Add to map
         map.controls[google.maps.ControlPosition.BOTTOM_LEFT].push(searchDiv);
-        
-        // Don't initialize autocomplete immediately - wait until user clicks search button
-        // This prevents errors if Places library hasn't loaded yet
         });
     }
     initSearchControl();
