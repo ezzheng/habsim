@@ -462,12 +462,21 @@ initMap();
                 }
                 
                 // Ensure dropdown appears on input
-                searchInput.addEventListener('input', function() {
+                searchInput.addEventListener('input', function(e) {
                     checkAndStyleDropdown();
-                    // Also trigger autocomplete programmatically if needed
-                    if (autocomplete && searchInput.value.length > 0) {
-                        // Force autocomplete to show predictions
-                        google.maps.event.trigger(searchInput, 'focus');
+                    // The autocomplete should automatically show predictions
+                    // But we ensure the container is visible
+                    if (searchInput.value.length > 0) {
+                        // Force check for pac-container
+                        setTimeout(function() {
+                            const pacContainer = document.querySelector('.pac-container');
+                            if (pacContainer) {
+                                pacContainer.style.display = 'block';
+                                pacContainer.style.visibility = 'visible';
+                                pacContainer.style.opacity = '1';
+                                styleDropdown();
+                            }
+                        }, 50);
                     }
                 });
                 
