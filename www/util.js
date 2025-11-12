@@ -25,7 +25,25 @@ function initMap() {
         gestureHandling: 'greedy',
         mapTypeControl: false, // Disable default control - we'll use custom
         fullscreenControl: false, // Disable default - we'll use custom
-        streetViewControl: false
+        streetViewControl: false,
+        disableDefaultUI: true, // Disable all default UI controls
+        keyboardShortcuts: false // Disable keyboard shortcuts
+    });
+    
+    // Also hide zoom controls after map is created (defensive)
+    google.maps.event.addListenerOnce(map, 'idle', function() {
+        // Force hide any zoom controls that might appear
+        setTimeout(function() {
+            const zoomControls = document.querySelectorAll('.gm-bundled-control, .gm-bundled-control-on-bottom, [class*="gm-bundled"]');
+            zoomControls.forEach(function(control) {
+                control.style.display = 'none';
+                control.style.visibility = 'hidden';
+                control.style.height = '0';
+                control.style.width = '0';
+                control.style.opacity = '0';
+                control.style.pointerEvents = 'none';
+            });
+        }, 100);
     });
     
     google.maps.event.addListener(map, 'click', function (event) {
