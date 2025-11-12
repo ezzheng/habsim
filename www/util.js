@@ -219,7 +219,7 @@ initMap();
         const searchDiv = document.createElement('div');
         searchDiv.id = 'custom-search-control';
         searchDiv.className = 'custom-search-container';
-        searchDiv.style.cssText = 'margin: 10px; position: absolute; bottom: 0; left: 42px; z-index: 1000;';
+        searchDiv.style.cssText = 'margin: 10px; position: absolute; bottom: 0; left: 50px; z-index: 1000;';
         
         // Create search button
         const searchButton = document.createElement('button');
@@ -233,6 +233,7 @@ initMap();
         const searchInputContainer = document.createElement('div');
         searchInputContainer.id = 'search-input-container';
         searchInputContainer.className = 'search-input-container';
+        searchInputContainer.style.position = 'relative'; // Ensure relative positioning for dropdown
         
         // Create search input
         const searchInput = document.createElement('input');
@@ -270,42 +271,71 @@ initMap();
             try {
                 searchInput.placeholder = 'Search for a location...';
                 
-                // Configure autocomplete
+                // Configure autocomplete - bind to input element
                 autocomplete = new google.maps.places.Autocomplete(searchInput, {
                     types: ['geocode'],
                     fields: ['geometry', 'name', 'formatted_address']
                 });
                 
-                // Style dropdown when it appears (simple approach)
+                // Ensure input is properly bound to autocomplete
+                autocomplete.bindTo('bounds', map);
+                
+                // Style dropdown when it appears
                 function styleDropdown() {
-                    // Use requestAnimationFrame to check after DOM updates
-                    requestAnimationFrame(function() {
-                        const pacContainer = document.querySelector('.pac-container');
-                        if (pacContainer) {
-                            pacContainer.style.zIndex = '1002';
-                            
-                            // Check if mobile
-                            const isMobile = window.innerWidth <= 768;
-                            if (isMobile) {
-                                // Mobile: dropdown appears below
-                                pacContainer.style.top = '100%';
-                                pacContainer.style.bottom = 'auto';
-                                pacContainer.style.marginTop = '5px';
-                                pacContainer.style.marginBottom = '0';
-                            } else {
-                                // Desktop: dropdown appears above
-                                pacContainer.style.top = 'auto';
-                                pacContainer.style.bottom = '100%';
-                                pacContainer.style.marginTop = '0';
-                                pacContainer.style.marginBottom = '5px';
-                            }
+                    const pacContainer = document.querySelector('.pac-container');
+                    if (pacContainer) {
+                        // Ensure dropdown is visible and properly positioned
+                        pacContainer.style.zIndex = '1002';
+                        pacContainer.style.display = 'block';
+                        pacContainer.style.visibility = 'visible';
+                        pacContainer.style.opacity = '1';
+                        
+                        // Position relative to search input container
+                        const inputRect = searchInputContainer.getBoundingClientRect();
+                        const isMobile = window.innerWidth <= 768;
+                        
+                        if (isMobile) {
+                            // Mobile: dropdown appears below
+                            pacContainer.style.position = 'absolute';
+                            pacContainer.style.top = '100%';
+                            pacContainer.style.bottom = 'auto';
+                            pacContainer.style.left = '0';
+                            pacContainer.style.right = 'auto';
+                            pacContainer.style.marginTop = '5px';
+                            pacContainer.style.marginBottom = '0';
+                            pacContainer.style.width = searchInputContainer.offsetWidth + 'px';
+                        } else {
+                            // Desktop: dropdown appears above
+                            pacContainer.style.position = 'absolute';
+                            pacContainer.style.top = 'auto';
+                            pacContainer.style.bottom = '100%';
+                            pacContainer.style.left = '0';
+                            pacContainer.style.right = 'auto';
+                            pacContainer.style.marginTop = '0';
+                            pacContainer.style.marginBottom = '5px';
+                            pacContainer.style.width = searchInputContainer.offsetWidth + 'px';
                         }
-                    });
+                    }
                 }
                 
-                // Style dropdown on input events
-                searchInput.addEventListener('input', styleDropdown);
-                searchInput.addEventListener('focus', styleDropdown);
+                // Style dropdown on input events (with multiple checks to catch it)
+                function checkAndStyleDropdown() {
+                    styleDropdown();
+                    // Check again after a short delay to catch delayed rendering
+                    setTimeout(styleDropdown, 50);
+                    setTimeout(styleDropdown, 150);
+                }
+                
+                searchInput.addEventListener('input', checkAndStyleDropdown);
+                searchInput.addEventListener('focus', checkAndStyleDropdown);
+                searchInput.addEventListener('keydown', function() {
+                    setTimeout(checkAndStyleDropdown, 10);
+                });
+                
+                // Also check when autocomplete predictions are shown
+                google.maps.event.addListener(autocomplete, 'place_changed', function() {
+                    setTimeout(styleDropdown, 10);
+                });
                 
                 // Handle place selection
                 autocomplete.addListener('place_changed', function() {
