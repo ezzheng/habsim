@@ -76,6 +76,13 @@
             top: auto !important;
         }
         
+        /* Search autocomplete dropdown: appears above on desktop */
+        .pac-container {
+            bottom: 100% !important;
+            top: auto !important;
+            margin-bottom: 5px !important;
+        }
+        
         @media (max-width: 768px) {
             .custom-map-type-container {
                 bottom: auto !important;
@@ -97,7 +104,14 @@
             
             #search-input-container {
                 bottom: auto !important;
-                top: 45px !important;
+                top: 0 !important;
+                left: 45px !important;
+            }
+            
+            /* On mobile, autocomplete dropdown should appear below (default) */
+            .pac-container {
+                top: auto !important;
+                bottom: auto !important;
             }
         }
         

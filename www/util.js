@@ -258,8 +258,8 @@ initMap();
         searchInputContainer.id = 'search-input-container';
         searchInputContainer.style.cssText = `
             position: absolute;
-            left: 0;
-            bottom: 45px;
+            left: 45px;
+            bottom: 0;
             background-color: white;
             border-radius: 2px;
             box-shadow: 0 2px 6px rgba(0,0,0,0.3);
@@ -317,9 +317,40 @@ initMap();
                 // Reset placeholder
                 searchInput.placeholder = 'Search for a location...';
                 
+                // Configure autocomplete with custom styling for dropdown position
                 autocomplete = new google.maps.places.Autocomplete(searchInput, {
                     types: ['geocode'],
                     fields: ['geometry', 'name', 'formatted_address']
+                });
+                
+                // Force dropdown to appear above on desktop, below on mobile
+                // This is done by manipulating the pac-container element after it's created
+                const styleDropdown = function() {
+                    const pacContainer = document.querySelector('.pac-container');
+                    if (pacContainer) {
+                        // Check if mobile (screen width <= 768px)
+                        const isMobile = window.innerWidth <= 768;
+                        if (isMobile) {
+                            // Mobile: dropdown appears below (default behavior)
+                            pacContainer.style.top = 'auto';
+                            pacContainer.style.bottom = 'auto';
+                        } else {
+                            // Desktop: dropdown appears above
+                            pacContainer.style.top = 'auto';
+                            pacContainer.style.bottom = '100%';
+                            pacContainer.style.marginBottom = '5px';
+                        }
+                    }
+                };
+                
+                // Style dropdown when it appears
+                searchInput.addEventListener('focus', function() {
+                    setTimeout(styleDropdown, 100);
+                });
+                
+                // Also style on input (when typing)
+                searchInput.addEventListener('input', function() {
+                    setTimeout(styleDropdown, 100);
                 });
                 
                 autocomplete.addListener('place_changed', function() {
