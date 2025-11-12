@@ -368,6 +368,30 @@ initMap();
                     setTimeout(checkAndStyleDropdown, 10);
                 });
                 
+                // Also check when search bar expands - use MutationObserver to catch dynamically added elements
+                const observer = new MutationObserver(function() {
+                    styleDropdown();
+                });
+                
+                // Observe the pac-container for changes (when it's created)
+                const observePacContainer = function() {
+                    const pacContainer = document.querySelector('.pac-container');
+                    if (pacContainer) {
+                        observer.observe(pacContainer, {
+                            childList: true,
+                            subtree: true,
+                            attributes: false
+                        });
+                    } else {
+                        // Check again if container doesn't exist yet
+                        setTimeout(observePacContainer, 100);
+                    }
+                };
+                
+                // Start observing when input is focused or typed
+                searchInput.addEventListener('focus', observePacContainer);
+                searchInput.addEventListener('input', observePacContainer);
+                
                 // Listen for window resize to reposition dropdown
                 window.addEventListener('resize', styleDropdown);
                 
