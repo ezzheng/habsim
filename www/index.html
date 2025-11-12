@@ -310,12 +310,16 @@
             overflow: visible; /* Changed to visible so dropdown can show */
             opacity: 0;
             transition: width 0.3s ease, opacity 0.3s ease;
+            border: none; /* Remove any border */
+            outline: none; /* Remove outline */
             /* Gap is handled by flexbox gap on parent container */
         }
         
         .search-input-container.search-expanded {
             width: 300px;
             opacity: 1;
+            border: none; /* Ensure no border on expansion */
+            outline: none; /* Ensure no outline on expansion */
         }
         
         .search-input-field {
@@ -327,10 +331,18 @@
             color: #5B5B5B;
             font-family: Roboto, Arial, sans-serif;
             box-sizing: border-box;
+            background-color: transparent; /* Ensure no background color flash */
         }
         
         .search-input-field:focus {
             outline: none;
+            border: none;
+            box-shadow: none;
+        }
+        
+        .search-input-field:active {
+            outline: none;
+            border: none;
         }
         
         /* Hide fullscreen button on mobile */

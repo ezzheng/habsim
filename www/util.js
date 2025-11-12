@@ -160,11 +160,24 @@ initMap();
             // Click handler
             menuItem.onclick = function() {
                 try {
-                    map.setMapTypeId(mapType.id);
-                    updateActiveMapType(mapType.id);
+                    // Ensure OSM map type is initialized before switching
+                    if (mapType.id === 'OSM' && !map.mapTypes.get('OSM')) {
+                        // OSM not initialized yet, wait a bit
+                        setTimeout(function() {
+                            if (map.mapTypes.get('OSM')) {
+                                map.setMapTypeId('OSM');
+                                updateActiveMapType('OSM');
+                            } else {
+                                console.warn('OSM map type not available');
+                            }
+                        }, 100);
+                    } else {
+                        map.setMapTypeId(mapType.id);
+                        updateActiveMapType(mapType.id);
+                    }
                     dropdownMenu.style.display = 'none';
                 } catch(e) {
-                    console.warn('Map type not available:', mapType.id);
+                    console.warn('Map type not available:', mapType.id, e);
                 }
             };
             
@@ -354,14 +367,14 @@ initMap();
                 function styleDropdown() {
                     const pacContainer = document.querySelector('.pac-container');
                     if (pacContainer) {
-                        // Ensure dropdown is visible
+                        // Ensure dropdown is visible and properly styled
                         pacContainer.style.zIndex = '1002';
                         pacContainer.style.display = 'block';
                         pacContainer.style.visibility = 'visible';
                         pacContainer.style.opacity = '1';
+                        pacContainer.style.pointerEvents = 'auto';
                         
                         // Hide "Powered by Google" text - target only the logo/attribution, not the dropdown
-                        // Hide the pac-logo container (the bar that appears separately)
                         const pacLogo = pacContainer.querySelector('.pac-logo');
                         if (pacLogo) {
                             pacLogo.style.display = 'none';
@@ -373,7 +386,7 @@ initMap();
                             pacLogo.style.pointerEvents = 'none';
                         }
                         // Hide attribution/logo elements, but NOT pac-item elements (those are the suggestions)
-                        const allAttribution = pacContainer.querySelectorAll('[class*="pac-logo"], [class*="attribution"], [class*="logo"]:not([class*="pac-item"]), a[href*="google"]:not([class*="pac-item"]), a[href*="maps"]:not([class*="pac-item"])');
+                        const allAttribution = pacContainer.querySelectorAll('[class*="pac-logo"], [class*="attribution"], [class*="logo"]:not([class*="pac-item"])');
                         allAttribution.forEach(function(el) {
                             // Only hide if it's not a suggestion item
                             if (!el.closest('.pac-item') && !el.classList.contains('pac-item')) {
@@ -418,6 +431,7 @@ initMap();
                             pacContainer.style.left = inputRect.left + 'px';
                             pacContainer.style.width = inputRect.width + 'px';
                             pacContainer.style.maxWidth = inputRect.width + 'px';
+                            pacContainer.style.transform = 'none'; // Reset transform for mobile
                         } else {
                             // Desktop: dropdown appears above
                             pacContainer.style.position = 'fixed';
@@ -432,16 +446,31 @@ initMap();
                     }
                 }
                 
-                // Style dropdown on input events (with multiple checks to catch it)
+                // Style dropdown on input events - ensure it appears when typing
                 function checkAndStyleDropdown() {
+                    // Immediate check
                     styleDropdown();
-                    // Check again after a short delay to catch delayed rendering
+                    // Check again after delays to catch delayed rendering
+                    setTimeout(styleDropdown, 10);
                     setTimeout(styleDropdown, 50);
-                    setTimeout(styleDropdown, 150);
+                    setTimeout(styleDropdown, 100);
+                    setTimeout(styleDropdown, 200);
                 }
                 
-                searchInput.addEventListener('input', checkAndStyleDropdown);
-                searchInput.addEventListener('focus', checkAndStyleDropdown);
+                // Ensure dropdown appears on input
+                searchInput.addEventListener('input', function() {
+                    checkAndStyleDropdown();
+                    // Also trigger autocomplete programmatically if needed
+                    if (autocomplete && searchInput.value.length > 0) {
+                        // Force autocomplete to show predictions
+                        google.maps.event.trigger(searchInput, 'focus');
+                    }
+                });
+                
+                searchInput.addEventListener('focus', function() {
+                    checkAndStyleDropdown();
+                });
+                
                 searchInput.addEventListener('keydown', function() {
                     setTimeout(checkAndStyleDropdown, 10);
                 });
