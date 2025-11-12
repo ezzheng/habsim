@@ -235,13 +235,19 @@ class Simulator:
 
         # Update record at end of step
         # Defensive check: ensure wind_file is still valid (race condition protection)
+        # Check right before use to catch any cleanup that happened during the step
         if self.wind_file is None:
             raise RuntimeError("Simulator wind_file is None - simulator was cleaned up during use")
+        
+        # Get wind vector with another check right before the call
+        if self.wind_file is None:
+            raise RuntimeError("Simulator wind_file is None - simulator was cleaned up during use")
+        wind_vector = self.wind_file.get(*newLoc, newAlt, newTime)
         
         balloon.update(
             location=newLoc,
             ground_elev=self.elev_file.elev(*newLoc),
-            wind_vector=self.wind_file.get(*newLoc, newAlt, newTime),
+            wind_vector=wind_vector,
             time=newTime,
             alt=newAlt,
         )
