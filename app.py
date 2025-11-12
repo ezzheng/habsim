@@ -898,6 +898,38 @@ def spaceshot():
         sys.stdout.flush()
         sys.stderr.flush()
         
+        # Wait for prefetch to complete at least the first few critical models
+        # This ensures simulators are preloaded before 32 threads compete for file I/O
+        # Prefetch loads models sequentially, so waiting for first few prevents I/O contention
+        import time
+        prefetch_wait_start = time.time()
+        prefetch_timeout = 60  # Max 60 seconds wait for prefetch (models should load in 20-30s)
+        models_to_wait_for = min(5, len(model_ids))  # Wait for first 5 models to be prefetched
+        
+        print(f"[WORKER {worker_pid}] Waiting for prefetch to complete first {models_to_wait_for} models before starting simulations...", flush=True)
+        for i in range(models_to_wait_for):
+            model_id = model_ids[i]
+            wait_start = time.time()
+            max_wait_per_model = prefetch_timeout / models_to_wait_for  # Distribute timeout across models
+            
+            while True:
+                # Check if simulator is in cache (prefetched and ready)
+                with simulate._cache_lock:
+                    if model_id in simulate._simulator_cache:
+                        print(f"[WORKER {worker_pid}] Model {model_id} prefetched ({time.time() - wait_start:.1f}s)", flush=True)
+                        break
+                
+                # Check timeout
+                if time.time() - wait_start > max_wait_per_model:
+                    print(f"[WORKER {worker_pid}] Prefetch timeout for model {model_id} ({time.time() - wait_start:.1f}s), starting simulations anyway", flush=True)
+                    break
+                
+                time.sleep(0.1)  # Check every 100ms
+        
+        prefetch_wait_time = time.time() - prefetch_wait_start
+        print(f"[WORKER {worker_pid}] Prefetch wait complete: {prefetch_wait_time:.1f}s - starting simulations", flush=True)
+        sys.stdout.flush()
+        
         # ========================================================================
         # PARALLEL EXECUTION: Ensemble + Monte Carlo Simulations
         # ========================================================================

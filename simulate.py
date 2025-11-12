@@ -398,7 +398,8 @@ def _is_ensemble_mode():
 
 def _prefetch_ensemble_models():
     """Prefetch all 21 ensemble models in background thread for faster ensemble runs.
-    This pre-warms the cache so simulations don't wait for downloads."""
+    This pre-warms the cache so simulations don't wait for downloads.
+    Returns the thread so caller can wait for completion if needed."""
     def prefetch_worker():
         try:
             # Prefetch models 0-20 in background
@@ -420,6 +421,7 @@ def _prefetch_ensemble_models():
     thread = threading.Thread(target=prefetch_worker, daemon=True, name="EnsemblePrefetch")
     thread.start()
     logging.info("Started background prefetching of ensemble models")
+    return thread
 
 def _get_rss_memory_mb():
     """Get current RSS memory usage in MB (if psutil available)"""
