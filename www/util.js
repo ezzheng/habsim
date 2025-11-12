@@ -328,10 +328,16 @@ initMap();
                 const styleDropdown = function() {
                     const pacContainer = document.querySelector('.pac-container');
                     if (pacContainer) {
+                        // Ensure dropdown is visible
+                        pacContainer.style.display = 'block';
+                        pacContainer.style.visibility = 'visible';
+                        pacContainer.style.opacity = '1';
+                        pacContainer.style.zIndex = '1002';
+                        
                         // Check if mobile (screen width <= 768px)
                         const isMobile = window.innerWidth <= 768;
                         if (isMobile) {
-                            // Mobile: dropdown appears below (default behavior)
+                            // Mobile: dropdown appears below
                             pacContainer.style.top = '100%';
                             pacContainer.style.bottom = 'auto';
                             pacContainer.style.marginTop = '5px';
@@ -351,8 +357,12 @@ initMap();
                     mutations.forEach(function(mutation) {
                         if (mutation.addedNodes.length) {
                             mutation.addedNodes.forEach(function(node) {
-                                if (node.nodeType === 1 && (node.classList.contains('pac-container') || node.querySelector('.pac-container'))) {
-                                    setTimeout(styleDropdown, 50);
+                                if (node.nodeType === 1) {
+                                    if (node.classList && node.classList.contains('pac-container')) {
+                                        setTimeout(styleDropdown, 50);
+                                    } else if (node.querySelector && node.querySelector('.pac-container')) {
+                                        setTimeout(styleDropdown, 50);
+                                    }
                                 }
                             });
                         }
@@ -366,13 +376,24 @@ initMap();
                 });
                 
                 // Also style dropdown when input is focused or typed in
-                searchInput.addEventListener('focus', function() {
-                    setTimeout(styleDropdown, 100);
-                });
+                const styleOnInteraction = function() {
+                    setTimeout(function() {
+                        styleDropdown();
+                        // Also check periodically while typing
+                        let checkCount = 0;
+                        const checkInterval = setInterval(function() {
+                            checkCount++;
+                            styleDropdown();
+                            if (checkCount > 10) { // Stop after 1 second
+                                clearInterval(checkInterval);
+                            }
+                        }, 100);
+                    }, 100);
+                };
                 
-                searchInput.addEventListener('input', function() {
-                    setTimeout(styleDropdown, 100);
-                });
+                searchInput.addEventListener('focus', styleOnInteraction);
+                searchInput.addEventListener('input', styleOnInteraction);
+                searchInput.addEventListener('keydown', styleOnInteraction);
                 
                 autocomplete.addListener('place_changed', function() {
                     const place = autocomplete.getPlace();
