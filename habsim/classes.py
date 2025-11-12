@@ -234,6 +234,10 @@ class Simulator:
         newLoc = (newLat, newLon)
 
         # Update record at end of step
+        # Defensive check: ensure wind_file is still valid (race condition protection)
+        if self.wind_file is None:
+            raise RuntimeError("Simulator wind_file is None - simulator was cleaned up during use")
+        
         balloon.update(
             location=newLoc,
             ground_elev=self.elev_file.elev(*newLoc),
