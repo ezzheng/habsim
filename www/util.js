@@ -295,6 +295,21 @@ initMap();
                         pacContainer.style.visibility = 'visible';
                         pacContainer.style.opacity = '1';
                         
+                        // Hide "Powered by Google" text
+                        const pacLogo = pacContainer.querySelector('.pac-logo');
+                        if (pacLogo) {
+                            pacLogo.style.display = 'none';
+                            pacLogo.style.visibility = 'hidden';
+                        }
+                        // Also hide any attribution text
+                        const attribution = pacContainer.querySelectorAll('[class*="attribution"], [class*="logo"], [class*="pac-item"] [href*="google"]');
+                        attribution.forEach(function(el) {
+                            if (el.textContent && el.textContent.toLowerCase().includes('powered by')) {
+                                el.style.display = 'none';
+                                el.style.visibility = 'hidden';
+                            }
+                        });
+                        
                         // Get input position on page
                         const inputRect = searchInput.getBoundingClientRect();
                         const isMobile = window.innerWidth <= 768;
