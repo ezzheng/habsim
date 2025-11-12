@@ -277,43 +277,45 @@ initMap();
                     fields: ['geometry', 'name', 'formatted_address']
                 });
                 
-                // Ensure input is properly bound to autocomplete
-                autocomplete.bindTo('bounds', map);
+                // Ensure input is properly bound to autocomplete and map bounds
+                try {
+                    autocomplete.bindTo('bounds', map);
+                } catch(e) {
+                    // bindTo may not be available in all API versions, ignore
+                    console.log('Autocomplete bindTo not available');
+                }
                 
                 // Style dropdown when it appears
                 function styleDropdown() {
                     const pacContainer = document.querySelector('.pac-container');
                     if (pacContainer) {
-                        // Ensure dropdown is visible and properly positioned
+                        // Ensure dropdown is visible
                         pacContainer.style.zIndex = '1002';
                         pacContainer.style.display = 'block';
                         pacContainer.style.visibility = 'visible';
                         pacContainer.style.opacity = '1';
                         
-                        // Position relative to search input container
-                        const inputRect = searchInputContainer.getBoundingClientRect();
+                        // Get input position on page
+                        const inputRect = searchInput.getBoundingClientRect();
                         const isMobile = window.innerWidth <= 768;
                         
                         if (isMobile) {
                             // Mobile: dropdown appears below
-                            pacContainer.style.position = 'absolute';
-                            pacContainer.style.top = '100%';
-                            pacContainer.style.bottom = 'auto';
-                            pacContainer.style.left = '0';
-                            pacContainer.style.right = 'auto';
-                            pacContainer.style.marginTop = '5px';
-                            pacContainer.style.marginBottom = '0';
-                            pacContainer.style.width = searchInputContainer.offsetWidth + 'px';
+                            pacContainer.style.position = 'fixed';
+                            pacContainer.style.top = (inputRect.bottom + window.scrollY + 5) + 'px';
+                            pacContainer.style.left = inputRect.left + 'px';
+                            pacContainer.style.width = inputRect.width + 'px';
+                            pacContainer.style.maxWidth = inputRect.width + 'px';
                         } else {
                             // Desktop: dropdown appears above
-                            pacContainer.style.position = 'absolute';
-                            pacContainer.style.top = 'auto';
-                            pacContainer.style.bottom = '100%';
-                            pacContainer.style.left = '0';
-                            pacContainer.style.right = 'auto';
-                            pacContainer.style.marginTop = '0';
-                            pacContainer.style.marginBottom = '5px';
-                            pacContainer.style.width = searchInputContainer.offsetWidth + 'px';
+                            pacContainer.style.position = 'fixed';
+                            pacContainer.style.bottom = 'auto';
+                            pacContainer.style.top = (inputRect.top + window.scrollY - 5) + 'px';
+                            pacContainer.style.left = inputRect.left + 'px';
+                            pacContainer.style.width = inputRect.width + 'px';
+                            pacContainer.style.maxWidth = inputRect.width + 'px';
+                            // Transform to position above
+                            pacContainer.style.transform = 'translateY(-100%)';
                         }
                     }
                 }
@@ -332,10 +334,8 @@ initMap();
                     setTimeout(checkAndStyleDropdown, 10);
                 });
                 
-                // Also check when autocomplete predictions are shown
-                google.maps.event.addListener(autocomplete, 'place_changed', function() {
-                    setTimeout(styleDropdown, 10);
-                });
+                // Listen for window resize to reposition dropdown
+                window.addEventListener('resize', styleDropdown);
                 
                 // Handle place selection
                 autocomplete.addListener('place_changed', function() {
