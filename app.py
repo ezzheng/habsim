@@ -720,11 +720,11 @@ def spaceshot():
     sys.stdout.flush()  # Ensure log appears immediately
     sys.stderr.flush()
     
-        # CRITICAL: Activate ensemble mode BEFORE any simulations start
-        # This must happen synchronously before ThreadPoolExecutor begins
-        # Use longer duration (5 minutes) to ensure ensemble mode doesn't expire during long simulations
-        # Ensemble runs can take 5-15 minutes, especially with slow S3 downloads on first run
-        simulate.set_ensemble_mode(duration_seconds=300)  # 5 minutes to cover slow downloads + simulations
+    # CRITICAL: Activate ensemble mode BEFORE any simulations start
+    # This must happen synchronously before ThreadPoolExecutor begins
+    # Use longer duration (5 minutes) to ensure ensemble mode doesn't expire during long simulations
+    # Ensemble runs can take 5-15 minutes, especially with slow S3 downloads on first run
+    simulate.set_ensemble_mode(duration_seconds=300)  # 5 minutes to cover slow downloads + simulations
     
     # Verify ensemble mode was activated (for debugging)
     with simulate._cache_lock:
@@ -1025,6 +1025,9 @@ def spaceshot():
         paths = ["error"] * len(model_ids)
         landing_positions = []
     finally:
+        # Always decrement the ensemble counter when request completes (success or failure)
+        _decrement_ensemble_counter()
+        
         # Trim cache after ensemble completes (in finally block so it always runs)
         print(f"[WORKER {worker_pid}] Spaceshot complete - trimming cache to normal", flush=True)
         simulate._trim_cache_to_normal()
