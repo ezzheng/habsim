@@ -176,12 +176,19 @@ class Simulator:
         self.wind_file = wind_file
 
     def step(self, balloon, step_size: float, coefficient):
+        # Defensive check at start: ensure wind_file is valid before starting step
+        if self.wind_file is None:
+            raise RuntimeError("Simulator wind_file is None - simulator was cleaned up during use")
+        
         # Preserve initial ground constraint
         if not balloon.ground_elev:
             balloon.ground_elev = self.elev_file.elev(*balloon.location)
             balloon.alt = max(balloon.alt, balloon.ground_elev)
         # if wind_vector is not set, get it from the wind_file
         if balloon.wind_vector is None:
+            # Defensive check before accessing wind_file
+            if self.wind_file is None:
+                raise RuntimeError("Simulator wind_file is None - simulator was cleaned up during use")
             temp = self.wind_file.get(*balloon.location, balloon.alt, balloon.time)
             balloon.wind_vector = temp
 
@@ -195,10 +202,13 @@ class Simulator:
         h = float(step_size)
 
         def sample_rates(lat, lon, alt, t):
-            # Defensive check: wind_file might be None if simulator was cleaned up
+            # Defensive check: wind_file might be None if simulator was cleaned up during step
             if self.wind_file is None:
                 raise RuntimeError("Simulator wind_file is None - simulator was cleaned up during use")
             # wind_file.get returns [u, v, du/dh, dv/dh, ...]; use u, v and include air_vector
+            # Additional check right before the call
+            if self.wind_file is None:
+                raise RuntimeError("Simulator wind_file is None - simulator was cleaned up during use")
             temp = self.wind_file.get(lat, lon, alt, t)
             u = float(temp[0])
             v = float(temp[1])
