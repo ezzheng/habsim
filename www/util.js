@@ -294,8 +294,18 @@ initMap();
         
         function initAutocomplete() {
             // Check if Places library is available
-            if (typeof google === 'undefined' || !google.maps || !google.maps.places) {
-                console.warn('Places library not loaded yet, will initialize when search is opened');
+            if (typeof google === 'undefined' || !google.maps || !google.maps.places || !google.maps.places.Autocomplete) {
+                console.warn('Places library not loaded yet');
+                // Show user-friendly message
+                searchInput.placeholder = 'Loading search...';
+                setTimeout(function() {
+                    if (typeof google !== 'undefined' && google.maps && google.maps.places && google.maps.places.Autocomplete) {
+                        initAutocomplete();
+                    } else {
+                        searchInput.placeholder = 'Search unavailable - please refresh';
+                        console.error('Places library failed to load');
+                    }
+                }, 500);
                 return;
             }
             
@@ -304,6 +314,9 @@ initMap();
             }
             
             try {
+                // Reset placeholder
+                searchInput.placeholder = 'Search for a location...';
+                
                 autocomplete = new google.maps.places.Autocomplete(searchInput, {
                     types: ['geocode'],
                     fields: ['geometry', 'name', 'formatted_address']
@@ -335,6 +348,7 @@ initMap();
                 autocompleteInitialized = true;
             } catch (e) {
                 console.error('Error initializing Places Autocomplete:', e);
+                searchInput.placeholder = 'Search error - please refresh';
                 // Don't retry - let user try again when they click search button
             }
         }

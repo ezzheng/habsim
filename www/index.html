@@ -1126,7 +1126,15 @@
         </div>
     </div>
 </main>
-<script type="text/javascript" src="https://maps.googleapis.com/maps/api/js?key=AIzaSyC62-iKLT_54_N0cPnbQlrzIsEKQxiAJgA&v=quarterly&libraries=visualization,places"></script>
+<script type="text/javascript" src="https://maps.googleapis.com/maps/api/js?key=AIzaSyC62-iKLT_54_N0cPnbQlrzIsEKQxiAJgA&v=quarterly&libraries=visualization,places&callback=initGoogleMaps"></script>
+<script>
+    // Callback to ensure Google Maps API is fully loaded
+    function initGoogleMaps() {
+        // This function is called when Google Maps API is ready
+        // The map initialization in util.js will handle the rest
+        console.log('Google Maps API loaded successfully');
+    }
+</script>
 <script type="text/javascript" src = "style.js"></script>
 <script type="text/javascript" src = "paths.js"></script>
 <script type="text/javascript" src = "util.js"></script>
