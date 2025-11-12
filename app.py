@@ -656,7 +656,9 @@ def spaceshot():
     
     # CRITICAL: Activate ensemble mode BEFORE any simulations start
     # This must happen synchronously before ThreadPoolExecutor begins
-    simulate.set_ensemble_mode(duration_seconds=60)
+    # Use longer duration (5 minutes) to ensure ensemble mode doesn't expire during long simulations
+    # Ensemble runs can take 5-15 minutes, especially with slow S3 downloads on first run
+    simulate.set_ensemble_mode(duration_seconds=300)  # 5 minutes to cover slow downloads + simulations
     
     # Verify ensemble mode was activated (for debugging)
     with simulate._cache_lock:
