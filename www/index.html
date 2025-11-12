@@ -234,30 +234,82 @@
             background: var(--bg);
             border-color: #10b981;
         }
-        /* Ensemble button styles */
-        #ensemble-toggle.on {
-            background: var(--bg);
-            color: var(--fg);
-            border-color: #10b981;
+        /* Mode dropdown styles */
+        .mode-dropdown {
+            position: relative;
+            display: inline-block;
         }
-        /* Prevent text selection/callout on long-press (mobile) */
-        #ensemble-toggle {
+        .mode-dropdown-button {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 12px;
+            background: var(--bg);
+            border: 1px solid var(--line);
+            border-radius: var(--radius);
+            color: var(--fg);
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
             -webkit-user-select: none;
             user-select: none;
             -webkit-touch-callout: none;
             touch-action: manipulation;
         }
-        #ensemble-toggle.on:hover {
+        .mode-dropdown-button:hover {
             background: rgba(16, 185, 129, 0.05);
         }
-        #ensemble-toggle.on:focus,
-        #ensemble-toggle.on:active {
+        .mode-dropdown-button.active {
             background: var(--bg);
+            color: var(--fg);
             border-color: #10b981;
         }
-        /* Keep normal background on hover/active for non-on state to avoid lingering gray on mobile */
-        #ensemble-toggle:hover { background: var(--bg); }
-        #ensemble-toggle:active { background: var(--bg); }
+        .mode-dropdown-button.active:hover {
+            background: rgba(16, 185, 129, 0.05);
+        }
+        .mode-dropdown-triangle {
+            width: 0;
+            height: 0;
+            border-left: 4px solid transparent;
+            border-right: 4px solid transparent;
+            border-top: 5px solid var(--fg);
+            transition: transform 0.2s;
+            opacity: 0.6;
+        }
+        .mode-dropdown.open .mode-dropdown-triangle {
+            transform: rotate(180deg);
+        }
+        .mode-dropdown-menu {
+            position: absolute;
+            top: calc(100% + 4px);
+            left: 0;
+            min-width: 120px;
+            background: var(--bg);
+            border: 1px solid var(--line);
+            border-radius: var(--radius);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+            z-index: 1000;
+            display: none;
+            overflow: hidden;
+        }
+        .mode-dropdown.open .mode-dropdown-menu {
+            display: block;
+        }
+        .mode-dropdown-option {
+            padding: 8px 12px;
+            cursor: pointer;
+            font-size: 13px;
+            color: var(--fg);
+            transition: background 0.15s;
+        }
+        .mode-dropdown-option:hover {
+            background: rgba(16, 185, 129, 0.1);
+        }
+        .mode-dropdown-option.selected {
+            background: rgba(16, 185, 129, 0.15);
+            color: var(--fg);
+            font-weight: 500;
+        }
         /* Segmented button styles - commented out for Standard-only version
         .segmented {
             display: inline-flex;
@@ -865,8 +917,18 @@
             </div>
             <div class="topbar-center-group">
                 <button id="simulate-btn" class="btn-primary-modern" type="button" onclick="simulate()">Simulate</button>
-                <button id="ensemble-toggle" type="button" class="waypoint-toggle">Ensemble</button>
-            <button id="waypoint-toggle" type="button" class="waypoint-toggle on">Waypoints</button>
+                <div class="mode-dropdown" id="mode-dropdown">
+                    <button type="button" class="mode-dropdown-button" id="mode-dropdown-button">
+                        <span id="mode-dropdown-label">Single</span>
+                        <span class="mode-dropdown-triangle"></span>
+                    </button>
+                    <div class="mode-dropdown-menu" id="mode-dropdown-menu">
+                        <div class="mode-dropdown-option" data-mode="single">Single</div>
+                        <div class="mode-dropdown-option" data-mode="ensemble">Ensemble</div>
+                        <div class="mode-dropdown-option" data-mode="multi">Multi</div>
+                    </div>
+                </div>
+                <button id="waypoint-toggle" type="button" class="waypoint-toggle on">Waypoints</button>
                 <button id="collapse-toggle" class="btn-ghost" title="Show/Hide parameters">Data Panel</button>
             </div>
             <div class="topbar-actions">
@@ -1168,92 +1230,78 @@
                 // No layout adjustment needed - panel is floating overlay
             });
             
-            // Ensemble toggle - defaults to OFF
-            const ensembleBtn = document.getElementById('ensemble-toggle');
-            if (ensembleBtn) {
-                // Long-press toggles label between Ensemble and Multi
-                let pressTimer = null;
-                let longPressJustCompleted = false;
-                const longPressMs = 500;
-                const cancelTimer = () => { 
-                    if (pressTimer) { 
-                        clearTimeout(pressTimer); 
-                        pressTimer = null; 
-                    } 
-                };
-                const completeLongPress = () => {
-                    pressTimer = null; // Clear timer reference
-                    window.ensembleMultiLabel = !window.ensembleMultiLabel;
-                    ensembleBtn.textContent = window.ensembleMultiLabel ? 'Multi' : 'Ensemble';
-                    // After long press switches state, turn button OFF (user must click to enable)
-                    window.ensembleEnabled = false;
-                    ensembleBtn.classList.remove('on');
-                    window.multiActive = false;
-                    longPressJustCompleted = true;
-                    // Reset flag after a short delay to allow click handler to check it
-                    setTimeout(() => { longPressJustCompleted = false; }, 300);
-                };
-                const startLongPress = () => {
-                    cancelTimer();
-                    longPressJustCompleted = false;
-                    pressTimer = setTimeout(completeLongPress, longPressMs);
-                };
-                // Support both mouse and touch events for mobile
-                let touchStarted = false;
-                ensembleBtn.addEventListener('mousedown', (e) => {
-                    e.preventDefault(); // Prevent text selection
-                    startLongPress();
-                });
-                ensembleBtn.addEventListener('touchstart', (e) => {
-                    touchStarted = true;
-                    startLongPress();
-                });
-                ensembleBtn.addEventListener('mouseup', cancelTimer);
-                ensembleBtn.addEventListener('mouseleave', cancelTimer);
-                ensembleBtn.addEventListener('touchend', (e) => {
-                    touchStarted = false;
-                    const timerWasRunning = pressTimer !== null;
-                    cancelTimer();
-                    // Only prevent click if long press actually completed (timer finished, flag set)
-                    // For quick taps, timer will be cancelled and flag will be false, so click fires normally
-                    if (longPressJustCompleted) {
-                        e.preventDefault();
-                        // Reset flag after a delay to allow next interaction
-                        setTimeout(() => { longPressJustCompleted = false; }, 100);
-                    }
-                    // If it was a quick tap (not long press), allow click event to fire normally
-                });
-                ensembleBtn.addEventListener('touchcancel', (e) => {
-                    touchStarted = false;
-                    cancelTimer();
-                });
-                ensembleBtn.addEventListener('touchmove', (e) => {
-                    // Cancel long press if user moves finger
-                    cancelTimer();
-                });
-                // Click toggles activation (green border) - but ignore if long press just completed
-                ensembleBtn.addEventListener('click', (e) => {
-                    // On mobile, check if this was from a touch that completed a long press
-                    if (longPressJustCompleted) {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        // Reset flag immediately so next click works
-                        longPressJustCompleted = false;
-                        return;
-                    }
-                    // Toggle activation (works for both mouse and touch)
-                    window.ensembleEnabled = !window.ensembleEnabled;
-                    ensembleBtn.classList.toggle('on', window.ensembleEnabled);
-                    // If enabling, set multiActive false until simulate decides
-                    if (!window.ensembleEnabled) window.multiActive = false;
-                });
-            }
-            // Initialize ensemble state to false (not enabled by default)
+            // Mode dropdown - defaults to Single
+            const modeDropdown = document.getElementById('mode-dropdown');
+            const modeDropdownButton = document.getElementById('mode-dropdown-button');
+            const modeDropdownMenu = document.getElementById('mode-dropdown-menu');
+            const modeDropdownLabel = document.getElementById('mode-dropdown-label');
+            const modeOptions = modeDropdownMenu.querySelectorAll('.mode-dropdown-option');
+            
+            // Initialize mode state
+            window.currentMode = 'single'; // 'single', 'ensemble', 'multi'
             window.ensembleEnabled = false;
-            // Label mode: false = "Ensemble", true = "Multi"
             window.ensembleMultiLabel = false;
-            // Runtime: are we currently executing multi run
             window.multiActive = false;
+            
+            // Update button label and active state
+            function updateModeDisplay() {
+                const modeLabels = {
+                    'single': 'Single',
+                    'ensemble': 'Ensemble',
+                    'multi': 'Multi'
+                };
+                modeDropdownLabel.textContent = modeLabels[window.currentMode];
+                
+                // Update button active state (green border for ensemble/multi)
+                if (window.currentMode === 'ensemble' || window.currentMode === 'multi') {
+                    modeDropdownButton.classList.add('active');
+                } else {
+                    modeDropdownButton.classList.remove('active');
+                }
+                
+                // Update selected option in dropdown
+                modeOptions.forEach(option => {
+                    if (option.dataset.mode === window.currentMode) {
+                        option.classList.add('selected');
+                    } else {
+                        option.classList.remove('selected');
+                    }
+                });
+                
+                // Update internal state
+                window.ensembleEnabled = (window.currentMode === 'ensemble' || window.currentMode === 'multi');
+                window.ensembleMultiLabel = (window.currentMode === 'multi');
+                if (!window.ensembleEnabled) {
+                    window.multiActive = false;
+                }
+            }
+            
+            // Toggle dropdown on button click
+            modeDropdownButton.addEventListener('click', (e) => {
+                e.stopPropagation();
+                modeDropdown.classList.toggle('open');
+            });
+            
+            // Handle option selection
+            modeOptions.forEach(option => {
+                option.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const selectedMode = option.dataset.mode;
+                    window.currentMode = selectedMode;
+                    updateModeDisplay();
+                    modeDropdown.classList.remove('open');
+                });
+            });
+            
+            // Close dropdown when clicking outside
+            document.addEventListener('click', (e) => {
+                if (!modeDropdown.contains(e.target)) {
+                    modeDropdown.classList.remove('open');
+                }
+            });
+            
+            // Initialize display
+            updateModeDisplay();
         });
         
         // Helper function to get timezone abbreviation
