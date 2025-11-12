@@ -100,7 +100,7 @@
             .custom-search-container {
                 bottom: auto !important;
                 top: 0 !important;
-                left: 55px !important;
+                left: 52px !important;
             }
             
             #search-input-container {
@@ -883,6 +883,15 @@
                 visibility: hidden !important;
                 height: 0 !important;
                 overflow: hidden !important;
+            }
+            
+            /* Hide zoom/pan controls on mobile */
+            .gm-bundled-control,
+            .gm-bundled-control-on-bottom,
+            .gmnoprint[style*="right"],
+            div[style*="right"][style*="bottom"] {
+                display: none !important;
+                visibility: hidden !important;
             }
             
             /* Show print overlay with parameters */

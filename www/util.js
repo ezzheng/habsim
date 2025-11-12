@@ -219,7 +219,7 @@ initMap();
         const searchDiv = document.createElement('div');
         searchDiv.id = 'custom-search-control';
         searchDiv.className = 'custom-search-container';
-        searchDiv.style.cssText = 'margin: 10px; position: absolute; bottom: 0; left: 45px; z-index: 1000;';
+        searchDiv.style.cssText = 'margin: 10px; position: absolute; bottom: 0; left: 42px; z-index: 1000;';
         
         // Create search button
         const searchButton = document.createElement('button');
@@ -411,6 +411,9 @@ initMap();
             const isVisible = searchInputContainer.style.display !== 'none' && searchInputContainer.style.display !== '';
             if (isVisible) {
                 searchInputContainer.style.display = 'none';
+                searchInput.value = '';
+                // Remove focus/highlight from button
+                searchButton.blur();
             } else {
                 searchInputContainer.style.display = 'block';
                 // Initialize autocomplete when search is opened (lazy initialization)
