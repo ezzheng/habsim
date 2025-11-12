@@ -278,6 +278,24 @@ function showWaypoints() {
     }
 }
 
+function closeEndPinInfoWindows() {
+    // Close info windows without clearing markers (for mobile tap-outside behavior)
+    try {
+        if (endPinInfoWindow && endPinInfoWindow.getMap()) {
+            endPinInfoWindow.close();
+        }
+        if (endPinInfoWindows && endPinInfoWindows.length) {
+            endPinInfoWindows.forEach(iw => {
+                try {
+                    if (iw && iw.getMap()) {
+                        iw.close();
+                    }
+                } catch(e) {}
+            });
+        }
+    } catch (e) {}
+}
+
 function clearEndPin() {
     try {
         if (endPinInfoWindow) { endPinInfoWindow.close(); endPinInfoWindow = null; }

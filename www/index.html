@@ -1248,6 +1248,26 @@
                 // No layout adjustment needed - panel is floating overlay
             });
             
+            // Close end pin info windows when clicking on data panel (mobile tap-outside behavior)
+            if (panel) {
+                panel.addEventListener('click', (e) => {
+                    // Only close if clicking on the panel background, not on input fields, buttons, or labels
+                    const isInteractive = e.target.tagName === 'INPUT' || 
+                                         e.target.tagName === 'BUTTON' || 
+                                         e.target.tagName === 'LABEL' ||
+                                         e.target.closest('button') ||
+                                         e.target.closest('input') ||
+                                         e.target.closest('label');
+                    
+                    if (!isInteractive) {
+                        // Check if function exists before calling (paths.js might not be loaded yet)
+                        if (typeof closeEndPinInfoWindows === 'function') {
+                            closeEndPinInfoWindows();
+                        }
+                    }
+                });
+            }
+            
             // Mode dropdown - defaults to Single
             const modeDropdown = document.getElementById('mode-dropdown');
             const modeDropdownButton = document.getElementById('mode-dropdown-button');
