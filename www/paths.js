@@ -10,6 +10,8 @@ var endPinInfoWindow = null;
 // Support multiple end pins in Multi mode
 var endPinMarkers = [];
 var endPinInfoWindows = [];
+// Waypoint info windows (for closing on mobile when toggling off)
+var waypointInfoWindows = [];
 // Launch info captured at simulate-time
 var lastLaunchInfo = null;
 // Multi connector path and collected end positions
@@ -150,6 +152,15 @@ function clearAllVisualizations() {
 }
 
 function clearWaypoints() {
+    // Close all waypoint info windows (important for mobile where hover panels persist)
+    for (var i = 0; i < waypointInfoWindows.length; i++) {
+        try {
+            if (waypointInfoWindows[i] && waypointInfoWindows[i].getMap()) {
+                waypointInfoWindows[i].close();
+            }
+        } catch (e) {}
+    }
+    waypointInfoWindows = [];
     //Loop through all the markers and remove
     for (var i = 0; i < circleslist.length; i++) {
         circleslist[i].setMap(null);
@@ -264,6 +275,8 @@ function showWaypoints() {
                                      '<div><strong style="font-weight: 600;">Wayp. Time:</strong> ' + formattedTime + ' ' + tzAbbr + '</div>' +
                                      '</div>'
                         });
+                        // Store info window so we can close it when toggling off waypoints
+                        waypointInfoWindows.push(infowindow);
                         circle.addListener("mouseover", function () {
                             infowindow.setPosition(circle.getCenter());
                             infowindow.open(map);
