@@ -759,8 +759,26 @@ def _ensure_cached(file_name: str) -> Path:
         # If we got here without error, file should exist (successful download broke out of loop)
         # Reconstruct tmp_path since it was defined in the loop scope
         tmp_path = cache_path.with_suffix(cache_path.suffix + ".tmp")
+        
+        # CRITICAL: Check if final file already exists (another worker might have completed the download)
+        # This handles race conditions where multiple workers download the same file
+        if cache_path.exists() and cache_path.stat().st_size > 0:
+            # Another worker completed the download - remove from downloading set and return
+            with _downloading_lock:
+                _downloading_files.discard(file_name)
+            logging.info(f"File {file_name} was downloaded by another worker (cache HIT after download)")
+            return cache_path
+        
         if not tmp_path.exists():
-            raise IOError(f"Download logic error: loop completed but temp file not found for {file_name}")
+            # Temp file doesn't exist - check if another worker completed it
+            if cache_path.exists() and cache_path.stat().st_size > 0:
+                # Another worker completed it - return the final file
+                with _downloading_lock:
+                    _downloading_files.discard(file_name)
+                logging.info(f"File {file_name} was downloaded by another worker (temp file was cleaned up)")
+                return cache_path
+            # Temp file missing and final file doesn't exist - this is an error
+            raise IOError(f"Download logic error: loop completed but temp file not found for {file_name} (and final file doesn't exist)")
         
         # Rename temp file to final cache location
         # Double-check temp file exists right before rename to avoid race conditions
@@ -770,6 +788,14 @@ def _ensure_cached(file_name: str) -> Path:
             try:
                 tmp_size = tmp_path.stat().st_size
             except FileNotFoundError:
+                # Temp file was deleted - check if another worker completed the download
+                if cache_path.exists() and cache_path.stat().st_size > 0:
+                    # Another worker completed it - return the final file
+                    with _downloading_lock:
+                        _downloading_files.discard(file_name)
+                    logging.info(f"File {file_name} was downloaded by another worker (temp file deleted during rename)")
+                    return cache_path
+                # Temp file deleted and final file doesn't exist - error
                 raise IOError(f"Download failed: temp file {tmp_path} was deleted before rename (race condition or cleanup issue)")
             
             if tmp_size == 0:
