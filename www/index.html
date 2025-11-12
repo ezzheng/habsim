@@ -81,6 +81,7 @@
             bottom: 100% !important;
             top: auto !important;
             margin-bottom: 5px !important;
+            margin-top: 0 !important;
         }
         
         @media (max-width: 768px) {
@@ -109,10 +110,12 @@
                 left: 45px !important;
             }
             
-            /* On mobile, autocomplete dropdown should appear below (default) */
+            /* On mobile, autocomplete dropdown should appear below */
             .pac-container {
-                top: auto !important;
+                top: 100% !important;
                 bottom: auto !important;
+                margin-top: 5px !important;
+                margin-bottom: 0 !important;
             }
         }
         

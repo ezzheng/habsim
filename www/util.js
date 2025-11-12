@@ -332,23 +332,44 @@ initMap();
                         const isMobile = window.innerWidth <= 768;
                         if (isMobile) {
                             // Mobile: dropdown appears below (default behavior)
-                            pacContainer.style.top = 'auto';
+                            pacContainer.style.top = '100%';
                             pacContainer.style.bottom = 'auto';
+                            pacContainer.style.marginTop = '5px';
+                            pacContainer.style.marginBottom = '0';
                         } else {
                             // Desktop: dropdown appears above
                             pacContainer.style.top = 'auto';
                             pacContainer.style.bottom = '100%';
+                            pacContainer.style.marginTop = '0';
                             pacContainer.style.marginBottom = '5px';
                         }
                     }
                 };
                 
-                // Style dropdown when it appears
+                // Use MutationObserver to watch for pac-container creation
+                const observer = new MutationObserver(function(mutations) {
+                    mutations.forEach(function(mutation) {
+                        if (mutation.addedNodes.length) {
+                            mutation.addedNodes.forEach(function(node) {
+                                if (node.nodeType === 1 && (node.classList.contains('pac-container') || node.querySelector('.pac-container'))) {
+                                    setTimeout(styleDropdown, 50);
+                                }
+                            });
+                        }
+                    });
+                });
+                
+                // Observe the document body for pac-container creation
+                observer.observe(document.body, {
+                    childList: true,
+                    subtree: true
+                });
+                
+                // Also style dropdown when input is focused or typed in
                 searchInput.addEventListener('focus', function() {
                     setTimeout(styleDropdown, 100);
                 });
                 
-                // Also style on input (when typing)
                 searchInput.addEventListener('input', function() {
                     setTimeout(styleDropdown, 100);
                 });
