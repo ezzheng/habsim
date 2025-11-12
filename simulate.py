@@ -186,6 +186,18 @@ def _idle_memory_cleanup(idle_duration):
         logging.debug(f"Idle cleanup skipped: lock already held by another thread")
         return False
     try:
+        # CRITICAL: Skip cleanup if ensemble mode is active (even if no models in use yet)
+        # Ensemble mode means simulations are running or about to run
+        now = time.time()
+        with _cache_lock:
+            ensemble_active = _is_ensemble_mode()
+            cache_size = len(_simulator_cache)
+            ensemble_until = _ensemble_mode_until  # Read while holding lock
+        if ensemble_active:
+            print(f"[WORKER {worker_pid}] Idle cleanup skipped: ensemble mode is active (expires at {ensemble_until:.1f}), cache size: {cache_size}", flush=True)
+            logging.warning(f"Idle cleanup skipped: ensemble mode is active (expires at {ensemble_until:.1f}), cache size: {cache_size}")
+            return False
+        
         # Safety check: ensure no simulators are currently in use
         with _in_use_lock:
             models_in_use = _in_use_models.copy()

@@ -668,6 +668,9 @@ def spaceshot():
     worker_pid = os.getpid()
     # CRITICAL: Use print() to stdout so it appears in Railway logs (same as access logs)
     # app.logger goes to stderr which Railway may filter or show separately
+    # CRITICAL: Record activity immediately to prevent idle cleanup during long ensemble runs
+    simulate.record_activity()
+    
     print(f"[WORKER {worker_pid}] ===== SPACESHOT ENDPOINT CALLED ===== (stdout for Railway visibility)", flush=True)
     app.logger.info(f"[WORKER {worker_pid}] ===== SPACESHOT ENDPOINT CALLED ===== (spaceshot endpoint called)")
     sys.stdout.flush()
