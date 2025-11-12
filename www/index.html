@@ -105,6 +105,37 @@
             visibility: hidden !important;
         }
         
+        /* Hide zoom/pan controls globally - extremely aggressive */
+        .gm-bundled-control,
+        .gm-bundled-control-on-bottom,
+        .gmnoprint[style*="right"],
+        div[style*="right"][style*="bottom"],
+        div[class*="gm-bundled"],
+        div[class*="gmnoprint"][style*="right"],
+        div[style*="right"][style*="bottom"][class*="gm"],
+        div[style*="position: absolute"][style*="right"],
+        div[style*="position:absolute"][style*="right"],
+        div[style*="right: 0"],
+        div[style*="right:0"],
+        div[style*="right: 10px"],
+        div[style*="right:10px"],
+        div[style*="bottom: 0"][style*="right"],
+        div[style*="bottom:0"][style*="right"],
+        div[style*="bottom: 10px"][style*="right"],
+        div[style*="bottom:10px"][style*="right"],
+        button[class*="gm"],
+        button[style*="right"],
+        .gm-style button[style*="right"],
+        .gm-style div[style*="right"][style*="bottom"] {
+            display: none !important;
+            visibility: hidden !important;
+            height: 0 !important;
+            width: 0 !important;
+            overflow: hidden !important;
+            opacity: 0 !important;
+            pointer-events: none !important;
+        }
+        
         @media (max-width: 768px) {
             .custom-map-type-container {
                 bottom: auto !important;
@@ -1003,20 +1034,35 @@
                 overflow: hidden !important;
             }
             
-            /* Hide zoom/pan controls on mobile - more aggressive */
+            /* Hide zoom/pan controls on mobile - extremely aggressive */
             .gm-bundled-control,
             .gm-bundled-control-on-bottom,
             .gmnoprint[style*="right"],
             div[style*="right"][style*="bottom"],
             div[class*="gm-bundled"],
             div[class*="gmnoprint"][style*="right"],
-            div[style*="right"][style*="bottom"][class*="gm"] {
+            div[style*="right"][style*="bottom"][class*="gm"],
+            div[style*="position: absolute"][style*="right"],
+            div[style*="position:absolute"][style*="right"],
+            div[style*="right: 0"],
+            div[style*="right:0"],
+            div[style*="right: 10px"],
+            div[style*="right:10px"],
+            div[style*="bottom: 0"][style*="right"],
+            div[style*="bottom:0"][style*="right"],
+            div[style*="bottom: 10px"][style*="right"],
+            div[style*="bottom:10px"][style*="right"],
+            button[class*="gm"],
+            button[style*="right"],
+            .gm-style button,
+            .gm-style div[style*="right"] {
                 display: none !important;
                 visibility: hidden !important;
                 height: 0 !important;
                 width: 0 !important;
                 overflow: hidden !important;
                 opacity: 0 !important;
+                pointer-events: none !important;
             }
             
             /* Hide zoom/pan controls on desktop as well */
@@ -1028,6 +1074,7 @@
                 width: 0 !important;
                 overflow: hidden !important;
                 opacity: 0 !important;
+                pointer-events: none !important;
             }
             
             /* Show print overlay with parameters */
