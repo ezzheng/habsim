@@ -1608,138 +1608,74 @@ async function simulate() {
             const useSpaceshot = ensembleEnabled && !isHistorical && (btype === 'STANDARD' || btype === 'ZPB');
             
             if (useSpaceshot && modelIds.length > 1) {
-                // Use parallel spaceshot endpoint for ensemble runs (now includes Monte Carlo)
                 const spaceshotUrl = URL_ROOT + "/spaceshot?timestamp="
                     + time + "&lat=" + lat + "&lon=" + lon + "&alt=" + alt 
                     + "&equil=" + equil + "&eqtime=" + eqtime 
                     + "&asc=" + asc + "&desc=" + desc;
                 const requestId = `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-                console.log(`[${requestId}] Using spaceshot endpoint (with Monte Carlo):`, spaceshotUrl);
                 
-                // For ensemble mode, immediately show 0% instead of "Simulating…"
-                if (simBtn) {
-                    simBtn.textContent = '0%';
-                }
-                
-                // Generate request_id on client side using MD5 (matching server's algorithm)
-                // Server uses: hashlib.md5(request_key.encode()).hexdigest()[:16]
-                // where request_key = f"{args['timestamp']}_{args['lat']}_{args['lon']}_{args['alt']}_{args['equil']}_{args['eqtime']}_{args['asc']}_{args['desc']}_{base_coeff}"
-                // Note: Server receives args as strings from URL, so we need to match that format exactly
-                const baseCoeff = 1.0; // Default coefficient
-                // Convert to strings to match server's request.args format (all values are strings from URL)
+                // Generate request_id matching server's MD5 algorithm
+                const baseCoeff = 1.0;
                 const requestKey = `${String(time)}_${String(lat)}_${String(lon)}_${String(alt)}_${String(equil)}_${String(eqtime)}_${String(asc)}_${String(desc)}_${String(baseCoeff)}`;
+                const clientRequestId = CryptoJS?.MD5 ? CryptoJS.MD5(requestKey).toString().substring(0, 16) : null;
                 
-                // Generate MD5 hash using crypto-js library (matches server's hashlib.md5)
-                let clientRequestId;
-                if (typeof CryptoJS !== 'undefined' && CryptoJS.MD5) {
-                    clientRequestId = CryptoJS.MD5(requestKey).toString().substring(0, 16);
-                } else {
-                    // Fallback: simple hash if crypto-js not loaded (shouldn't happen)
-                    console.warn('CryptoJS not available, using fallback hash');
-                    let hash = 0;
-                    for (let i = 0; i < requestKey.length; i++) {
-                        hash = ((hash << 5) - hash) + requestKey.charCodeAt(i);
-                        hash = hash & hash;
-                    }
-                    clientRequestId = Math.abs(hash).toString(16).padStart(16, '0').substring(0, 16);
-                }
+                if (simBtn) simBtn.textContent = '0%';
                 
-                // Set up progress tracking for ensemble mode using SSE
                 let progressEventSource = null;
                 let requestIdFromServer = null;
                 
-                // Start SSE progress stream immediately using client-generated request_id
-                // Note: URL_ROOT already includes "/sim", so we use "/progress-stream" not "/sim/progress-stream"
                 const startProgressSSE = (requestId) => {
                     if (progressEventSource) {
                         progressEventSource.close();
                         progressEventSource = null;
                     }
                     
-                    // Get button reference (use closure to ensure it's accessible)
-                    const buttonRef = simBtn;
-                    if (!buttonRef) {
-                        console.warn('Simulate button not found, cannot update progress');
-                        return;
-                    }
+                    if (!simBtn) return;
                     
                     const sseUrl = URL_ROOT + "/progress-stream?request_id=" + requestId;
-                    console.log(`[${requestId}] Starting SSE progress stream: ${sseUrl}`);
-                    
                     try {
                         progressEventSource = new EventSource(sseUrl);
-                        
-                        // Set initial 0% immediately when SSE connection opens
-                        if (buttonRef) {
-                            buttonRef.textContent = '0%';
-                        }
+                        if (simBtn) simBtn.textContent = '0%';
                         
                         progressEventSource.onmessage = function(event) {
                             try {
-                                console.log(`[${requestId}] SSE message received:`, event.data);
-                                const progressData = JSON.parse(event.data);
-                                
-                                // Handle error messages
-                                if (progressData.error) {
-                                    console.warn(`[${requestId}] SSE error:`, progressData.error);
+                                const data = JSON.parse(event.data);
+                                if (data.error) {
+                                    console.warn(`[${requestId}] SSE error:`, data.error);
                                     return;
                                 }
-                                
-                                if (progressData.percentage !== undefined) {
-                                    const percentage = progressData.percentage;
-                                    if (buttonRef) {
-                                        buttonRef.textContent = percentage + '%';
-                                        console.log(`[${requestId}] Progress update via SSE: ${percentage}% (${progressData.completed}/${progressData.total})`);
+                                if (data.percentage !== undefined && simBtn) {
+                                    simBtn.textContent = data.percentage + '%';
+                                    if (data.percentage >= 100 && progressEventSource) {
+                                        progressEventSource.close();
+                                        progressEventSource = null;
                                     }
-                                    // Close SSE when complete
-                                    if (percentage >= 100) {
-                                        if (progressEventSource) {
-                                            progressEventSource.close();
-                                            progressEventSource = null;
-                                        }
-                                    }
-                                } else {
-                                    console.warn(`[${requestId}] SSE message missing percentage:`, progressData);
                                 }
                             } catch (e) {
-                                console.warn(`[${requestId}] Failed to parse SSE progress data:`, e, 'Raw data:', event.data);
+                                console.warn(`[${requestId}] Failed to parse SSE data:`, e);
                             }
                         };
                         
-                        progressEventSource.onopen = function(event) {
-                            console.log(`[${requestId}] SSE connection opened`);
-                        };
-                        
                         progressEventSource.onerror = function(event) {
-                            console.warn(`[${requestId}] SSE connection error:`, event);
-                            // SSE errors are common (connection closed, etc.) - don't treat as fatal
-                            // The connection will be cleaned up when simulation completes
+                            // Connection errors are expected (closed, etc.) - not fatal
                         };
                     } catch (e) {
-                        console.error(`[${requestId}] Failed to create SSE connection:`, e);
+                        console.error(`[${requestId}] Failed to create SSE:`, e);
                         progressEventSource = null;
                     }
                 };
                 
-                // Set flag to indicate we're in progress mode (prevents finally block from overwriting)
                 window.__inProgressMode = true;
                 
                 try {
-                    // Start spaceshot fetch first (but don't await yet) to ensure progress tracking is created
-                    console.log(`[${requestId}] Starting spaceshot fetch...`);
                     const spaceshotPromise = fetch(spaceshotUrl, { signal: window.__simAbort.signal });
+                    await new Promise(resolve => setTimeout(resolve, 100)); // Wait for server to create progress tracking
                     
-                    // Wait a brief moment for server to create progress tracking, then start SSE
-                    // This ensures progress tracking exists before SSE tries to connect
-                    await new Promise(resolve => setTimeout(resolve, 100));
+                    if (clientRequestId) {
+                        startProgressSSE(clientRequestId);
+                    }
                     
-                    // Generate request_id and start SSE after spaceshot request has been initiated
-                    console.log(`[${requestId}] Generated client request_id: ${clientRequestId}, starting SSE progress stream...`);
-                    startProgressSSE(clientRequestId);
-                    
-                    // Now await the spaceshot response
                     const response = await spaceshotPromise;
-                    console.log(`[${requestId}] Spaceshot fetch completed, status:`, response.status);
                     
                     // Check if response is OK before parsing
                     if (!response.ok) {
@@ -1785,10 +1721,8 @@ async function simulate() {
                         console.log(`New format: ${payloads.length} paths, ${heatmapData.length} heatmap points`);
                     }
                     
-                    // Verify request_id matches (should be the same as client-generated MD5)
+                    // Switch to server's request_id if different (server is authoritative)
                     if (requestIdFromServer && requestIdFromServer !== clientRequestId) {
-                        console.warn(`Request ID mismatch: client=${clientRequestId}, server=${requestIdFromServer}, switching to server's ID`);
-                        // Switch to server's request_id if different (server's is authoritative)
                         if (progressEventSource) {
                             progressEventSource.close();
                             progressEventSource = null;
