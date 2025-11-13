@@ -214,6 +214,7 @@
         }
         
         /* Autocomplete dropdown styling - high z-index to appear above map */
+        /* Hide by default - only show when user has typed text */
         .pac-container {
             z-index: 10000 !important; /* High enough to appear above map */
             border-radius: 2px !important;
@@ -221,6 +222,16 @@
             font-family: Roboto, Arial, sans-serif !important;
             position: fixed !important;
             pointer-events: auto !important; /* Ensure clicks are captured */
+            display: none !important; /* Hidden by default - shown only when input has text */
+            visibility: hidden !important;
+            opacity: 0 !important;
+        }
+        
+        /* Show autocomplete container only when input has text */
+        .pac-container.has-text {
+            display: block !important;
+            visibility: visible !important;
+            opacity: 1 !important;
         }
         
         /* Ensure all autocomplete items can receive clicks */

@@ -184,6 +184,24 @@ google.maps.event.addListener(map, 'click', function (event) {
                     // bindTo may not be available in all API versions
                 }
                 
+                // Immediately hide the container if it gets created (prevents initial flicker)
+                // Check multiple times as Google may create it asynchronously
+                const hideContainerIfNoText = () => {
+                    const pacContainer = document.querySelector('.pac-container');
+                    if (pacContainer && searchInput.value.trim().length === 0) {
+                        pacContainer.classList.remove('has-text');
+                        pacContainer.style.display = 'none';
+                        pacContainer.style.visibility = 'hidden';
+                        pacContainer.style.opacity = '0';
+                    }
+                };
+                
+                // Check immediately and after short delays
+                setTimeout(hideContainerIfNoText, 0);
+                setTimeout(hideContainerIfNoText, 50);
+                setTimeout(hideContainerIfNoText, 100);
+                setTimeout(hideContainerIfNoText, 200);
+                
                 // Handle place selection
                 autocomplete.addListener('place_changed', () => {
                     const place = autocomplete.getPlace();
@@ -207,6 +225,20 @@ google.maps.event.addListener(map, 'click', function (event) {
                     closeSearchBar();
                 });
                 
+                // Function to show/hide autocomplete based on input text
+                const toggleAutocompleteVisibility = () => {
+                    const pacContainer = document.querySelector('.pac-container');
+                    if (!pacContainer) return;
+                    
+                    // Only show if input has text
+                    const hasText = searchInput.value.trim().length > 0;
+                    if (hasText) {
+                        pacContainer.classList.add('has-text');
+                    } else {
+                        pacContainer.classList.remove('has-text');
+                    }
+                };
+                
                 // Style and position autocomplete dropdown based on screen size
                 const styleAutocomplete = () => {
                     // Only style if search bar is expanded
@@ -218,16 +250,27 @@ google.maps.event.addListener(map, 'click', function (event) {
                     requestAnimationFrame(() => {
                         const pacContainer = document.querySelector('.pac-container');
                         if (pacContainer && searchInput) {
+                            // Check if input has text before showing
+                            const hasText = searchInput.value.trim().length > 0;
+                            
                             const isMobile = window.innerWidth <= 768;
                             const inputRect = searchInput.getBoundingClientRect();
                             
                             // Ensure high z-index, visibility, and pointer events
                             pacContainer.style.zIndex = '10000';
                             pacContainer.style.position = 'fixed';
-                            pacContainer.style.display = 'block';
-                            pacContainer.style.visibility = 'visible';
-                            pacContainer.style.opacity = '1';
                             pacContainer.style.pointerEvents = 'auto'; // Enable clicks on container
+                            
+                            // Only show if input has text
+                            if (hasText) {
+                                pacContainer.style.display = 'block';
+                                pacContainer.style.visibility = 'visible';
+                                pacContainer.style.opacity = '1';
+                            } else {
+                                pacContainer.style.display = 'none';
+                                pacContainer.style.visibility = 'hidden';
+                                pacContainer.style.opacity = '0';
+                            }
                             
                             if (isMobile) {
                                 // Mobile: dropdown appears below input
@@ -271,14 +314,73 @@ google.maps.event.addListener(map, 'click', function (event) {
                     });
                 };
                 
-                // Style on focus and input events
-                searchInput.addEventListener('focus', styleAutocomplete);
+                // Monitor input changes to show/hide autocomplete
                 searchInput.addEventListener('input', () => {
+                    toggleAutocompleteVisibility();
                     styleAutocomplete();
                     // Also check after a short delay to catch delayed rendering
-                    setTimeout(styleAutocomplete, 50);
+                    setTimeout(() => {
+                        toggleAutocompleteVisibility();
+                        styleAutocomplete();
+                    }, 50);
                 });
+                
+                // Don't show on focus - only on input
+                searchInput.addEventListener('focus', () => {
+                    // Just style positioning, but don't show container yet
+                    styleAutocomplete();
+                });
+                
+                // Hide when input loses focus (but keep it if user clicked a suggestion)
+                searchInput.addEventListener('blur', (e) => {
+                    // Small delay to allow click events on suggestions to fire first
+                    setTimeout(() => {
+                        const pacContainer = document.querySelector('.pac-container');
+                        if (pacContainer && !pacContainer.contains(document.activeElement)) {
+                            toggleAutocompleteVisibility();
+                        }
+                    }, 200);
+                });
+                
                 window.addEventListener('resize', styleAutocomplete);
+                
+                // Use MutationObserver to watch for pac-container creation and hide it initially
+                // This prevents the flicker when Google creates the container on focus
+                const observer = new MutationObserver((mutations) => {
+                    mutations.forEach((mutation) => {
+                        mutation.addedNodes.forEach((node) => {
+                            if (node.nodeType === 1) { // Element node
+                                // Check if the added node is pac-container or contains it
+                                if (node.classList && node.classList.contains('pac-container')) {
+                                    // Immediately hide if input has no text
+                                    toggleAutocompleteVisibility();
+                                    styleAutocomplete();
+                                } else if (node.querySelector && node.querySelector('.pac-container')) {
+                                    const pacContainer = node.querySelector('.pac-container');
+                                    if (pacContainer) {
+                                        toggleAutocompleteVisibility();
+                                        styleAutocomplete();
+                                    }
+                                }
+                            }
+                        });
+                    });
+                });
+                
+                // Start observing the document body for new elements
+                observer.observe(document.body, {
+                    childList: true,
+                    subtree: true
+                });
+                
+                // Also check immediately in case container already exists
+                setTimeout(() => {
+                    const pacContainer = document.querySelector('.pac-container');
+                    if (pacContainer) {
+                        toggleAutocompleteVisibility();
+                        styleAutocomplete();
+                    }
+                }, 100);
                 
                 autocompleteInitialized = true;
             } catch (e) {
@@ -313,6 +415,7 @@ google.maps.event.addListener(map, 'click', function (event) {
             // Immediately hide autocomplete dropdown container
             const pacContainer = document.querySelector('.pac-container');
             if (pacContainer) {
+                pacContainer.classList.remove('has-text');
                 pacContainer.style.display = 'none';
                 pacContainer.style.visibility = 'hidden';
                 pacContainer.style.opacity = '0';
@@ -328,6 +431,7 @@ google.maps.event.addListener(map, 'click', function (event) {
             setTimeout(() => {
                 const pacContainerAfter = document.querySelector('.pac-container');
                 if (pacContainerAfter) {
+                    pacContainerAfter.classList.remove('has-text');
                     pacContainerAfter.style.display = 'none';
                     pacContainerAfter.style.visibility = 'hidden';
                     pacContainerAfter.style.opacity = '0';
