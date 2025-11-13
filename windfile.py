@@ -184,39 +184,35 @@ class WindFile:
         decompression which takes 6-9 seconds. We extract to an uncompressed .npy file
         ONCE, then memory-map that file for fast subsequent access.
         """
+        import os
+        import logging
         memmap_path = Path(f"{path}.data.npy")
+        temp_path = Path(f"{path}.data.npy.tmp")
         
-        # Check if extracted .npy file already exists (fast path)
-        if memmap_path.exists():
-            # File already extracted - just memory-map it (instant)
-            import logging
-            logging.debug(f"[MMAP] Using cached extraction: {memmap_path.name}")
-            memmap_data = np.load(memmap_path, mmap_mode='r')
-            if memmap_data is not None:
-                return memmap_data
-            else:
-                # Corrupted extraction file - delete and re-extract
-                logging.warning(f"[MMAP] Cached extraction corrupted: {memmap_path.name}, re-extracting")
-                try:
-                    memmap_path.unlink()
-                except:
-                    pass
-        
-        # Need to extract from NPZ (slow, but only happens once per file)
-        # Note: Background extraction removed - npz file handle can't be safely shared across threads
-        # Synchronous extraction is acceptable since it only happens once per file
+        # CRITICAL: Always use the lock when checking/loading the file to prevent race conditions
+        # Multiple threads might try to load the same file simultaneously
         lock = _get_memmap_lock(memmap_path)
         with lock:
-            # Double-check after acquiring lock (another thread might have extracted it)
+            # Check if extracted .npy file already exists (fast path)
             if memmap_path.exists():
                 try:
-                    memmap_data = np.load(memmap_path, mmap_mode='r')
-                    if memmap_data is not None:
-                        return memmap_data
-                except Exception as e:
-                    # Corrupted extraction - delete and re-extract
-                    import logging
+                    # Verify file is not corrupted by checking its size
+                    file_size = memmap_path.stat().st_size
+                    if file_size > 0:
+                        memmap_data = np.load(memmap_path, mmap_mode='r')
+                        if memmap_data is not None:
+                            logging.debug(f"[MMAP] Using cached extraction: {memmap_path.name}")
+                            return memmap_data
+                except (EOFError, OSError, ValueError) as e:
+                    # Corrupted extraction file - delete and re-extract
                     logging.warning(f"[MMAP] Cached extraction corrupted: {memmap_path.name}, re-extracting: {e}")
+                    try:
+                        memmap_path.unlink()
+                    except:
+                        pass
+                except Exception as e:
+                    # Other errors - log and re-extract
+                    logging.warning(f"[MMAP] Error loading cached extraction: {memmap_path.name}, re-extracting: {e}")
                     try:
                         memmap_path.unlink()
                     except:
@@ -226,24 +222,61 @@ class WindFile:
                 raise KeyError(f"NPZ file {path} is missing 'data' key")
             
             # Extract data array to uncompressed .npy file for fast memory-mapping
-            import logging
+            # Use temporary file first, then rename atomically to prevent corruption
             extract_start = time.time()
             array = npz['data']
             memmap_path.parent.mkdir(parents=True, exist_ok=True)
-            mm = open_memmap(memmap_path, mode='w+', dtype=array.dtype, shape=array.shape)
-            mm[...] = array
-            mm.flush()
-            del mm
-            del array
-            extract_time = time.time() - extract_start
-            logging.info(f"[PERF] Extracted NPZ to .npy: {memmap_path.name}, time={extract_time:.1f}s (one-time cost)")
+            
+            # Write to temporary file first
+            try:
+                # Remove temp file if it exists (from previous failed extraction)
+                if temp_path.exists():
+                    try:
+                        temp_path.unlink()
+                    except:
+                        pass
+                
+                mm = open_memmap(temp_path, mode='w+', dtype=array.dtype, shape=array.shape)
+                mm[...] = array
+                mm.flush()  # Flush memory-mapped array to disk
+                del mm
+                del array
+                
+                # Sync file to disk to ensure it's fully written before rename
+                try:
+                    with open(temp_path, 'rb') as f:
+                        os.fsync(f.fileno())
+                except:
+                    pass
+                
+                # Atomically rename temp file to final file (prevents partial reads)
+                temp_path.rename(memmap_path)
+                
+                extract_time = time.time() - extract_start
+                logging.info(f"[PERF] Extracted NPZ to .npy: {memmap_path.name}, time={extract_time:.1f}s (one-time cost)")
+            except Exception as e:
+                # Clean up temp file on error
+                try:
+                    if temp_path.exists():
+                        temp_path.unlink()
+                except:
+                    pass
+                raise RuntimeError(f"Failed to extract NPZ data to {memmap_path}: {e}")
             
             # Now memory-map the extracted file (still inside lock)
-            memmap_data = np.load(memmap_path, mmap_mode='r')
-            if memmap_data is None:
-                raise RuntimeError(f"Failed to load memory-mapped data from {memmap_path}")
-            
-            return memmap_data
+            try:
+                memmap_data = np.load(memmap_path, mmap_mode='r')
+                if memmap_data is None:
+                    raise RuntimeError(f"Failed to load memory-mapped data from {memmap_path}")
+                return memmap_data
+            except (EOFError, OSError, ValueError) as e:
+                # File is corrupted - delete and raise error (will be retried by caller)
+                logging.error(f"[MMAP] Extracted file is corrupted: {memmap_path.name}, error: {e}")
+                try:
+                    memmap_path.unlink()
+                except:
+                    pass
+                raise RuntimeError(f"Extracted file is corrupted: {e}")
 
     def get(self, lat, lon, altitude, time):
         """Optimized wind data retrieval with bounds checking"""
