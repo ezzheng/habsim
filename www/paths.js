@@ -1623,7 +1623,8 @@ async function simulate() {
                     const sseUrl = URL_ROOT + "/progress-stream?request_id=" + requestId;
                     try {
                         progressEventSource = new EventSource(sseUrl);
-                        if (simBtn) simBtn.textContent = '0%';
+                        // Initial status - will be updated by SSE
+                        if (simBtn) simBtn.textContent = 'Starting...';
                         
                         progressEventSource.onmessage = function(event) {
                             try {
@@ -1632,8 +1633,13 @@ async function simulate() {
                                     console.warn(`[${requestId}] SSE error:`, data.error);
                                     return;
                                 }
-                                if (data.percentage !== undefined && simBtn) {
-                                    simBtn.textContent = data.percentage + '%';
+                                if (simBtn) {
+                                    // Show status (downloading/simulating) when percentage is 0, otherwise show percentage
+                                    if (data.status && data.status === 'downloading' && data.percentage === 0) {
+                                        simBtn.textContent = 'Downloading...';
+                                    } else if (data.percentage !== undefined) {
+                                        simBtn.textContent = data.percentage + '%';
+                                    }
                                     if (data.percentage >= 100 && progressEventSource) {
                                         progressEventSource.close();
                                         progressEventSource = null;

@@ -122,22 +122,14 @@ def generate_request_id(args, base_coeff):
     request_key = f"{args['timestamp']}_{args['lat']}_{args['lon']}_{args['alt']}_{args['equil']}_{args['eqtime']}_{args['asc']}_{args['desc']}_{base_coeff}"
     return hashlib.md5(request_key.encode()).hexdigest()[:16]
 
-def activate_ensemble_mode(worker_pid):
-    """Activate and verify ensemble mode. Returns (cache_limit, ensemble_until)."""
-    simulate.set_ensemble_mode(duration_seconds=600)
+def _ensure_ensemble_optimizations(worker_pid):
+    """Ensure cache is ready for ensemble workload (adaptive sizing will handle it)."""
+    # Cache will automatically expand when many models are loaded
+    # No explicit activation needed - adaptive behavior handles it
     with simulate._cache_lock:
         cache_limit = simulate._current_max_cache
-        ensemble_until = simulate._ensemble_mode_until
-        _log(f"Ensemble mode activated: cache_limit={cache_limit}", 'info', worker_pid)
-    return cache_limit, ensemble_until
-
-def verify_ensemble_mode(worker_pid):
-    """Verify ensemble mode is active before starting simulations."""
-    with simulate._cache_lock:
-        cache_limit = simulate._current_max_cache
-        ensemble_active = simulate._is_ensemble_mode()
-    if cache_limit < simulate.MAX_SIMULATOR_CACHE_ENSEMBLE:
-        _log(f"Ensemble mode not active: cache_limit={cache_limit} < {simulate.MAX_SIMULATOR_CACHE_ENSEMBLE}", 'warning', worker_pid)
+        cache_size = len(simulate._simulator_cache)
+    _log(f"Ensemble run starting: cache_size={cache_size}, cache_limit={cache_limit}", 'info', worker_pid)
 
 def _prefetch_model(model_id, worker_pid):
     """Prefetch a single model (downloads file and builds simulator)."""
@@ -231,7 +223,7 @@ def get_model_ids():
     model_ids.extend(range(1, 1 + downloader.NUM_PERTURBED_MEMBERS))
     return model_ids
 
-def update_progress(request_id, completed=None, ensemble_completed=None, montecarlo_completed=None):
+def update_progress(request_id, completed=None, ensemble_completed=None, montecarlo_completed=None, status=None):
     """Update progress tracking atomically (both in-memory and file-based)."""
     with _progress_lock:
         if request_id in _progress_tracking:
@@ -241,6 +233,8 @@ def update_progress(request_id, completed=None, ensemble_completed=None, monteca
                 _progress_tracking[request_id]['ensemble_completed'] = ensemble_completed
             if montecarlo_completed is not None:
                 _progress_tracking[request_id]['montecarlo_completed'] = montecarlo_completed
+            if status is not None:
+                _progress_tracking[request_id]['status'] = status
             # Also update file-based cache for multi-worker access
             _write_progress(request_id, _progress_tracking[request_id])
 
@@ -419,13 +413,10 @@ def cache_status():
     with simulate._cache_lock:
         cache_size = len(simulate._simulator_cache)
         cache_limit = simulate._current_max_cache
-        ensemble_active_by_timestamp = simulate._is_ensemble_mode()
-        ensemble_until = simulate._ensemble_mode_until
-        ensemble_started = simulate._ensemble_mode_started
         cached_models = list(simulate._simulator_cache.keys())
-        # Ensemble mode is active if timestamp says so OR if cache limit is expanded to ensemble size
-        # (cache limit stays expanded until trim happens, even if timestamp expired)
-        ensemble_active = ensemble_active_by_timestamp or (cache_limit >= simulate.MAX_SIMULATOR_CACHE_ENSEMBLE)
+        # Check if we're in ensemble workload (15+ ensemble models cached)
+        ensemble_models = len([m for m in cached_models if isinstance(m, int) and m < 21])
+        is_ensemble_workload = ensemble_models >= 15
     
     now = time.time()
     
@@ -455,22 +446,20 @@ def cache_status():
     last_idle_cleanup = getattr(simulate, '_last_idle_cleanup', 0)
     last_cleanup = now - last_idle_cleanup if last_idle_cleanup > 0 else 0
     
-    # Determine why cache might be empty or why ensemble mode might not show as active
+    # Determine cache status
     cache_status_note = None
     if cache_size == 0:
-        if ensemble_active:
-            cache_status_note = 'Cache is empty but ensemble mode is active (simulators may be building)'
-        elif idle_duration > 300:
+        if idle_duration > 300:
             cache_status_note = f'Cache is empty - worker has been idle for {round(idle_duration)}s (may have been cleaned up)'
         else:
             cache_status_note = 'Cache is empty - this worker may not have handled any requests yet'
     elif cache_limit == simulate.MAX_SIMULATOR_CACHE_NORMAL and cache_size < cache_limit:
         cache_status_note = 'Cache is below normal limit (normal operation)'
     elif cache_limit >= simulate.MAX_SIMULATOR_CACHE_ENSEMBLE:
-        if not ensemble_active_by_timestamp:
-            cache_status_note = 'Cache limit is expanded but timestamp expired (trim pending)'
+        if is_ensemble_workload:
+            cache_status_note = 'Ensemble workload detected - cache limit expanded (adaptive sizing)'
         else:
-            cache_status_note = 'Ensemble mode active - cache limit expanded'
+            cache_status_note = 'Cache limit expanded but ensemble workload not detected (trim pending)'
     
     status = {
         'worker_pid': os.getpid(),
@@ -495,17 +484,16 @@ def cache_status():
             'size_mb': round(disk_cache_size_mb, 2),
             'note': 'Disk cache is shared across all workers (persistent volume)'
         },
-        'ensemble_mode': {
-            'active': ensemble_active,
-            'active_by_timestamp': ensemble_active_by_timestamp,
-            'active_by_cache_limit': cache_limit >= simulate.MAX_SIMULATOR_CACHE_ENSEMBLE,
-            'started': ensemble_started,
-            'expires_at': ensemble_until,
-            'seconds_until_expiry': max(0, round(ensemble_until - now, 1)) if ensemble_until > 0 else 0,
-            'seconds_since_start': round(now - ensemble_started, 1) if ensemble_started > 0 else 0,
-            'seconds_since_expiry': round(now - ensemble_until, 1) if ensemble_until > 0 and now > ensemble_until else None,
-            'note': 'Status is per-worker. Ensemble requests may be handled by a different worker (check worker_pid in logs).',
-            'diagnostic': f'This worker (PID {os.getpid()}) has ensemble_started={ensemble_started}, ensemble_until={ensemble_until}, cache_limit={cache_limit}'
+        'workload': {
+            'is_ensemble_workload': is_ensemble_workload,
+            'ensemble_models_cached': ensemble_models,
+            'cache_limit_expanded': cache_limit >= simulate.MAX_SIMULATOR_CACHE_ENSEMBLE,
+            'note': 'Cache automatically adapts to workload. Ensemble workloads (15+ models) trigger preloading and expanded cache.',
+            'adaptive_behavior': {
+                'preload_arrays': is_ensemble_workload,
+                'target_cache_size': simulate._get_target_cache_size() if hasattr(simulate, '_get_target_cache_size') else cache_limit,
+                'note': 'Preloading and cache size are automatically adjusted based on cached model count'
+            }
         },
         'idle_cleanup': {
             'idle_duration_seconds': round(idle_duration, 1),
@@ -819,7 +807,7 @@ def spaceshot():
     num_perturbations = get_arg(args, 'num_perturbations', type_func=int, default=20)
     
     request_id = generate_request_id(args, base_coeff)
-    activate_ensemble_mode(worker_pid)
+    _ensure_ensemble_optimizations(worker_pid)
     model_ids = get_model_ids()
     
     # Initialize progress tracking
@@ -833,7 +821,8 @@ def spaceshot():
         'ensemble_completed': 0,
         'ensemble_total': total_ensemble,
         'montecarlo_completed': 0,
-        'montecarlo_total': total_montecarlo
+        'montecarlo_total': total_montecarlo,
+        'status': 'downloading'  # Initial status: downloading models
     }
     with _progress_lock:
         _progress_tracking[request_id] = progress_data.copy()
@@ -899,8 +888,13 @@ def spaceshot():
             return None
     
     try:
-        verify_ensemble_mode(worker_pid)
+        # Prefetch first few models to warm cache (adaptive behavior will handle the rest)
+        # Update status to show we're downloading
+        update_progress(request_id, status='downloading')
         wait_for_prefetch(model_ids, worker_pid)
+        
+        # Switch to simulating status once prefetch is done
+        update_progress(request_id, status='simulating')
         
         # Run ensemble and Monte Carlo simulations in parallel
         max_workers = min(32, os.cpu_count() or 4)
@@ -994,6 +988,7 @@ def spaceshot():
         landing_positions = []
     finally:
         _decrement_ensemble_counter()
+        # Cache will automatically trim based on workload (adaptive sizing)
         simulate._trim_cache_to_normal()
         
         # Mark progress as completed and schedule cleanup after 30 seconds
@@ -1048,7 +1043,8 @@ def get_progress():
         'ensemble_total': progress['ensemble_total'],
         'montecarlo_completed': progress['montecarlo_completed'],
         'montecarlo_total': progress['montecarlo_total'],
-        'percentage': percentage
+        'percentage': percentage,
+        'status': progress.get('status', 'simulating')
     })
 
 @app.route('/sim/progress-stream')
@@ -1095,7 +1091,10 @@ def progress_stream():
             total = progress['total']
             percentage = round((current_completed / total) * 100) if total > 0 else 0
             
-            if current_completed != last_completed or not initial_sent:
+            status = progress.get('status', 'simulating')
+            status_changed = 'status' in progress and (not initial_sent or status != getattr(generate, '_last_status', None))
+            
+            if current_completed != last_completed or not initial_sent or status_changed:
                 data = {
                     'completed': current_completed,
                     'total': total,
@@ -1103,10 +1102,12 @@ def progress_stream():
                     'ensemble_total': progress['ensemble_total'],
                     'montecarlo_completed': progress['montecarlo_completed'],
                     'montecarlo_total': progress['montecarlo_total'],
-                    'percentage': percentage
+                    'percentage': percentage,
+                    'status': status
                 }
                 yield f"data: {json.dumps(data)}\n\n"
                 last_completed = current_completed
+                generate._last_status = status
                 initial_sent = True
                 if current_completed >= total:
                     break

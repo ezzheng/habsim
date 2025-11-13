@@ -30,35 +30,31 @@ except ImportError:
 EARTH_RADIUS = float(6.371e6)
 DATA_STEP = 6
 
-# Dynamic multi-simulator LRU cache: small for single model, expands for ensemble
+# Dynamic multi-simulator LRU cache: automatically expands based on workload
 _simulator_cache = {}
 _simulator_access_times = {}
 MAX_SIMULATOR_CACHE_NORMAL = 10
 MAX_SIMULATOR_CACHE_ENSEMBLE = 30
 _current_max_cache = MAX_SIMULATOR_CACHE_NORMAL
-_ensemble_mode_until = 0
-_ensemble_mode_started = 0
 _cache_lock = threading.Lock()
 elevation_cache = None
 _elevation_lock = threading.Lock()
-# Shared ElevationFile instance for ensemble mode (all simulators use same elevation data)
+# Shared ElevationFile instance for ensemble workloads (all simulators use same elevation data)
 _shared_elevation_file = None
 _shared_elevation_file_lock = threading.Lock()
 
 currgefs = "Unavailable"
 _last_refresh_check = 0.0
 _cache_trim_thread_started = False
-_in_use_models = set()
-_in_use_lock = threading.Lock()
 _IDLE_RESET_TIMEOUT = 120.0
 _IDLE_CLEAN_COOLDOWN = 120.0
 _last_activity_timestamp = time.time()
 _last_idle_cleanup = 0.0
 _idle_cleanup_lock = threading.Lock()
 
-_cleanup_queue = {}
-_cleanup_queue_lock = threading.Lock()
-_CLEANUP_DELAY = 2.0
+# Simulator reference counting for safe cleanup
+_simulator_ref_counts = {}  # model_id -> count
+_simulator_ref_lock = threading.Lock()
 
 _prediction_cache = {}
 _cache_access_times = {}
@@ -122,29 +118,28 @@ def refresh():
 def reset():
     """Clear simulator cache when GEFS model changes.
     Respects in-use models to prevent breaking active simulations."""
-    global _simulator_cache, _simulator_access_times, elevation_cache, _ensemble_mode_until, _ensemble_mode_started
-    
-    # Check if any models are currently in use
-    models_in_use = set()
-    with _in_use_lock:
-        models_in_use = _in_use_models.copy()
+    global _simulator_cache, _simulator_access_times, elevation_cache, _current_max_cache
     
     with _cache_lock:
         # Clear access times for models not in use
-        models_to_clear = set(_simulator_cache.keys()) - models_in_use
+        models_to_clear = []
+        for model_id in _simulator_cache.keys():
+            if not _is_simulator_in_use(model_id):
+                models_to_clear.append(model_id)
         
         for model_id in models_to_clear:
+            simulator = _simulator_cache.get(model_id)
+            if simulator:
+                _cleanup_simulator_safely(simulator)
             if model_id in _simulator_cache:
                 del _simulator_cache[model_id]
             if model_id in _simulator_access_times:
                 del _simulator_access_times[model_id]
+            with _simulator_ref_lock:
+                _simulator_ref_counts.pop(model_id, None)
         
-        # Reset ensemble mode
-        _ensemble_mode_until = 0
-        _ensemble_mode_started = 0
-        
-        if models_in_use:
-            pass
+        # Reset cache size to normal
+        _current_max_cache = MAX_SIMULATOR_CACHE_NORMAL
     
     # Clear elevation cache (will be reloaded on next use)
     elevation_cache = None
@@ -163,23 +158,16 @@ def record_activity():
 def _idle_memory_cleanup(idle_duration):
     """Deep cleanup when the worker has been idle for a while.
     Returns True if cleanup ran, False if skipped (lock held or models in use)."""
-    global _current_max_cache, _ensemble_mode_until, _ensemble_mode_started, elevation_cache, currgefs, _cleanup_queue
+    global _current_max_cache, elevation_cache, currgefs
     worker_pid = os.getpid()
     if not _idle_cleanup_lock.acquire(blocking=False):
         return False
     try:
-        # CRITICAL: Skip cleanup if ensemble mode is active (even if no models in use yet)
-        # Ensemble mode means simulations are running or about to run
-        now = time.time()
+        # Skip cleanup if models are in use
         with _cache_lock:
-            ensemble_active = _is_ensemble_mode()
             cache_size = len(_simulator_cache)
-            ensemble_until = _ensemble_mode_until  # Read while holding lock
-        if ensemble_active:
-            return False
-        
-        with _in_use_lock:
-            models_in_use = _in_use_models.copy()
+            # Check if any models are in use via ref counts
+            models_in_use = any(_is_simulator_in_use(mid) for mid in _simulator_cache.keys())
         if models_in_use:
             return False
         
@@ -187,23 +175,15 @@ def _idle_memory_cleanup(idle_duration):
         if rss_before is not None:
             pass
         
-        # Process any pending cleanups first
-        _process_cleanup_queue()
-        
         with _cache_lock:
             simulators = list(_simulator_cache.values())
             _simulator_cache.clear()
             _simulator_access_times.clear()
             _current_max_cache = MAX_SIMULATOR_CACHE_NORMAL
-            _ensemble_mode_until = 0
-            _ensemble_mode_started = 0
         
-        # Clear cleanup queue and clean up any pending simulators
-        with _cleanup_queue_lock:
-            for model_id, (simulator, _) in _cleanup_queue.items():
-                _cleanup_simulator_safely(simulator)
-                del simulator
-            _cleanup_queue.clear()
+        # Clear ref counts
+        with _simulator_ref_lock:
+            _simulator_ref_counts.clear()
         
         # Clean up simulator resources outside the cache lock
         evicted = 0
@@ -245,7 +225,7 @@ def _idle_memory_cleanup(idle_duration):
         rss_after = _get_rss_memory_mb()
         if rss_after is not None and rss_before is not None:
             rss_delta = rss_before - rss_after
-            print(f"INFO: [WORKER {worker_pid}] Idle cleanup: {evicted} simulators, {rss_delta:.1f} MB freed", flush=True)
+            print(f"INFO: [WORKER {worker_pid}] Idle cleanup: {evicted} simulators evicted, {rss_delta:.1f} MB freed, cache_size={cache_size}→0", flush=True)
         return True
     finally:
         _idle_cleanup_lock.release()
@@ -319,70 +299,30 @@ def _get_elevation_data():
                 elevation_cache = load_gefs('worldelev.npy')
     return elevation_cache
 
-def set_ensemble_mode(duration_seconds=60):
-    """Enable ensemble mode (larger cache) for specified duration (default 60 seconds / 1 minute)
-    
-    Note: Maximum ensemble mode duration is capped at 5 minutes to prevent memory bloat
-    from consecutive ensemble calls. After 5 minutes, cache will trim even if ensemble mode
-    is still being extended.
-    
-    Also triggers background prefetching of all 21 models for faster ensemble runs.
-    """
-    global _current_max_cache, _ensemble_mode_until, _ensemble_mode_started
-    now = time.time()
-    MAX_ENSEMBLE_DURATION = 300  # 5 minutes maximum
-    is_new_ensemble = False
-    worker_pid = os.getpid()
+def _should_preload_arrays():
+    """Auto-detect if we should preload arrays based on cache size.
+    Preloading is faster (CPU-bound) but uses more memory.
+    Returns True if cache has many models (ensemble workload), False otherwise."""
     with _cache_lock:
-        old_cache_limit = _current_max_cache
-        old_until = _ensemble_mode_until
-        _current_max_cache = MAX_SIMULATOR_CACHE_ENSEMBLE
-        # Track when ensemble mode first started
-        if _ensemble_mode_until <= now:
-            # Starting new ensemble mode
-            is_new_ensemble = True
-            _ensemble_mode_started = now
-            _ensemble_mode_until = now + duration_seconds
-            print(f"INFO: Ensemble mode activated: cache_limit {old_cache_limit} → {MAX_SIMULATOR_CACHE_ENSEMBLE}", flush=True)
-        else:
-            # Already in ensemble mode, check if we've exceeded max duration
-            if now - _ensemble_mode_started >= MAX_ENSEMBLE_DURATION:
-                pass
-            else:
-                new_expiry = now + duration_seconds
-                max_allowed_expiry = _ensemble_mode_started + MAX_ENSEMBLE_DURATION
-                _ensemble_mode_until = min(new_expiry, max_allowed_expiry)
-    
-    # Prefetch all models in background when starting new ensemble mode
-    if is_new_ensemble:
-        _prefetch_ensemble_models()
+        # If we have 15+ models cached, we're likely doing ensemble work
+        # Preload arrays for better performance in this case
+        ensemble_models = len([m for m in _simulator_cache.keys() if isinstance(m, int) and m < 21])
+        return ensemble_models >= 15
 
-def _is_ensemble_mode():
-    """Check if currently in ensemble mode"""
-    global _ensemble_mode_until
-    now = time.time()
-    return _ensemble_mode_until > 0 and now < _ensemble_mode_until
+def _get_target_cache_size():
+    """Auto-size cache based on current usage patterns.
+    Returns target cache size (normal or ensemble) based on how many models are cached."""
+    with _cache_lock:
+        ensemble_models = len([m for m in _simulator_cache.keys() if isinstance(m, int) and m < 21])
+        if ensemble_models >= 15:
+            return MAX_SIMULATOR_CACHE_ENSEMBLE
+        return MAX_SIMULATOR_CACHE_NORMAL
 
-def _prefetch_ensemble_models():
-    """Prefetch all 21 ensemble models in background thread for faster ensemble runs.
-    This pre-warms the cache so simulations don't wait for downloads.
-    Returns the thread so caller can wait for completion if needed."""
-    def prefetch_worker():
-        try:
-            # Prefetch models 0-20 in background
-            for model in range(21):
-                try:
-                    # Try to get simulator (will download if needed, but won't block main thread)
-                    # Use a short timeout to avoid blocking if model is unavailable
-                    _get_simulator(model)
-                except Exception:
-                    pass
-        except Exception:
-            pass
-    
-    thread = threading.Thread(target=prefetch_worker, daemon=True, name="EnsemblePrefetch")
-    thread.start()
-    return thread
+def _update_cache_size():
+    """Update cache size limit based on current workload (adaptive sizing)."""
+    global _current_max_cache
+    with _cache_lock:
+        _current_max_cache = _get_target_cache_size()
 
 def _get_rss_memory_mb():
     """Get current RSS memory usage in MB (if psutil available)"""
@@ -436,162 +376,72 @@ def _cleanup_simulator_safely(simulator):
     except Exception:
         pass
 
-def _process_cleanup_queue():
-    """Process delayed cleanup queue - actually clean up simulators that were evicted."""
-    global _cleanup_queue
-    now = time.time()
-    to_cleanup = []
-    
-    with _cleanup_queue_lock:
-        # Find simulators ready for cleanup
-        queue_size_before = len(_cleanup_queue)
-        # Find oldest cleanup time before modifying queue
-        oldest_item_time = None
-        if queue_size_before > 0:
-            oldest_item_time = min(cleanup_time for _, (_, cleanup_time) in _cleanup_queue.items())
-        for model_id, (simulator, cleanup_time) in list(_cleanup_queue.items()):
-            if now >= cleanup_time:
-                to_cleanup.append((model_id, simulator))
-                del _cleanup_queue[model_id]
-    
-    # Log cleanup queue processing (always log if queue had items, even if none ready yet)
-    if queue_size_before > 0:
-        worker_pid = os.getpid()
-        if to_cleanup:
-            pass
-        elif oldest_item_time:
-            pass
-    
-    # Clean up outside the lock
-    for model_id, simulator in to_cleanup:
-        # CRITICAL: Triple-check model is not in use (most important check)
-        with _in_use_lock:
-            if model_id in _in_use_models:
-                # Still in use - reschedule cleanup with longer delay
-                worker_pid = os.getpid()
-                with _cleanup_queue_lock:
-                    _cleanup_queue[model_id] = (simulator, now + _CLEANUP_DELAY * 2)  # Double delay if still in use
-                continue
-        
-        # CRITICAL: Also check if simulator is still in cache (shouldn't be, but safety check)
-        # If it's back in cache, don't clean it up (it was re-added after eviction)
-        with _cache_lock:
-            if model_id in _simulator_cache:
-                # Simulator is back in cache - don't clean it up, remove from queue
-                continue
-        
-        if simulator is None or (hasattr(simulator, 'wind_file') and simulator.wind_file is None):
-            continue
-        
-        _cleanup_simulator_safely(simulator)
-        
-        # Explicitly break reference
-        del simulator
+def _acquire_simulator_ref(model_id):
+    """Acquire a reference to a simulator (increment ref count)."""
+    with _simulator_ref_lock:
+        _simulator_ref_counts[model_id] = _simulator_ref_counts.get(model_id, 0) + 1
+
+def _release_simulator_ref(model_id):
+    """Release a reference to a simulator (decrement ref count)."""
+    with _simulator_ref_lock:
+        count = _simulator_ref_counts.get(model_id, 0)
+        if count > 1:
+            _simulator_ref_counts[model_id] = count - 1
+        else:
+            _simulator_ref_counts.pop(model_id, None)
+
+def _is_simulator_in_use(model_id):
+    """Check if simulator has active references."""
+    with _simulator_ref_lock:
+        return _simulator_ref_counts.get(model_id, 0) > 0
 
 def _trim_cache_to_normal():
-    """Trim cache back to normal size, keeping most recently used models.
-    Uses delayed cleanup queue to ensure simulators are only cleaned up after they're definitely not in use.
-    Optimized to be fast when called frequently - only processes cleanup queue if items are ready."""
-    global _current_max_cache, _simulator_cache, _simulator_access_times, _ensemble_mode_until, _ensemble_mode_started, _cleanup_queue
+    """Trim cache to target size, keeping most recently used models.
+    Uses reference counting to ensure simulators are only cleaned up when not in use.
+    Automatically adjusts target size based on workload (adaptive sizing)."""
+    global _current_max_cache, _simulator_cache, _simulator_access_times
     
-    now = time.time()
+    # Update cache size based on current workload
+    _update_cache_size()
     
-    # Fast path: Quick check if trimming is needed (without processing cleanup queue)
     with _cache_lock:
+        target_size = _current_max_cache
         cache_size = len(_simulator_cache)
-        MAX_ENSEMBLE_DURATION = 300  # 5 minutes maximum
-        ensemble_expired = _ensemble_mode_until > 0 and now > _ensemble_mode_until
-        ensemble_exceeded_max = _ensemble_mode_started > 0 and (now - _ensemble_mode_started) >= MAX_ENSEMBLE_DURATION
-        needs_trim = (ensemble_expired or ensemble_exceeded_max or 
-                     cache_size > _current_max_cache or cache_size > MAX_SIMULATOR_CACHE_ENSEMBLE)
-    
-    # Only process cleanup queue if we're actually going to trim (saves time on frequent calls)
-    if needs_trim:
-        # Quick check if cleanup queue has items ready (non-blocking check)
-        with _cleanup_queue_lock:
-            has_ready_items = any(cleanup_time <= now for _, (_, cleanup_time) in _cleanup_queue.items())
         
-        # Only process cleanup queue if items are ready (avoid expensive operations when not needed)
-        if has_ready_items:
-            _process_cleanup_queue()
-    
-    # Get memory before cleanup (for logging) - only if actually trimming
-    rss_before = _get_rss_memory_mb() if needs_trim else None
-    
-    with _cache_lock:
-        # Check if ensemble mode has expired or exceeded max duration
-        MAX_ENSEMBLE_DURATION = 300  # 5 minutes maximum
-        ensemble_expired = _ensemble_mode_until > 0 and now > _ensemble_mode_until
-        ensemble_exceeded_max = _ensemble_mode_started > 0 and (now - _ensemble_mode_started) >= MAX_ENSEMBLE_DURATION
-        
-        if ensemble_expired or ensemble_exceeded_max:
-            # Check if any models are currently in use before resetting ensemble mode
-            with _in_use_lock:
-                models_in_use = _in_use_models.copy()
-            
-            if models_in_use:
-                # Models are in use - don't reset ensemble mode yet to avoid cleanup during use
-                pass
-            else:
-                # No models in use - safe to reset ensemble mode
-                _current_max_cache = MAX_SIMULATOR_CACHE_NORMAL
-                if ensemble_exceeded_max:
-                    _ensemble_mode_until = 0  # Force expiration even if still being extended
-                    _ensemble_mode_started = 0
-                else:
-                    _ensemble_mode_until = 0
-                    _ensemble_mode_started = 0
-        
-        # If cache is too large, trim to normal size keeping most recently used
-        # Also trim if cache is significantly larger than current limit (memory leak protection)
-        if len(_simulator_cache) > _current_max_cache or len(_simulator_cache) > MAX_SIMULATOR_CACHE_ENSEMBLE:
+        # If cache is too large, trim to target size keeping most recently used
+        if cache_size > target_size:
             # Sort by access time (most recent first)
             sorted_models = sorted(_simulator_access_times.items(), key=lambda x: x[1], reverse=True)
             # Keep only the most recently used models
-            models_to_keep = {model_id for model_id, _ in sorted_models[:_current_max_cache]}
+            models_to_keep = {model_id for model_id, _ in sorted_models[:target_size]}
             
             # Evict models not in the keep list
             models_to_evict = set(_simulator_cache.keys()) - models_to_keep
-            # CRITICAL: Do not evict models currently in use - check BEFORE removing from cache
-            with _in_use_lock:
-                models_in_use_set = _in_use_models.copy()
-            models_to_evict = {m for m in models_to_evict if m not in models_in_use_set}
             
-            # Double-check: don't evict if any models are in use (safety check)
-            if models_in_use_set and models_to_evict:
-                # Re-check in-use models right before eviction to prevent race conditions
-                with _in_use_lock:
-                    models_to_evict = {m for m in models_to_evict if m not in _in_use_models}
+            # CRITICAL: Do not evict models with active references
+            models_to_evict = {m for m in models_to_evict if not _is_simulator_in_use(m)}
             
             evicted_count = len(models_to_evict)
             
-            # Remove from cache immediately, but schedule delayed cleanup
-            # This ensures simulators are only cleaned up after they're definitely not in use
-            simulators_to_cleanup = []
+            # Remove from cache and clean up immediately (simulators not in use are safe to clean)
             for model_id in models_to_evict:
-                # Final safety check: don't remove if somehow marked as in-use (shouldn't happen, but be safe)
-                with _in_use_lock:
-                    if model_id in _in_use_models:
-                        continue
                 simulator = _simulator_cache.get(model_id)
                 if simulator:
-                    simulators_to_cleanup.append((model_id, simulator))
+                    # Final safety check: verify no active references
+                    if not _is_simulator_in_use(model_id):
+                        _cleanup_simulator_safely(simulator)
                 del _simulator_cache[model_id]
                 if model_id in _simulator_access_times:
                     del _simulator_access_times[model_id]
-            
-            # Schedule delayed cleanup for evicted simulators
-            # Keep references to simulators in cleanup queue to prevent GC before cleanup
-            cleanup_time = now + _CLEANUP_DELAY
-            with _cleanup_queue_lock:
-                for model_id, simulator in simulators_to_cleanup:
-                    _cleanup_queue[model_id] = (simulator, cleanup_time)
+                # Clear ref count if exists
+                with _simulator_ref_lock:
+                    _simulator_ref_counts.pop(model_id, None)
             
             if evicted_count > 0:
-                pass
+                gc.collect()  # Help GC reclaim memory
 
 def _periodic_cache_trim():
-    """Background thread that periodically trims cache when ensemble mode expires.
+    """Background thread that periodically trims cache and handles idle cleanup.
     This ensures idle workers trim their cache even if they don't receive requests.
     Without this, each worker process maintains its own cache, and idle workers never trim.
     """
@@ -601,16 +451,9 @@ def _periodic_cache_trim():
         try:
             now = time.time()
             idle_duration = now - _last_activity_timestamp
-            # Log idle status only when close to threshold (reduces log noise)
-            if idle_duration >= _IDLE_RESET_TIMEOUT - 10 and idle_duration < _IDLE_RESET_TIMEOUT + 10:
-                with _cache_lock:
-                    cache_size = len(_simulator_cache)
-                last_cleanup_ago = (now - _last_idle_cleanup) if _last_idle_cleanup > 0 else 0
-                should_trigger = idle_duration >= _IDLE_RESET_TIMEOUT and (last_cleanup_ago >= _IDLE_CLEAN_COOLDOWN or _last_idle_cleanup == 0)
+            
             # Fix: Handle case where cleanup never ran (_last_idle_cleanup = 0)
-            # If cleanup never ran, allow it immediately if idle threshold reached
             if _last_idle_cleanup == 0:
-                # Cleanup never ran - allow it immediately if idle threshold reached
                 time_since_last_cleanup = float('inf')
             else:
                 time_since_last_cleanup = now - _last_idle_cleanup
@@ -619,115 +462,95 @@ def _periodic_cache_trim():
             should_run_idle_cleanup = (idle_duration >= _IDLE_RESET_TIMEOUT and 
                                       (time_since_last_cleanup >= _IDLE_CLEAN_COOLDOWN or _last_idle_cleanup == 0))
             
-            # Log when cleanup should run but hasn't (for debugging)
-            if should_run_idle_cleanup and _last_idle_cleanup == 0 and idle_duration >= _IDLE_RESET_TIMEOUT + 10:
-                pass
             # Emergency cleanup: if idle >600s and cleanup never ran, force it immediately
-            # Also trigger if idle >180s and cleanup never ran (lower threshold for first cleanup)
             if ((idle_duration > 600 and _last_idle_cleanup == 0) or 
                 (idle_duration > 180 and _last_idle_cleanup == 0 and idle_duration >= _IDLE_RESET_TIMEOUT + 60)):
-                print(f"ERROR: Emergency cleanup: worker idle for {idle_duration:.1f}s but cleanup never ran", flush=True)
                 try:
                     with _cache_lock:
                         cache_size = len(_simulator_cache)
                     cleanup_ran = _idle_memory_cleanup(idle_duration)
                     _last_idle_cleanup = time.time()
                 except Exception as emergency_error:
-                    print(f"ERROR: Emergency cleanup failed: {emergency_error}", flush=True)
-                    _last_idle_cleanup = time.time()  # Mark as attempted
+                    print(f"ERROR: Emergency cleanup failed after {idle_duration:.1f}s idle: {emergency_error}", flush=True)
+                    _last_idle_cleanup = time.time()
                 consecutive_trim_failures = 0
                 time.sleep(5)
                 continue
             
             if should_run_idle_cleanup:
-                with _cache_lock:
-                    cache_size = len(_simulator_cache)
                 try:
                     cleanup_ran = _idle_memory_cleanup(idle_duration)
                     _last_idle_cleanup = time.time()
                 except Exception as cleanup_error:
                     print(f"ERROR: Idle cleanup failed: {cleanup_error}", flush=True)
-                    # Still mark as attempted to prevent repeated failures
                     _last_idle_cleanup = time.time()
                 consecutive_trim_failures = 0
                 time.sleep(5)
                 continue
-            # Check if ensemble mode has expired - if so, trim more aggressively
-            with _cache_lock:
-                ensemble_expired = _ensemble_mode_until > 0 and now > _ensemble_mode_until
-                ensemble_exceeded_max = _ensemble_mode_started > 0 and (now - _ensemble_mode_started) >= 300  # 5 minutes
-                cache_size = len(_simulator_cache)
-                current_max = _current_max_cache
             
-            if (ensemble_expired or ensemble_exceeded_max) and cache_size > MAX_SIMULATOR_CACHE_NORMAL:
+            # Regular cache trimming - check if cache is too large and trim if needed
+            with _cache_lock:
+                cache_size = len(_simulator_cache)
+                target_size = _get_target_cache_size()
+            
+            # If cache is larger than target, trim it
+            if cache_size > target_size:
                 # Check if any models are currently in use before trimming
-                with _in_use_lock:
-                    models_in_use = _in_use_models.copy()
+                models_in_use = any(_is_simulator_in_use(mid) for mid in _simulator_cache.keys())
                 
-                if models_in_use:
-                    pass
-                else:
+                if not models_in_use:
                     rss_before = _get_rss_memory_mb()
-                    if rss_before is not None:
-                        pass
                     _trim_cache_to_normal()
-                    
-                    # Wait for delayed cleanup to process (simulators are cleaned up after _CLEANUP_DELAY)
-                    time.sleep(_CLEANUP_DELAY + 1)  # Wait slightly longer than cleanup delay
-                    
-                    # Process cleanup queue to actually free memory
-                    _process_cleanup_queue()
-                
-                # Force additional GC passes to ensure memory is released
-                for _ in range(3):
                     gc.collect()
-                    gc.collect(generation=2)
-                try:
-                    import ctypes
-                    libc = ctypes.CDLL("libc.so.6")
-                    libc.malloc_trim(0)
-                except:
-                    pass
-                
-                # Check immediately after trimming to see if it worked
-                with _cache_lock:
-                    new_size = len(_simulator_cache)
-                rss_after = _get_rss_memory_mb()
-                
-                if new_size > MAX_SIMULATOR_CACHE_NORMAL:
-                    consecutive_trim_failures += 1
-                    if rss_after is not None and rss_before is not None:
-                        rss_delta = rss_before - rss_after
-                        print(f"WARNING: Cache trim failed #{consecutive_trim_failures}: {new_size} > {MAX_SIMULATOR_CACHE_NORMAL}", flush=True)
-                    if consecutive_trim_failures > 2:  # Reduced from 3 to 2 for faster response
-                        # Force more aggressive trimming
-                        print(f"WARNING: Multiple trim failures, forcing aggressive cleanup", flush=True)
-                        _force_aggressive_trim()
+                    
+                    # Force additional GC passes to ensure memory is released
+                    for _ in range(3):
+                        gc.collect()
+                        gc.collect(generation=2)
+                    try:
+                        import ctypes
+                        libc = ctypes.CDLL("libc.so.6")
+                        libc.malloc_trim(0)
+                    except:
+                        pass
+                    
+                    # Check immediately after trimming to see if it worked
+                    with _cache_lock:
+                        new_size = len(_simulator_cache)
+                    rss_after = _get_rss_memory_mb()
+                    
+                    if new_size > target_size:
+                        consecutive_trim_failures += 1
+                        if rss_after is not None and rss_before is not None:
+                            rss_delta = rss_before - rss_after
+                            print(f"WARNING: Cache trim failed #{consecutive_trim_failures}: {new_size} > {target_size}", flush=True)
+                        if consecutive_trim_failures > 2:
+                            print(f"WARNING: Multiple trim failures, forcing aggressive cleanup", flush=True)
+                            _force_aggressive_trim()
+                            consecutive_trim_failures = 0
+                    else:
                         consecutive_trim_failures = 0
+                    time.sleep(3)
                 else:
-                    consecutive_trim_failures = 0
-                time.sleep(3)  # Check even more frequently (reduced from 5s) when trim failing
+                    time.sleep(20)
             else:
                 # Normal check interval - always call trim to handle edge cases
-                # Also process cleanup queue periodically (always process, even if no trimming needed)
-                _process_cleanup_queue()  # Process cleanup queue every cycle
                 _trim_cache_to_normal()
                 consecutive_trim_failures = 0
-                time.sleep(20)  # Check more frequently (reduced from 30s)
+                time.sleep(20)
         except Exception as e:
             print(f"ERROR: Cache trim thread error: {e}", flush=True)
             # If idle for a very long time and cleanup hasn't run, force it
             now_error = time.time()
             idle_duration_error = now_error - _last_activity_timestamp
-            if idle_duration_error > 600 and _last_idle_cleanup == 0:  # 10 minutes idle, cleanup never ran
-                print(f"ERROR: Emergency cleanup: worker idle {idle_duration_error:.1f}s, forcing cleanup", flush=True)
+            if idle_duration_error > 600 and _last_idle_cleanup == 0:
                 try:
                     _idle_memory_cleanup(idle_duration_error)
                     _last_idle_cleanup = time.time()
                 except Exception as emergency_error:
-                    print(f"ERROR: Emergency cleanup also failed: {emergency_error}", flush=True)
-                    _last_idle_cleanup = time.time()  # Mark as attempted even on failure
-            time.sleep(10)  # Wait shorter on error to retry faster
+                    print(f"ERROR: Emergency cleanup failed after {idle_duration_error:.1f}s idle: {emergency_error}", flush=True)
+                    _last_idle_cleanup = time.time()
+            time.sleep(10)
 
 def _force_aggressive_trim():
     """Force aggressive cache trimming - removes all but 1 most recently used simulator"""
@@ -744,11 +567,10 @@ def _force_aggressive_trim():
         # Keep only the most recently used model
         model_to_keep = sorted_models[0][0] if sorted_models else None
         
-        # Evict all others
+        # Evict all others (skip if in use)
         for model_id in list(_simulator_cache.keys()):
-            with _in_use_lock:
-                if model_id in _in_use_models:
-                    continue
+            if _is_simulator_in_use(model_id):
+                continue
             if model_id != model_to_keep:
                 simulator = _simulator_cache.get(model_id)
                 if simulator:
@@ -828,21 +650,15 @@ def _get_simulator(model):
     if not currgefs or currgefs == "Unavailable":
         raise RuntimeError(f"GEFS timestamp not available (currgefs='{currgefs}'). Cannot load model files.")
     
-    # Only trim cache if ensemble mode has expired (don't trim during active use)
-    # The background thread handles periodic trimming, so we only check here if ensemble expired
-    now = time.time()
+    # Update cache size based on current workload (adaptive sizing)
+    _update_cache_size()
+    
+    # Trim cache if it's too large (safety check for memory leaks)
+    # The background thread handles periodic trimming, but we check here for safety
     with _cache_lock:
-        ensemble_expired = _ensemble_mode_until > 0 and now > _ensemble_mode_until
-        ensemble_exceeded_max = _ensemble_mode_started > 0 and (now - _ensemble_mode_started) >= 300  # 5 minutes
-        cache_too_large = len(_simulator_cache) > MAX_SIMULATOR_CACHE_ENSEMBLE  # Safety check for memory leaks
-    # Only trim if ensemble mode expired or cache is dangerously large (memory leak protection)
-    # Don't trim during normal operation - let background thread handle it
-    if ensemble_expired or ensemble_exceeded_max or cache_too_large:
-        trim_start = time.time()
+        cache_too_large = len(_simulator_cache) > MAX_SIMULATOR_CACHE_ENSEMBLE
+    if cache_too_large:
         _trim_cache_to_normal()
-        trim_time = time.time() - trim_start
-        if trim_time > 0.5:
-            pass
     
     with _cache_lock:
         # Fast path: return cached simulator if available
@@ -867,39 +683,30 @@ def _get_simulator(model):
                 del _simulator_access_times[model]
         
         # Cache miss - need to load new simulator
-        # Evict oldest if cache is full
+        # Evict oldest if cache is full (only evict if not in use)
         if len(_simulator_cache) >= _current_max_cache:
-            oldest_model = min(_simulator_access_times, key=_simulator_access_times.get)
-            simulator = _simulator_cache.get(oldest_model)
-            # Explicitly clear WindFile and all its data before deleting
-            if simulator:
-                if hasattr(simulator, 'wind_file') and simulator.wind_file:
-                    wind_file = simulator.wind_file
-                    # Use WindFile's cleanup method if available
-                    if hasattr(wind_file, 'cleanup'):
-                        wind_file.cleanup()
-                    else:
-                        # Manual cleanup fallback
-                        if hasattr(wind_file, 'data') and wind_file.data is not None:
-                            if isinstance(wind_file.data, np.ndarray) and not hasattr(wind_file.data, 'filename'):
-                                del wind_file.data
-                                wind_file.data = None
-                        if hasattr(wind_file, 'levels') and isinstance(wind_file.levels, np.ndarray):
-                            del wind_file.levels
-                            wind_file.levels = None
-                    # Break reference to WindFile
-                    del wind_file
-                    simulator.wind_file = None
-                # Break reference to Simulator
-                del simulator
-            del _simulator_cache[oldest_model]
-            del _simulator_access_times[oldest_model]
-            gc.collect()  # Help GC reclaim memory from evicted simulator
+            # Find oldest model that's not in use
+            sorted_models = sorted(_simulator_access_times.items(), key=lambda x: x[1])
+            oldest_model = None
+            for candidate_model, _ in sorted_models:
+                if not _is_simulator_in_use(candidate_model):
+                    oldest_model = candidate_model
+                    break
+            
+            if oldest_model:
+                simulator = _simulator_cache.get(oldest_model)
+                if simulator:
+                    _cleanup_simulator_safely(simulator)
+                del _simulator_cache[oldest_model]
+                del _simulator_access_times[oldest_model]
+                with _simulator_ref_lock:
+                    _simulator_ref_counts.pop(oldest_model, None)
+                gc.collect()  # Help GC reclaim memory from evicted simulator
     
     # Load new simulator (outside lock to avoid blocking other threads)
-    # Preload arrays in ensemble mode for CPU-bound performance (faster simulations)
-    # Use memory-mapping in normal mode for memory efficiency
-    preload_arrays = _is_ensemble_mode()
+    # Auto-detect if we should preload arrays based on workload (adaptive)
+    # Preloading is faster (CPU-bound) but uses more memory
+    preload_arrays = _should_preload_arrays()
     
     try:
         load_start = time.time()
@@ -914,8 +721,8 @@ def _get_simulator(model):
         if windfile_time > 2.0:
             pass
         
-        # Use shared ElevationFile instance in ensemble mode (all simulators use same elevation data)
-        if preload_arrays:  # Ensemble mode
+        # Use shared ElevationFile instance when preloading (all simulators use same elevation data)
+        if preload_arrays:  # Ensemble workload detected
             global _shared_elevation_file
             if _shared_elevation_file is None:
                 with _shared_elevation_file_lock:
@@ -972,9 +779,8 @@ def simulate(simtime, lat, lon, rate, step, max_duration, alt, model, coefficien
         cache_time = time.time() - func_start
         return cached_result
     
-    # Mark model as in use to prevent cleanup races (do this BEFORE getting simulator)
-    with _in_use_lock:
-        _in_use_models.add(model)
+    # Acquire simulator reference (prevents cleanup while in use)
+    _acquire_simulator_ref(model)
     try:
         get_sim_start = time.time()
         simulator = _get_simulator(model)
@@ -1031,6 +837,6 @@ def simulate(simtime, lat, lon, rate, step, max_duration, alt, model, coefficien
         print(f"ERROR: [PERF] simulate() FAILED: model={model}, time={total_time:.2f}s, error={e}", flush=True)
         raise e
     finally:
-        with _in_use_lock:
-            _in_use_models.discard(model)
+        # Release simulator reference
+        _release_simulator_ref(model)
 
