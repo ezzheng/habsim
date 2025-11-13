@@ -299,8 +299,16 @@ def _cleanup_old_cache_files():
                     pass  # File might have been removed by another thread
             
             if removed_count > 0:
+                # Recalculate actual cache size after cleanup (account for concurrent downloads)
+                # Re-scan cache directory to get accurate size including any new files added during cleanup
+                remaining_files = []
+                for suffix in _CACHEABLE_SUFFIXES:
+                    remaining_files.extend(_CACHE_DIR.glob(f"*{suffix}"))
+                # Exclude worldelev.npy from size calculation
+                remaining_files = [f for f in remaining_files if f.name != 'worldelev.npy' and f.exists()]
+                actual_size_gb = sum(f.stat().st_size for f in remaining_files) / (1024**3)
                 print(f"INFO: Cache cleanup: removed {removed_count} files ({removed_size/(1024**3):.2f}GB), "
-                           f"cache now {(total_size_gb - removed_size/(1024**3)):.2f}GB")
+                           f"cache now {actual_size_gb:.2f}GB")
     except Exception as e:
         pass
 
