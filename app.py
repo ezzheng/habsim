@@ -1010,14 +1010,22 @@ def progress_stream():
     
     def generate():
         last_completed = -1
-        # Send initial update immediately when connection opens
         initial_sent = False
+        # Wait up to 2 seconds for progress tracking to be created (handles race condition)
+        wait_count = 0
+        max_wait = 20  # 20 * 0.1s = 2 seconds
+        
         while True:
             with _progress_lock:
                 progress = _progress_tracking.get(request_id)
             
             if progress is None:
-                # Progress not found or completed
+                # Progress not found - wait a bit if we haven't waited too long yet
+                if wait_count < max_wait:
+                    wait_count += 1
+                    time.sleep(0.1)
+                    continue
+                # After waiting, if still not found, send error and exit
                 yield f"data: {json.dumps({'error': 'Progress not found or completed'})}\n\n"
                 break
             

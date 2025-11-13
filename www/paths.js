@@ -1632,7 +1632,8 @@ async function simulate() {
                 
                 try {
                     const spaceshotPromise = fetch(spaceshotUrl, { signal: window.__simAbort.signal });
-                    await new Promise(resolve => setTimeout(resolve, 100)); // Wait for server to create progress tracking
+                    // Wait longer for server to receive request, parse args, generate request_id, and create progress tracking
+                    await new Promise(resolve => setTimeout(resolve, 300)); // Increased from 100ms to 300ms
                     
                     if (clientRequestId) {
                         startProgressSSE(clientRequestId);
