@@ -74,27 +74,42 @@
             box-shadow: 0 1px 4px rgba(0,0,0,0.3) !important;
         }
         
-        /* Map type control: bottom left on desktop, top left on mobile */
+        /* Map type control: top right on desktop and mobile */
         .custom-map-type-container {
-            bottom: 0 !important;
-            left: 0 !important;
-            top: auto !important;
+            top: 0 !important;
+            right: 0 !important;
+            bottom: auto !important;
+            left: auto !important;
         }
         
-        /* Dropdown menu: goes up on desktop (bottom left), down on mobile (top left) */
+        /* Dropdown menu: goes down from top right */
         .custom-map-type-menu {
-            bottom: 45px !important;
-            top: auto !important;
+            top: 45px !important;
+            bottom: auto !important;
+            right: 0 !important;
+            left: auto !important;
         }
         
-        /* Search autocomplete dropdown: appears above on desktop */
+        /* Search autocomplete dropdown: high z-index to appear above everything */
         .pac-container {
-            z-index: 1002 !important;
+            z-index: 99999 !important;
             display: block !important;
             visibility: visible !important;
             opacity: 1 !important;
             pointer-events: auto !important;
+            overflow: visible !important;
             /* Position is set by JavaScript using fixed positioning */
+        }
+        
+        /* Ensure map container doesn't clip the dropdown */
+        #map {
+            overflow: visible !important;
+        }
+        
+        /* Ensure search container doesn't clip the dropdown */
+        .custom-search-container,
+        .search-input-container {
+            overflow: visible !important;
         }
         
         /* Ensure pac-item (suggestions) are visible and clickable */
@@ -117,7 +132,10 @@
         .pac-container div:has-text("Powered by Google"),
         .pac-container *[class*="pac-logo"],
         .pac-logo,
-        [class*="pac-logo"] {
+        [class*="pac-logo"],
+        .pac-container > div:last-child:has(a[href*="google"]),
+        .pac-container > div:last-child:has-text("Powered"),
+        .pac-container > div:last-child:has-text("Google") {
             display: none !important;
             visibility: hidden !important;
             height: 0 !important;
@@ -128,6 +146,8 @@
             position: absolute !important;
             top: -9999px !important;
             left: -9999px !important;
+            margin: 0 !important;
+            padding: 0 !important;
         }
         
         /* Hide any bar/container that contains "Powered by Google" text */
@@ -185,6 +205,15 @@
                 bottom: auto !important;
                 top: 0 !important;
                 left: 52px !important;
+                align-items: center !important;
+            }
+            
+            /* Map type control: top right on mobile too */
+            .custom-map-type-container {
+                top: 0 !important;
+                right: 0 !important;
+                bottom: auto !important;
+                left: auto !important;
             }
             
             #search-input-container {
@@ -283,10 +312,13 @@
             gap: 10px !important; /* Consistent gap between button and input */
         }
         
-        /* On desktop, move search button closer to map type button */
+        /* On desktop, move search button closer to map type button and ensure alignment */
         @media (min-width: 769px) {
             .custom-search-container {
-                left: 48px !important; /* Closer to map button - reduced from 50px for tighter spacing */
+                left: 48px !important;
+                bottom: 0 !important;
+                align-items: center !important;
+                gap: 10px !important;
             }
         }
         
@@ -304,9 +336,9 @@
             box-shadow: 0 1px 4px rgba(0,0,0,0.3);
         }
         
-        /* Search input container - smooth expansion */
+        /* Search input container - smooth expansion, no flicker */
         .search-input-container {
-            position: relative; /* Changed to relative for dropdown positioning */
+            position: relative;
             left: 0;
             bottom: 0;
             background-color: white;
@@ -316,42 +348,46 @@
             z-index: 1001;
             font-family: Roboto, Arial, sans-serif;
             width: 0;
-            overflow: visible; /* Changed to visible so dropdown can show */
+            overflow: visible !important;
             opacity: 0;
             transition: width 0.3s ease, opacity 0.3s ease;
-            border: none; /* Remove any border */
-            outline: none; /* Remove outline */
-            /* Gap is handled by flexbox gap on parent container */
+            border: none !important;
+            outline: none !important;
         }
         
         .search-input-container.search-expanded {
             width: 300px;
             opacity: 1;
-            border: none; /* Ensure no border on expansion */
-            outline: none; /* Ensure no outline on expansion */
+            border: none !important;
+            outline: none !important;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.3);
         }
         
         .search-input-field {
             width: 100%;
             padding: 10px 16px;
-            border: none;
-            outline: none;
+            border: none !important;
+            outline: none !important;
             font-size: 14px;
             color: #5B5B5B;
             font-family: Roboto, Arial, sans-serif;
             box-sizing: border-box;
-            background-color: transparent; /* Ensure no background color flash */
+            background-color: transparent;
         }
         
-        .search-input-field:focus {
-            outline: none;
-            border: none;
-            box-shadow: none;
+        .search-input-field:focus,
+        .search-input-field:active,
+        .search-input-field:hover {
+            outline: none !important;
+            border: none !important;
+            box-shadow: none !important;
         }
         
-        .search-input-field:active {
-            outline: none;
-            border: none;
+        .search-input-container:focus,
+        .search-input-container:active,
+        .search-input-container:hover {
+            outline: none !important;
+            border: none !important;
         }
         
         /* Hide fullscreen button on mobile */
