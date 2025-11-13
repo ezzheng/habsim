@@ -778,6 +778,10 @@ def spaceshot():
     # Generate request ID using MD5
     request_id = generate_request_id(args, base_coeff)
     
+    # Debug: Log the request_id and key for comparison with client
+    request_key = f"{args['timestamp']}_{args['lat']}_{args['lon']}_{args['alt']}_{args['equil']}_{args['eqtime']}_{args['asc']}_{args['desc']}_{base_coeff}"
+    print(f"[SERVER] Generated request_id: {request_id} from key: {request_key}", flush=True)
+    
     activate_ensemble_mode(worker_pid)
     model_ids = get_model_ids()
     
@@ -795,6 +799,7 @@ def spaceshot():
             'montecarlo_completed': 0,
             'montecarlo_total': total_montecarlo
         }
+    print(f"[SERVER] Created progress tracking for request_id: {request_id}", flush=True)
     
     _log(f"Ensemble run: {len(model_ids)} models + {num_perturbations}×{len(model_ids)} Monte Carlo", 'info', worker_pid)
     
@@ -1008,6 +1013,8 @@ def progress_stream():
     if not request_id:
         return jsonify({'error': 'request_id required'}), 400
     
+    print(f"[SERVER] SSE connection requested for request_id: {request_id}", flush=True)
+    
     def generate():
         last_completed = -1
         initial_sent = False
@@ -1023,9 +1030,15 @@ def progress_stream():
                 # Progress not found - wait a bit if we haven't waited too long yet
                 if wait_count < max_wait:
                     wait_count += 1
+                    if wait_count % 5 == 0:  # Log every 0.5 seconds
+                        print(f"[SERVER] SSE waiting for request_id: {request_id} (attempt {wait_count}/{max_wait})", flush=True)
                     time.sleep(0.1)
                     continue
                 # After waiting, if still not found, send error and exit
+                with _progress_lock:
+                    available_ids = list(_progress_tracking.keys())
+                print(f"[SERVER] SSE error: Progress not found for request_id: {request_id} after {max_wait * 0.1}s", flush=True)
+                print(f"[SERVER] Available request_ids: {available_ids}", flush=True)
                 yield f"data: {json.dumps({'error': 'Progress not found or completed'})}\n\n"
                 break
             
