@@ -140,7 +140,11 @@ class Balloon:
 
 class Simulator:
     def __init__(self, wind_file, elev_file):
-        self.elev_file = ElevationFile(elev_file)
+        # Accept either a path (str/Path) or an ElevationFile object
+        if isinstance(elev_file, ElevationFile):
+            self.elev_file = elev_file
+        else:
+            self.elev_file = ElevationFile(elev_file)
         self.wind_file = wind_file
         # Cache for elevation lookups (rounded to 4 decimal places ~11m precision)
         self._elev_cache = {}
