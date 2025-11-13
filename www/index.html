@@ -88,13 +88,14 @@
         }
         
         /* Mobile: top-left positioning - directly under top bar
-           Google Maps wraps custom controls, so we ensure positioning works
-           Positioned at top: 0 of map container, which sits below the fixed top bar */
+           Google Maps wraps custom controls in its own container when using ControlPosition.
+           We override Google Maps' default positioning to place controls at top of map. */
         @media (max-width: 768px) {
-            /* Target the Google Maps control wrapper for BOTTOM_LEFT position */
-            .gm-style .gm-style-cc,
-            .gm-style .gmnoprint {
-                /* Ensure controls can be repositioned */
+            /* Override Google Maps control wrapper positioning for mobile */
+            .gm-style .gmnoprint[style*="bottom"] .map-controls-container,
+            .gmnoprint[style*="bottom"] .map-controls-container {
+                bottom: auto !important;
+                top: 0 !important;
             }
             
             /* Mobile: position controls at top of map container */
@@ -103,6 +104,7 @@
                 top: 0 !important;
                 left: 0 !important;
                 position: absolute !important;
+                margin: 10px !important;
             }
         }
         
