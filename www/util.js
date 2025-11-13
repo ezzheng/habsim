@@ -214,40 +214,9 @@ google.maps.event.addListener(map, 'click', function (event) {
                     const lat = location.lat();
                     const lng = location.lng();
                     
-                    // Smooth animated zoom-in to location
-                    const currentZoom = map.getZoom();
-                    const targetZoom = 12;
-                    const startTime = Date.now();
-                    const animationDuration = 800; // Total animation duration in ms
-                    
-                    // First, pan to the location smoothly
+                    // Pan and zoom to location (panTo has built-in smooth animation)
                     map.panTo(location);
-                    
-                    // Smooth zoom animation using requestAnimationFrame for better performance
-                    const animateZoom = () => {
-                        const elapsed = Date.now() - startTime;
-                        const progress = Math.min(elapsed / animationDuration, 1);
-                        
-                        // Easing function for smooth ease-in-out animation
-                        const easedProgress = progress < 0.5
-                            ? 2 * progress * progress
-                            : 1 - Math.pow(-2 * progress + 2, 2) / 2;
-                        
-                        // Calculate current zoom level
-                        const newZoom = currentZoom + (targetZoom - currentZoom) * easedProgress;
-                        map.setZoom(newZoom);
-                        
-                        // Continue animation until complete
-                        if (progress < 1) {
-                            requestAnimationFrame(animateZoom);
-                        } else {
-                            // Ensure we end at exactly the target zoom
-                            map.setZoom(targetZoom);
-                        }
-                    };
-                    
-                    // Start the animation
-                    requestAnimationFrame(animateZoom);
+                    map.setZoom(12);
                     
                     // Update coordinates and marker immediately (before animation completes)
                     displayCoordinates(new google.maps.LatLng(lat, lng));
