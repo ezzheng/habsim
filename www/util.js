@@ -209,6 +209,11 @@ google.maps.event.addListener(map, 'click', function (event) {
                 
                 // Style and position autocomplete dropdown based on screen size
                 const styleAutocomplete = () => {
+                    // Only style if search bar is expanded
+                    if (!searchInputContainer.classList.contains('expanded')) {
+                        return;
+                    }
+                    
                     // Wait for pac-container to be created by Google
                     requestAnimationFrame(() => {
                         const pacContainer = document.querySelector('.pac-container');
@@ -216,8 +221,8 @@ google.maps.event.addListener(map, 'click', function (event) {
                             const isMobile = window.innerWidth <= 768;
                             const inputRect = searchInput.getBoundingClientRect();
                             
-                            // Ensure high z-index
-                            pacContainer.style.zIndex = '2147483647';
+                            // Ensure high z-index and visibility
+                            pacContainer.style.zIndex = '10000';
                             pacContainer.style.position = 'fixed';
                             pacContainer.style.display = 'block';
                             pacContainer.style.visibility = 'visible';
@@ -282,9 +287,35 @@ google.maps.event.addListener(map, 'click', function (event) {
         };
         
         const closeSearchBar = () => {
-            searchInputContainer.classList.remove('expanded');
+            // Hide autocomplete dropdown and "Powered by Google" badge immediately
+            const pacContainer = document.querySelector('.pac-container');
+            if (pacContainer) {
+                pacContainer.style.display = 'none';
+                pacContainer.style.visibility = 'hidden';
+                pacContainer.style.opacity = '0';
+                // Also hide any child elements (including "Powered by Google")
+                const allChildren = pacContainer.querySelectorAll('*');
+                allChildren.forEach(child => {
+                    child.style.display = 'none';
+                    child.style.visibility = 'hidden';
+                    child.style.opacity = '0';
+                });
+            }
+            
+            // Clear input and remove expanded class
             searchInput.value = '';
             searchInput.blur();
+            searchInputContainer.classList.remove('expanded');
+            
+            // Additional cleanup after transition completes
+            setTimeout(() => {
+                const pacContainerAfter = document.querySelector('.pac-container');
+                if (pacContainerAfter) {
+                    pacContainerAfter.style.display = 'none';
+                    pacContainerAfter.style.visibility = 'hidden';
+                    pacContainerAfter.style.opacity = '0';
+                }
+            }, 350); // Wait for CSS transition to complete
         };
         
         searchButton.onclick = toggleSearchBar;
@@ -305,7 +336,10 @@ google.maps.event.addListener(map, 'click', function (event) {
         
         // Close menus when clicking outside
         document.addEventListener('click', (e) => {
-            if (!controlsContainer.contains(e.target) && !document.querySelector('.pac-container')?.contains(e.target)) {
+            const pacContainer = document.querySelector('.pac-container');
+            const clickedInPac = pacContainer && pacContainer.contains(e.target);
+            
+            if (!controlsContainer.contains(e.target) && !clickedInPac) {
                 closeMapTypeMenu();
                 closeSearchBar();
             }

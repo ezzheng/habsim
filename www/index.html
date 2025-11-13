@@ -80,11 +80,11 @@
             top: auto;
         }
         
-        /* Mobile: top-left positioning - account for top bar height */
+        /* Mobile: top-left positioning - directly under top bar */
         @media (max-width: 768px) {
             .map-controls-container {
                 bottom: auto;
-                top: 60px; /* Position below top bar */
+                top: 0;
                 left: 0;
             }
         }
@@ -190,19 +190,24 @@
             box-shadow: 0 2px 6px rgba(0,0,0,0.2);
         }
         
-        /* Autocomplete dropdown styling - high z-index to appear above everything */
+        /* Autocomplete dropdown styling - high z-index to appear above map */
         .pac-container {
-            z-index: 2147483647 !important; /* Maximum z-index value */
+            z-index: 10000 !important; /* High enough to appear above map */
             border-radius: 2px !important;
             box-shadow: 0 2px 6px rgba(0,0,0,0.3) !important;
             font-family: Roboto, Arial, sans-serif !important;
             position: fixed !important;
-            display: block !important;
-            visibility: visible !important;
-            opacity: 1 !important;
         }
         
-        /* Ensure pac-items are visible */
+        /* Hide autocomplete when search is not expanded */
+        .search-input-container:not(.expanded) ~ * .pac-container,
+        .search-input-container:not(.expanded) + * .pac-container {
+            display: none !important;
+            visibility: hidden !important;
+            opacity: 0 !important;
+        }
+        
+        /* Ensure pac-items are visible when container is visible */
         .pac-container .pac-item {
             display: block !important;
             visibility: visible !important;
