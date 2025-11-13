@@ -600,7 +600,22 @@ var contourLabels = [];
 // - gridResolution: density grid resolution (higher = smoother but slower)
 // ============================================================================
 
-class CustomHeatmapOverlay extends google.maps.OverlayView {
+// Lazy initialization: Define CustomHeatmapOverlay class only when needed
+let CustomHeatmapOverlay = null;
+
+function getCustomHeatmapOverlayClass() {
+    // Return cached class if already defined
+    if (CustomHeatmapOverlay) {
+        return CustomHeatmapOverlay;
+    }
+    
+    // Check if Google Maps is loaded
+    if (typeof google === 'undefined' || !google.maps || !google.maps.OverlayView) {
+        return null;
+    }
+    
+    // Define the class once and cache it
+    CustomHeatmapOverlay = class extends google.maps.OverlayView {
     constructor(points, options = {}) {
         super();
         this.points = points; // Array of {lat, lon} objects
@@ -816,6 +831,9 @@ class CustomHeatmapOverlay extends google.maps.OverlayView {
         
         return `rgba(${r}, ${g}, ${b}, ${a})`;
     }
+    };
+    
+    return CustomHeatmapOverlay;
 }
 
 function displayHeatmap(heatmapData) {
@@ -824,6 +842,14 @@ function displayHeatmap(heatmapData) {
         if (!window.google || !window.google.maps) {
             console.error('Google Maps API not loaded yet. Waiting...');
             setTimeout(() => displayHeatmap(heatmapData), 1000);
+            return;
+        }
+        
+        // Get CustomHeatmapOverlay class (lazy initialization)
+        const HeatmapClass = getCustomHeatmapOverlayClass();
+        if (!HeatmapClass) {
+            console.error('CustomHeatmapOverlay not available. Waiting for Google Maps...');
+            setTimeout(() => displayHeatmap(heatmapData), 500);
             return;
         }
         
