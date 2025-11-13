@@ -1379,6 +1379,16 @@ function updateContourVisibility() {
 async function simulate() {
     // Prevent duplicate/overlapping simulation calls (race condition protection)
     // Check and set atomically to prevent multiple simultaneous calls
+    // This is critical on mobile where double-taps can occur
+    
+    // Debounce: If called within 500ms of last call, ignore (prevents double-taps)
+    const now = Date.now();
+    if (window.__lastSimulateCall && (now - window.__lastSimulateCall) < 500) {
+        console.log('Simulate called too soon after last call - ignoring (debounce protection)');
+        return;
+    }
+    window.__lastSimulateCall = now;
+    
     if (window.__simRunning) {
         // If a simulation is already running, interpret this call as a cancel request
         if (window.__simAbort) {
@@ -1386,13 +1396,17 @@ async function simulate() {
         }
         // Note: Ensemble mode on server will still expire after duration from when it was set
         // This is expected behavior - server doesn't know about client-side cancellation
+        console.log('Simulate called but already running - ignoring duplicate call');
         return;
     }
     
     // Set running flag IMMEDIATELY to prevent race conditions
     // This must happen before any async operations
+    // Use a timestamp to help debug if duplicate calls slip through
     window.__simRunning = true;
+    window.__simRunningStartTime = Date.now();
     window.__simAbort = new AbortController();
+    console.log('Simulate started at', new Date().toISOString());
     
     // Clear previous simulation results immediately (paths, heatmap, and contours)
     clearAllVisualizations();
@@ -1401,11 +1415,15 @@ async function simulate() {
     const spinner = document.getElementById('sim-spinner');
     const originalButtonText = simBtn ? simBtn.textContent : null;
     
+    // Store originalButtonText globally so it's available in finally block
+    window.__originalButtonText = originalButtonText;
+    
     if (simBtn) {
-        simBtn.disabled = true;
+        simBtn.disabled = true; // Keep disabled to prevent double-clicks
         simBtn.classList.add('loading');
-        simBtn.disabled = false; // allow click to cancel
         simBtn.textContent = 'Simulating…';
+        // Prevent any further clicks during simulation
+        simBtn.style.pointerEvents = 'none';
     }
     if (spinner) { spinner.classList.add('active'); }
     try {
@@ -1596,10 +1614,13 @@ async function simulate() {
                     + time + "&lat=" + lat + "&lon=" + lon + "&alt=" + alt 
                     + "&equil=" + equil + "&eqtime=" + eqtime 
                     + "&asc=" + asc + "&desc=" + desc;
-                console.log("Using spaceshot endpoint (with Monte Carlo):", spaceshotUrl);
+                const requestId = `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+                console.log(`[${requestId}] Using spaceshot endpoint (with Monte Carlo):`, spaceshotUrl);
                 
                 try {
+                    console.log(`[${requestId}] Starting spaceshot fetch...`);
                     const response = await fetch(spaceshotUrl, { signal: window.__simAbort.signal });
+                    console.log(`[${requestId}] Spaceshot fetch completed, status:`, response.status);
                     
                     // Check if response is OK before parsing
                     if (!response.ok) {
@@ -1781,10 +1802,17 @@ async function simulate() {
         // Keep elevation field value - only clear if parameters change
         // (Removed automatic clearing - elevation persists until user changes location)
         if (spinner) { spinner.classList.remove('active'); }
-        if (simBtn) {
-            simBtn.disabled = false;
-            simBtn.classList.remove('loading');
-            if (originalButtonText !== null) simBtn.textContent = originalButtonText;
+        // Re-enable button after simulation completes
+        const simBtnFinal = document.getElementById('simulate-btn');
+        if (simBtnFinal) {
+            simBtnFinal.disabled = false;
+            simBtnFinal.classList.remove('loading');
+            simBtnFinal.style.pointerEvents = 'auto';
+            if (window.__originalButtonText !== null && window.__originalButtonText !== undefined) {
+                simBtnFinal.textContent = window.__originalButtonText;
+            } else {
+                simBtnFinal.textContent = 'Simulate';
+            }
         }
         
         // Update print overlay with current simulation parameters
