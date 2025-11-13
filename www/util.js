@@ -150,6 +150,26 @@ google.maps.event.addListener(map, 'click', function (event) {
         searchInput.className = 'search-input-field';
         searchInput.placeholder = 'Search for a location...';
         
+        // Prevent mobile auto-zoom by temporarily disabling zoom when input is focused
+        let originalViewport = null;
+        const preventZoomOnFocus = () => {
+            const viewport = document.querySelector('meta[name="viewport"]');
+            if (viewport && window.innerWidth <= 768) {
+                originalViewport = viewport.getAttribute('content');
+                viewport.setAttribute('content', 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no');
+            }
+        };
+        const restoreZoomOnBlur = () => {
+            const viewport = document.querySelector('meta[name="viewport"]');
+            if (viewport && originalViewport) {
+                viewport.setAttribute('content', originalViewport);
+                originalViewport = null;
+            }
+        };
+        
+        searchInput.addEventListener('focus', preventZoomOnFocus);
+        searchInput.addEventListener('blur', restoreZoomOnBlur);
+        
         searchInputContainer.appendChild(searchInput);
         
         // Initialize Places Autocomplete - only when input is visible
@@ -425,6 +445,8 @@ google.maps.event.addListener(map, 'click', function (event) {
             // Clear input and remove expanded class
             searchInput.value = '';
             searchInput.blur();
+            // Restore zoom in case it was disabled
+            restoreZoomOnBlur();
             searchInputContainer.classList.remove('expanded');
             
             // Additional cleanup after transition completes to catch any lingering elements
