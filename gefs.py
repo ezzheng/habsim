@@ -1,3 +1,10 @@
+"""
+GEFS (Global Ensemble Forecast System) data management from AWS S3.
+
+Handles downloading, caching, and serving GEFS weather model files.
+Implements LRU cache with disk persistence, retry logic, and connection pooling.
+Provides load_gefs() for memory-mapped file access and open_gefs() for text files.
+"""
 import io
 import os
 import tempfile
@@ -119,48 +126,32 @@ def listdir_gefs():
         return []
 
 def open_gefs(file_name):
-    # Cache whichgefs locally to reduce connection pool pressure (status checks every 5 seconds)
-    # Use separate status client to avoid blocking on large file downloads
+    """Open GEFS file from S3. Caches whichgefs to reduce connection pool pressure."""
     if file_name == 'whichgefs':
         now = time.time()
-        
-        # Fast path: check cache without lock (read-only)
         if (_whichgefs_cache["value"] is not None and 
             now - _whichgefs_cache["timestamp"] < _whichgefs_cache["ttl"]):
             return io.StringIO(_whichgefs_cache["value"])
         
-        # Cache miss or expired - need to download
-        # Try to acquire lock, but if it's already being downloaded, return stale cache
-        # This prevents status requests from blocking behind each other
         if not _whichgefs_lock.acquire(blocking=False):
-            # Lock held by another thread downloading - return stale cache if available
             if _whichgefs_cache["value"] is not None:
-                logging.debug("whichgefs cache expired but download in progress, returning stale cache")
                 return io.StringIO(_whichgefs_cache["value"])
-            # No stale cache available - wait briefly for lock (max 1 second)
             if _whichgefs_lock.acquire(blocking=True, timeout=1.0):
                 try:
-                    # Double-check cache (might have been updated while waiting)
                     if (_whichgefs_cache["value"] is not None and 
                         now - _whichgefs_cache["timestamp"] < _whichgefs_cache["ttl"]):
                         return io.StringIO(_whichgefs_cache["value"])
                 finally:
                     _whichgefs_lock.release()
-            # If still can't get lock or cache still stale, return stale cache or fail gracefully
             if _whichgefs_cache["value"] is not None:
                 return io.StringIO(_whichgefs_cache["value"])
-            # Last resort: return empty string (will show as "Unavailable")
             return io.StringIO("")
         
         try:
-            # Double-check cache after acquiring lock (another thread might have updated it)
             if (_whichgefs_cache["value"] is not None and 
                 now - _whichgefs_cache["timestamp"] < _whichgefs_cache["ttl"]):
                 return io.StringIO(_whichgefs_cache["value"])
             
-            # Cache miss or expired - download from S3 using status client
-            # Status client has its own connection pool (4 connections) separate from main pool
-            # Use shorter timeout for status requests (10s instead of 60s)
             try:
                 response = _STATUS_S3_CLIENT.get_object(Bucket=_BUCKET, Key=file_name)
                 content = response['Body'].read().decode("utf-8")
@@ -170,15 +161,12 @@ def open_gefs(file_name):
                     return io.StringIO("")
                 raise
             
-            # Update cache
             _whichgefs_cache["value"] = content
             _whichgefs_cache["timestamp"] = now
-            
             return io.StringIO(content)
         finally:
             _whichgefs_lock.release()
     
-    # Non-whichgefs files: download directly using main client (no caching needed)
     try:
         response = _S3_CLIENT.get_object(Bucket=_BUCKET, Key=file_name)
         content = response['Body'].read().decode("utf-8")
@@ -321,58 +309,17 @@ def _cleanup_old_cache_files():
 
 
 def _ensure_cached(file_name: str) -> Path:
-    """
-    Ensure a GEFS file is cached on disk, downloading from S3 if necessary.
+    """Ensure a GEFS file is cached on disk, downloading from S3 if necessary.
     
-    This function implements robust S3 download with the following reliability features:
+    Implements robust S3 download with retry logic, file integrity verification,
+    and proper cleanup. Returns path to cached file for memory-mapped access.
     
-    **File Handle Management:**
-    - Uses context managers (`with open()`) to ensure files are always closed
-    - Proper cleanup of file handles even on exceptions
-    - os.fsync() to ensure data is synced to disk (with error handling)
-    
-    **Exception Handling:**
-    - Distinguishes fatal errors (file not found) from retryable errors (network issues)
-    - Catches ClientError (S3 API errors), IOError (write/stall errors), and unexpected errors
-    - All errors are properly logged with retry attempt information
-    
-    **Flushing and Syncing:**
-    - Periodic flushing every 10MB during download to prevent data loss
-    - os.fsync() before closing to ensure data is persisted to disk
-    - Error handling for fsync failures (non-critical on some file systems)
-    
-    **Socket Timeout:**
-    - Configures socket timeout for large files (30 minutes) if supported
-    - Gracefully handles cases where timeout is not supported
-    
-    **Temporary File Cleanup:**
-    - Partial downloads are always cleaned up on failure
-    - Cleanup happens in all error paths (IOError, ClientError, unexpected)
-    - Previous incomplete downloads are cleaned up before retry attempts
-    
-    **File Integrity Verification:**
-    - Verifies file size matches expected ContentLength from S3
-    - Validates file is non-empty and not suspiciously small
-    - NPZ file structure validation before committing to cache
-    
-    **Retry Logic:**
-    - Up to 5 retries for NPZ files, 3 for other large files
-    - Exponential backoff (2s, 4s, 8s, 16s, 32s)
-    - Distinguishes retryable vs fatal errors in logs
-    
-    Returns:
-        Path to cached file (ready for memory-mapped access)
-        
     Raises:
         FileNotFoundError: If file doesn't exist in S3 (fatal, no retry)
         IOError: For retryable errors (network, incomplete downloads, etc.)
     """
     cache_path = _CACHE_DIR / file_name
     
-    # Fast path: Check if file exists BEFORE any locking
-    # This is the common case and should be as fast as possible
-    # Special handling for worldelev.npy - always check if it exists and is valid
-    # This file is critical for elevation lookups when users click on the map
     if file_name == 'worldelev.npy':
         if cache_path.exists():
             # Verify file is not corrupted (check size)
@@ -395,7 +342,6 @@ def _ensure_cached(file_name: str) -> Path:
                     pass
     
     if cache_path.exists():
-        # Validate NPZ integrity on cache hit; delete and re-download if corrupted
         try:
             if file_name.endswith('.npz'):
                 import numpy as np
@@ -408,10 +354,9 @@ def _ensure_cached(file_name: str) -> Path:
             except Exception:
                 pass
         else:
-        # Update access time to mark as recently used
             cache_path.touch()
             logging.debug(f"[CACHE] HIT: {file_name} (no S3 egress)")
-        return cache_path
+            return cache_path
 
     cache_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -495,21 +440,12 @@ def _ensure_cached(file_name: str) -> Path:
                     pass
             lock_fd = None
 
-    # CRITICAL: Acquire download semaphore to limit concurrent downloads
-    # This prevents connection pool exhaustion when ensemble downloads 21 files
-    # Semaphore allows max 4 concurrent downloads across all workers
     _download_semaphore.acquire()
     try:
-        # Log download attempt (this will use S3 egress)
         download_start = time.time()
         logging.info(f"[CACHE] MISS: {file_name} - downloading from S3 (will use egress)")
         
-        # Use longer timeout for large files
-        # NPZ wind files are ~300MB, worldelev.npy is 451MB
-        is_large_file = file_name == 'worldelev.npy' or file_name.endswith('.npz') or file_name.endswith('.npy')
-        
-        # Retry logic for large file downloads (up to 5 attempts for NPZ files)
-        # NPZ wind files often have network interruptions due to size (~300MB)
+        is_large_file = file_name == 'worldelev.npy' or file_name.endswith(('.npz', '.npy'))
         max_retries = 5 if file_name.endswith('.npz') else (3 if is_large_file else 1)
         last_error = None
         

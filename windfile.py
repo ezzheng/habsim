@@ -1,7 +1,12 @@
+"""
+WindFile class for loading and accessing GEFS wind data.
+
+Supports memory-mapped (efficient) and preloaded (fast) access modes.
+Provides 4D interpolation for wind vectors at arbitrary lat/lon/alt/time.
+Thread-safe file loading with per-file locks to prevent zipfile contention.
+"""
 import math
-import datetime
 import threading
-import time
 from io import BytesIO
 from pathlib import Path
 from typing import Union
@@ -72,12 +77,10 @@ class WindFile:
         """
         normalized_path = _normalize_path(path)
         
-        # CRITICAL: Lock entire file loading process to prevent zipfile contention
-        # Multiple threads trying to read from the same .npz file simultaneously causes deadlocks
+        # Lock entire file loading to prevent zipfile contention
         file_lock = _get_file_load_lock(normalized_path)
         with file_lock:
             npz = np.load(normalized_path)
-
             try:
                 self.time = float(npz['timestamp'][()])
                 self.levels = np.array(npz['levels'], copy=True)
@@ -85,16 +88,10 @@ class WindFile:
 
                 if isinstance(normalized_path, Path) and normalized_path.suffix == '.npz':
                     if preload:
-                        # Pre-load full array into RAM for faster access (ensemble mode)
-                        # This makes simulations CPU-bound instead of I/O-bound
                         self.data = np.array(npz['data'], copy=True)
                     else:
-                        # Use memory-mapping for memory efficiency (normal mode)
-                        # Note: _load_memmap_data has its own lock for extraction, but we need
-                        # this outer lock to prevent concurrent npz['data'] access
                         self.data = self._load_memmap_data(npz, normalized_path)
                 else:
-                    # BytesIO path - always load into RAM
                     self.data = np.array(npz['data'], copy=True)
             finally:
                 npz.close()
@@ -135,27 +132,14 @@ class WindFile:
         self._time_max = self.time + self.interval * (self.data.shape[-2]-1)
     
     def cleanup(self):
-        """Explicitly cleanup all numpy arrays and resources to free memory.
-        
-        WARNING: Only call this when the WindFile is guaranteed to not be in use.
-        This should only be called when the simulator is being evicted from cache
-        and no other threads are using it.
-        """
-        # Clear main data array (biggest memory consumer)
-        # For memory-mapped files, we DON'T delete them - they use minimal RAM
-        # The OS kernel will handle page cache eviction naturally
+        """Cleanup numpy arrays to free memory. Only call when WindFile is not in use."""
         if hasattr(self, 'data') and self.data is not None:
-            if isinstance(self.data, np.ndarray):
-                # Only clear pre-loaded arrays (which consume significant RAM)
-                # Memory-mapped arrays have a 'filename' attribute, pre-loaded don't
-                if not hasattr(self.data, 'filename'):
-                    # Pre-loaded array - delete it to free memory
-                    try:
-                        del self.data
-                        self.data = None
-                    except:
-                        pass
-                # For memory-mapped arrays, leave them alone - OS handles eviction
+            if isinstance(self.data, np.ndarray) and not hasattr(self.data, 'filename'):
+                try:
+                    del self.data
+                    self.data = None
+                except:
+                    pass
         
         # Clear other numpy arrays (these are smaller but still consume memory)
         if hasattr(self, 'levels') and isinstance(self.levels, np.ndarray):
@@ -323,36 +307,21 @@ class WindFile:
 
     def interpolate(self, lat, lon, level, time):
         """Optimized 4D interpolation"""
-        # Check if data is available before proceeding
         if self.data is None:
-            raise RuntimeError("WindFile data is None - file may not have loaded correctly or was cleaned up while in use")
+            raise RuntimeError("WindFile data is None - file may not have loaded correctly or was cleaned up")
         
-        # Pre-compute integer indices
-        lat_i = int(lat)
-        lon_i = int(lon)
-        level_i = int(level)
-        time_i = int(time)
-        
-        # Pre-compute fractional parts
+        lat_i, lon_i, level_i, time_i = int(lat), int(lon), int(level), int(time)
         lat_frac = lat - lat_i
         lon_frac = lon - lon_i
         level_frac = level - level_i
         time_frac = time - time_i
         
-        # Build interpolation weights (optimized memory layout)
         pressure_filter = np.array([1-level_frac, level_frac], dtype=np.float32).reshape(1, 1, 2, 1, 1)
         time_filter = np.array([1-time_frac, time_frac], dtype=np.float32).reshape(1, 1, 1, 2, 1) 
         lat_filter = np.array([1-lat_frac, lat_frac], dtype=np.float32).reshape(2, 1, 1, 1, 1)
         lon_filter = np.array([1-lon_frac, lon_frac], dtype=np.float32).reshape(1, 2, 1, 1, 1)
 
-        # Double-check data is still available (race condition protection)
-        if self.data is None:
-            raise RuntimeError("WindFile data became None during interpolation - possible race condition with cleanup")
-
-        # Extract data cube (memory-mapped in normal mode, full array in ensemble mode)
         cube = self.data[lat_i:lat_i+2, lon_i:lon_i+2, level_i:level_i+2, time_i:time_i+2, :]
-       
-        # Single vectorized interpolation operation (CPU-bound when pre-loaded, I/O-bound when memory-mapped)
         return np.sum(cube * lat_filter * lon_filter * pressure_filter * time_filter, axis=(0,1,2,3))
 
     def alt_to_hpa(self, altitude):

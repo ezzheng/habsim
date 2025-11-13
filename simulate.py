@@ -1,3 +1,10 @@
+"""
+Simulation orchestrator with dynamic LRU cache management.
+
+Manages simulator cache (expands for ensemble mode), prediction caching,
+GEFS data refresh, and periodic cache trimming. Provides simulate() function
+for trajectory calculations using Runge-Kutta integration.
+"""
 import numpy as np 
 import math
 import gc
@@ -20,54 +27,40 @@ try:
 except ImportError:
     _PSUTIL_AVAILABLE = False
 
-# Optimized version with memory-efficient caching and performance improvements
-# 
-# Memory Management Improvements:
-# - Added RSS memory monitoring to track actual memory release
-# - Improved reference breaking to ensure simulators are fully unreferenced
-# - Added delayed cleanup queue to safely release simulators only after they're definitely not in use
-# - Enhanced logging to show memory before/after cleanup operations
-# - Ensured deterministic cleanup timing when ensemble mode expires
-
 EARTH_RADIUS = float(6.371e6)
-DATA_STEP = 6 # hrs
+DATA_STEP = 6
 
-### Cache of datacubes and files. ###
-### Dynamic multi-simulator LRU cache: small for single model, expands for ensemble ###
-_simulator_cache = {}  # {model_id: simulator}
-_simulator_access_times = {}  # {model_id: access_time}
-# Increased cache sizes for 32GB RAM system
-MAX_SIMULATOR_CACHE_NORMAL = 10  # Normal cache size for single model runs (~1.5GB, increased from 5)
-MAX_SIMULATOR_CACHE_ENSEMBLE = 30  # Expanded cache for ensemble runs (~4.5GB, increased from 25)
-_current_max_cache = MAX_SIMULATOR_CACHE_NORMAL  # Current cache limit (dynamic)
-_ensemble_mode_until = 0  # Timestamp when ensemble mode expires
-_ensemble_mode_started = 0  # Timestamp when ensemble mode first started (for max duration tracking)
-_cache_lock = threading.Lock()  # Thread-safe access
+# Dynamic multi-simulator LRU cache: small for single model, expands for ensemble
+_simulator_cache = {}
+_simulator_access_times = {}
+MAX_SIMULATOR_CACHE_NORMAL = 10
+MAX_SIMULATOR_CACHE_ENSEMBLE = 30
+_current_max_cache = MAX_SIMULATOR_CACHE_NORMAL
+_ensemble_mode_until = 0
+_ensemble_mode_started = 0
+_cache_lock = threading.Lock()
 elevation_cache = None
-_elevation_lock = threading.Lock()  # Protects elevation_cache access/cleanup
+_elevation_lock = threading.Lock()
 
 currgefs = "Unavailable"
 _last_refresh_check = 0.0
 _cache_trim_thread_started = False
 _in_use_models = set()
 _in_use_lock = threading.Lock()
-_IDLE_RESET_TIMEOUT = 120.0  # seconds of no requests before forcing deep cleanup (reduced from 180)
-_IDLE_CLEAN_COOLDOWN = 120.0  # minimum delay between idle cleanups (reduced from 180)
+_IDLE_RESET_TIMEOUT = 120.0
+_IDLE_CLEAN_COOLDOWN = 120.0
 _last_activity_timestamp = time.time()
 _last_idle_cleanup = 0.0
 _idle_cleanup_lock = threading.Lock()
 
-# Delayed cleanup queue: simulators scheduled for cleanup after a safety delay
-# This ensures simulators are only cleaned up after they're definitely not in use
-_cleanup_queue = {}  # {model_id: (simulator, cleanup_timestamp)}
+_cleanup_queue = {}
 _cleanup_queue_lock = threading.Lock()
-_CLEANUP_DELAY = 2.0  # Wait 2 seconds after eviction before actually cleaning up (reduced for faster memory release)
+_CLEANUP_DELAY = 2.0
 
-# Prediction cache - increased for 32GB RAM
 _prediction_cache = {}
 _cache_access_times = {}
-MAX_CACHE_SIZE = 200  # Increased from 30 for better hit rate
-CACHE_TTL = 3600  # 1 hour
+MAX_CACHE_SIZE = 200
+CACHE_TTL = 3600
 
 def _cache_key(simtime, lat, lon, rate, step, max_duration, alt, model, coefficient):
     """Generate cache key from prediction parameters"""
@@ -87,13 +80,7 @@ def _get_cached_prediction(cache_key):
     return None
 
 def _cache_prediction(cache_key, result):
-    """Cache prediction result with TTL and size limit.
-    Lock-free for performance - minor race conditions acceptable for cache sizing."""
-    # PERFORMANCE: Removed lock that was causing severe serialization bottleneck
-    # During ensemble (441 concurrent calls), the lock caused all threads to queue
-    # Trade-off: Cache might briefly exceed MAX_CACHE_SIZE by a few entries (acceptable)
-    # vs. 4+ second serialization delay (unacceptable)
-    
+    """Cache prediction result with TTL and size limit. Lock-free for performance."""
     # Evict oldest if cache is full
     if len(_prediction_cache) >= MAX_CACHE_SIZE:
         try:
@@ -1111,28 +1098,15 @@ def simulate(simtime, lat, lon, rate, step, max_duration, alt, model, coefficien
         if get_sim_time > 1.0:
             logging.warning(f"[PERF] _get_simulator() slow: model={model}, time={get_sim_time:.2f}s")
         
-        # CRITICAL: Verify simulator is still valid after getting it (race condition protection)
-        # Cleanup might have run between returning from _get_simulator() and here
+        # Validate simulator before use (race condition protection)
         if not hasattr(simulator, 'wind_file') or simulator.wind_file is None:
-            logging.error(f"Simulator {model} wind_file is None after retrieval - this indicates a race condition")
-            raise RuntimeError(f"Simulator {model} is invalid: wind_file is None (likely cleaned up during retrieval)")
+            logging.error(f"Simulator {model} wind_file is None - simulator was cleaned up during use")
+            raise RuntimeError(f"Simulator {model} is invalid: wind_file is None - simulator was cleaned up during use")
         
         balloon = Balloon(location=(lat, lon), alt=alt, time=simtime, ascent_rate=rate)
         
-        # Additional defensive check right before use (double protection against race conditions)
-        if not hasattr(simulator, 'wind_file') or simulator.wind_file is None:
-            logging.error(f"Simulator {model} wind_file became None between retrieval and use - race condition")
-            raise RuntimeError(f"Simulator {model} is invalid: wind_file is None (cleaned up during use)")
-        
-        # CRITICAL: Verify simulator is still valid right before simulation starts
-        # This is the last chance to catch cleanup races before they cause errors
-        if not hasattr(simulator, 'wind_file') or simulator.wind_file is None:
-            logging.error(f"Simulator {model} wind_file is None right before simulate() - race condition detected!")
-            raise RuntimeError(f"Simulator {model} is invalid: wind_file is None (cleaned up during use)")
-        
         traj = simulator.simulate(balloon, step, coefficient, elevation, dur=max_duration)
         
-        # Pre-allocate list for better memory efficiency
         path = []
         epoch = datetime(1970, 1, 1).replace(tzinfo=timezone.utc)
         
@@ -1141,14 +1115,10 @@ def simulate(simtime, lat, lon, rate, step, max_duration, alt, model, coefficien
                 raise Exception("alt out of range")
             
             timestamp = (i.time - epoch).total_seconds()
-            # Convert numpy types to native Python types for JSON serialization
             path.append((float(timestamp), float(i.location.getLat()), float(i.location.getLon()), 
                         float(i.alt), float(i.wind_vector[0]), float(i.wind_vector[1]), 0, 0))
             
-            # Early termination if balloon goes way out of bounds
-            lat_check = i.location.getLat()
-            lon_check = i.location.getLon()
-            if lat_check < -90 or lat_check > 90:
+            if i.location.getLat() < -90 or i.location.getLat() > 90:
                 break
         
         # Cache successful result

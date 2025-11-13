@@ -1,3 +1,16 @@
+"""
+Flask WSGI application serving REST API and static assets for HABSIM.
+
+Provides endpoints for:
+- Single and ensemble trajectory simulations (/sim/singlezpb, /sim/spaceshot)
+- Real-time progress tracking (/sim/progress, /sim/progress-stream)
+- Elevation and wind data lookups (/sim/elev, /sim/wind, /sim/windensemble)
+- Cache and model status (/sim/status, /sim/models, /sim/cache-status)
+- Authentication (login/logout)
+
+Manages ensemble mode activation, Monte Carlo perturbations, and parallel execution
+using ThreadPoolExecutor. Handles progress tracking via Server-Sent Events (SSE).
+"""
 from flask import Flask, jsonify, request, Response, render_template, send_from_directory, make_response, session, redirect, url_for
 from flask_cors import CORS
 from flask_compress import Compress
@@ -48,13 +61,155 @@ def cache_for(seconds=300):
     return decorator
 
 import logging
+import hashlib
 import elev
 from datetime import datetime, timezone
 from gefs import listdir_gefs, open_gefs
-
-# Import simulate at module level to avoid circular import issues
 import simulate
-import downloader  # Import to access model configuration
+import downloader
+
+# ============================================================================
+# Helper Functions
+# ============================================================================
+
+def log(msg, level='info', worker_pid=None):
+    """Unified logging: print to stdout (Railway) and app.logger."""
+    if worker_pid is not None:
+        msg = f"[WORKER {worker_pid}] {msg}"
+    print(msg, flush=True)
+    getattr(app.logger, level)(msg)
+
+def get_arg(args, key, type_func=float, default=None, required=True):
+    """Parse and validate request argument with type conversion."""
+    val = args.get(key, default)
+    if required and val is None:
+        raise ValueError(f"Missing required parameter: {key}")
+    if val is None:
+        return None
+    return type_func(val)
+
+def parse_datetime(args):
+    """Parse datetime from request arguments (yr, mo, day, hr, mn)."""
+    return datetime(
+        int(args['yr']), int(args['mo']), int(args['day']), 
+        int(args['hr']), int(args['mn'])
+    ).replace(tzinfo=timezone.utc)
+
+def generate_request_id(args, base_coeff):
+    """Generate unique request ID using MD5 hash."""
+    request_key = f"{args['timestamp']}_{args['lat']}_{args['lon']}_{args['alt']}_{args['equil']}_{args['eqtime']}_{args['asc']}_{args['desc']}_{base_coeff}"
+    return hashlib.md5(request_key.encode()).hexdigest()[:16]
+
+def activate_ensemble_mode(worker_pid):
+    """Activate and verify ensemble mode. Returns (cache_limit, ensemble_until)."""
+    log("/sim/spaceshot called - activating ensemble mode", 'info', worker_pid)
+    simulate.set_ensemble_mode(duration_seconds=600)
+    with simulate._cache_lock:
+        cache_limit = simulate._current_max_cache
+        ensemble_until = simulate._ensemble_mode_until
+    log(f"Ensemble mode enabled: cache_limit={cache_limit}, expires_at={ensemble_until:.1f}", 'info', worker_pid)
+    return cache_limit, ensemble_until
+
+def verify_ensemble_mode(worker_pid):
+    """Verify ensemble mode is active before starting simulations."""
+    with simulate._cache_lock:
+        cache_limit = simulate._current_max_cache
+        ensemble_active = simulate._is_ensemble_mode()
+    if cache_limit < simulate.MAX_SIMULATOR_CACHE_ENSEMBLE:
+        log(f"WARNING: cache_limit={cache_limit} < {simulate.MAX_SIMULATOR_CACHE_ENSEMBLE}! Ensemble mode may not be active!", 'warning', worker_pid)
+    else:
+        log(f"Verified: cache_limit={cache_limit}, ensemble_active={ensemble_active} - ready to start simulations", 'info', worker_pid)
+
+def wait_for_prefetch(model_ids, worker_pid, timeout=60, max_models=5):
+    """Wait for prefetch to complete first few models. Returns wait time."""
+    models_to_wait = min(max_models, len(model_ids))
+    log(f"Waiting for prefetch to complete first {models_to_wait} models...", 'info', worker_pid)
+    
+    start_time = time.time()
+    max_wait_per_model = timeout / models_to_wait
+    
+    for i in range(models_to_wait):
+        model_id = model_ids[i]
+        wait_start = time.time()
+        while True:
+            with simulate._cache_lock:
+                if model_id in simulate._simulator_cache:
+                    log(f"Model {model_id} prefetched ({time.time() - wait_start:.1f}s)", 'info', worker_pid)
+                    break
+            if time.time() - wait_start > max_wait_per_model:
+                log(f"Prefetch timeout for model {model_id} ({time.time() - wait_start:.1f}s), starting anyway", 'info', worker_pid)
+                break
+            time.sleep(0.1)
+    
+    wait_time = time.time() - start_time
+    log(f"Prefetch wait complete: {wait_time:.1f}s - starting simulations", 'info', worker_pid)
+    return wait_time
+
+def perturb_lat(base_lat):
+    """Perturb latitude: ±0.001° ≈ ±111m."""
+    return base_lat + random.uniform(-0.001, 0.001)
+
+def perturb_lon(base_lon):
+    """Perturb longitude: ±0.001° with wrap to [0, 360)."""
+    return (base_lon + random.uniform(-0.001, 0.001)) % 360
+
+def perturb_alt(base_alt):
+    """Perturb altitude: ±50m, minimum 0."""
+    return max(0, base_alt + random.uniform(-50, 50))
+
+def perturb_equil(base_equil, pert_alt):
+    """Perturb equilibrium altitude: ±200m, must be >= alt."""
+    return max(pert_alt, base_equil + random.uniform(-200, 200))
+
+def perturb_eqtime(base_eqtime):
+    """Perturb equilibrium time: ±0.5 hours, minimum 0."""
+    return max(0, base_eqtime + random.uniform(-0.5, 0.5))
+
+def perturb_rate(base_rate):
+    """Perturb ascent/descent rate: ±0.5 m/s, minimum 0.1."""
+    return max(0.1, base_rate + random.uniform(-0.5, 0.5))
+
+def perturb_coefficient():
+    """Perturb floating coefficient: 0.9-1.0, weighted 90% towards 0.95-1.0."""
+    if random.random() < 0.9:
+        return random.uniform(0.95, 1.0)
+    return random.uniform(0.9, 0.95)
+
+def extract_landing_position(result):
+    """Extract landing position from singlezpb result. Returns dict or None."""
+    if result is None or not isinstance(result, tuple) or len(result) != 3:
+        return None
+    
+    try:
+        rise, coast, fall = result
+        if not fall or len(fall) == 0 or len(fall[-1]) < 3:
+            return None
+        
+        # Tuple format: [timestamp, lat, lon, alt, u, v, __, __]
+        final_lat = float(fall[-1][1])
+        final_lon = float(fall[-1][2])
+        return {'lat': final_lat, 'lon': final_lon}
+    except (IndexError, ValueError, TypeError):
+        return None
+
+def get_model_ids():
+    """Get list of available model IDs based on configuration."""
+    model_ids = []
+    if downloader.DOWNLOAD_CONTROL:
+        model_ids.append(0)
+    model_ids.extend(range(1, 1 + downloader.NUM_PERTURBED_MEMBERS))
+    return model_ids
+
+def update_progress(request_id, completed=None, ensemble_completed=None, montecarlo_completed=None):
+    """Update progress tracking atomically."""
+    with _progress_lock:
+        if request_id in _progress_tracking:
+            if completed is not None:
+                _progress_tracking[request_id]['completed'] = completed
+            if ensemble_completed is not None:
+                _progress_tracking[request_id]['ensemble_completed'] = ensemble_completed
+            if montecarlo_completed is not None:
+                _progress_tracking[request_id]['montecarlo_completed'] = montecarlo_completed
 
 
 def _is_authenticated():
@@ -63,161 +218,92 @@ def _is_authenticated():
 
 @app.before_request
 def _record_worker_activity():
-    """Mark the worker as active so idle cleanup waits until the user is gone.
-    Excludes status/health endpoints that poll continuously."""
-    # Don't reset idle timer for status/health endpoints that poll frequently
+    """Mark worker as active for idle cleanup tracking. Excludes polling endpoints."""
     excluded_paths = ['/sim/status', '/sim/models', '/sim/cache-status', '/', '/favicon.ico']
     path = request.path
-    # Also exclude static file requests (CSS, JS, images) and Railway health checks
     if (path.startswith('/static/') or 
         path.endswith(('.css', '.js', '.png', '.jpg', '.ico')) or
-        path == '/health' or  # Common health check path
-        request.headers.get('User-Agent', '').startswith('Railway')):  # Railway health checks
+        path == '/health' or
+        request.headers.get('User-Agent', '').startswith('Railway')):
         return
     if path not in excluded_paths:
         try:
-            # Get idle time BEFORE recording (more accurate)
             idle_before = 0
             if hasattr(simulate, '_last_activity_timestamp'):
                 idle_before = time.time() - simulate._last_activity_timestamp
             simulate.record_activity()
-            # Log which endpoint triggered activity (helps debug)
-            if idle_before > 30:  # Only log if was idle for meaningful time
+            if idle_before > 30:
                 app.logger.info(f"Activity recorded from {path} (was idle for {idle_before:.1f}s)")
         except Exception:
-            # Non-critical; if simulate isn't ready yet we just skip recording.
             pass
 
-# Progress tracking for ensemble + Monte Carlo simulations
-# Key: request_id (hash of parameters), Value: {completed: int, total: int, ensemble_completed: int, ensemble_total: int}
 _progress_tracking = {}
 _progress_lock = threading.Lock()
 
-# File pre-warming removed to reduce S3 egress costs
-# Files will download on-demand when needed (still fast due to file cache)
-
 def _start_cache_trim_thread():
-    """Start cache trim thread early in each worker to ensure memory management is active"""
+    """Start cache trim thread early in each worker."""
     try:
-        import simulate
-        # Access _get_simulator to trigger thread start
-        # This ensures the background trimming thread is running even before first request
         simulate._start_cache_trim_thread()
         app.logger.info("Cache trim thread startup triggered")
     except Exception as e:
         app.logger.warning(f"Failed to start cache trim thread (non-critical): {e}")
 
 def _prewarm_cache():
-    """Pre-load only model 0 for fast single requests (cost-optimized)"""
+    """Pre-load model 0 and worldelev.npy for fast single requests."""
     try:
-        import time
-        time.sleep(2)  # Give the app a moment to fully initialize
-        
-        # Get configured model IDs
-        model_ids = []
-        if downloader.DOWNLOAD_CONTROL:
-            model_ids.append(0)
-        model_ids.extend(range(1, 1 + downloader.NUM_PERTURBED_MEMBERS))
-        
-        app.logger.info(f"Pre-warming cache: configured models {model_ids}...")
-        
-        # Pre-warm only model 0 for fast single requests (cost-optimized)
-        # Ensemble runs will build simulators on-demand from file cache (files pre-downloaded to disk)
-        models_to_prewarm = model_ids[:1]  # Pre-warm only model 0 (fast path for single requests)
-        app.logger.info(f"Pre-warming {len(models_to_prewarm)} model(s) for fast single requests: {models_to_prewarm}")
-        
-        for model_id in models_to_prewarm:
+        time.sleep(2)
+        for model_id in get_model_ids()[:1]:
             try:
                 simulate._get_simulator(model_id)
                 app.logger.info(f"Model {model_id} pre-warmed")
                 time.sleep(0.5)
             except Exception as e:
-                app.logger.info(f"Failed to pre-warm model {model_id} (non-critical, will retry on-demand): {e}")
+                app.logger.info(f"Failed to pre-warm model {model_id} (non-critical): {e}")
         
-        app.logger.info(f"Cache pre-warming complete! Model 0 ready. Ensemble runs will build simulators from file cache on-demand.")
-        
-        # Pre-download worldelev.npy file before elevation lookup
-        # This ensures the 451MB file is cached before users click on the map
         try:
             import gefs
-            app.logger.info("Pre-downloading worldelev.npy (451MB) to avoid on-demand download failures...")
-            worldelev_path = gefs.load_gefs('worldelev.npy')
-            app.logger.info(f"worldelev.npy pre-downloaded successfully: {worldelev_path}")
+            gefs.load_gefs('worldelev.npy')
+            app.logger.info("worldelev.npy pre-downloaded")
         except Exception as e:
-            app.logger.warning(f"Failed to pre-download worldelev.npy (non-critical, will download on-demand): {e}")
+            app.logger.warning(f"Failed to pre-download worldelev.npy (non-critical): {e}")
         
-        # Pre-warm elevation memmap used by /elev endpoint
-        # This loads the file into memory-mapped mode
         try:
             _ = elev.getElevation(0, 0)
-            app.logger.info("Elevation pre-warmed successfully")
-        except Exception as ee:
-            app.logger.info(f"Elevation pre-warm failed (non-critical, will retry on-demand): {ee}")
-        
-        app.logger.info(f"Cache pre-warming complete! All {len(model_ids)} models pre-warmed")
+            app.logger.info("Elevation pre-warmed")
+        except Exception as e:
+            app.logger.info(f"Elevation pre-warm failed (non-critical): {e}")
     except Exception as e:
-        app.logger.info(f"Cache pre-warming failed (non-critical, will retry on-demand): {e}")
+        app.logger.info(f"Cache pre-warming failed (non-critical): {e}")
 
-# Start cache trim thread early (ensures memory management is active from startup)
-# Only do this on Railway where the Flask app actually runs
-# Vercel just proxies requests, so skip initialization there
 is_railway = os.environ.get('RAILWAY_ENVIRONMENT') is not None or os.environ.get('RAILWAY_SERVICE_NAME') is not None
 if is_railway:
-    # This is critical - the cleanup thread must start even if no simulators are accessed
-    # The thread in simulate.py also starts at module import, but we ensure it here as well
     try:
         _start_cache_trim_thread()
     except Exception as e:
-        app.logger.warning(f"Failed to start cache trim thread from app startup (non-critical): {e}")
-
-# Start pre-warming in background thread
+        app.logger.warning(f"Failed to start cache trim thread (non-critical): {e}")
     _cache_warmer_thread = threading.Thread(target=_prewarm_cache, daemon=True)
     _cache_warmer_thread.start()
 else:
-    # On Vercel or local dev - skip heavy initialization
-    app.logger.info("Skipping Railway-specific initialization (Vercel/local dev)")
+    app.logger.info("Skipping Railway-specific initialization")
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
-    """Login page and authentication handler"""
+    """Login page and authentication handler."""
     if request.method == 'POST':
         password = request.form.get('password', '').strip()
         expected_password = (LOGIN_PASSWORD or '').strip()
-        
-        # Debug logging - detailed comparison
-        app.logger.info(f"=== LOGIN ATTEMPT ===")
-        app.logger.info(f"Expected password length: {len(expected_password)}")
-        app.logger.info(f"Received password length: {len(password)}")
-        app.logger.info(f"Expected password set: {bool(expected_password)}")
-        app.logger.info(f"Expected password repr: {repr(expected_password[:5])}...{repr(expected_password[-5:]) if len(expected_password) > 10 else ''}")
-        app.logger.info(f"Received password repr: {repr(password[:5])}...{repr(password[-5:]) if len(password) > 10 else ''}")
-        app.logger.info(f"Passwords match: {password == expected_password}")
         
         if not expected_password:
             app.logger.error("HABSIM_PASSWORD environment variable is not set!")
             return redirect('/login?error=1')
         
-        # Compare passwords (case-sensitive, exact match)
         if password == expected_password:
             session['authenticated'] = True
-            session.permanent = False  # Explicitly set to non-permanent (expires when browser closes)
-            app.logger.info("✓ Login successful")
-            # Session is NOT permanent - expires when browser closes (requires login every time)
-            # Redirect to next page or home
-            next_page = request.args.get('next', '/')
-            return redirect(next_page)
+            session.permanent = False
+            app.logger.info("Login successful")
+            return redirect(request.args.get('next', '/'))
         else:
-            # Wrong password - redirect back to login with error
-            app.logger.warning(f"✗ Login failed - password mismatch")
-            # Log detailed comparison
-            if expected_password and password:
-                app.logger.warning(f"Expected: length={len(expected_password)}, first_char='{expected_password[0]}', last_char='{expected_password[-1]}'")
-                app.logger.warning(f"Received: length={len(password)}, first_char='{password[0]}', last_char='{password[-1]}'")
-                # Check for common issues
-                if expected_password.lower() == password.lower():
-                    app.logger.warning("⚠ Case sensitivity issue detected!")
-                if expected_password.replace(' ', '') == password.replace(' ', ''):
-                    app.logger.warning("⚠ Whitespace issue detected!")
+            app.logger.warning("Login failed - password mismatch")
             return redirect('/login?error=1')
     
     # GET request - serve login page
@@ -232,16 +318,13 @@ def login():
 
 @app.route('/logout')
 def logout():
-    """Logout handler - clears both server session and client sessionStorage"""
+    """Logout handler."""
     session.pop('authenticated', None)
-    # Redirect with query param so client-side can clear sessionStorage
     return redirect('/login?logout=1')
 
 @app.route('/')
 def index():
-    """Serve main application page (requires authentication)"""
-    # Authentication is checked client-side via sessionStorage (expires on tab close)
-    # Backend doesn't need to check - sessionStorage handles it
+    """Serve main application page."""
     index_html_path = os.path.join(os.path.dirname(__file__), 'www', 'index.html')
     try:
         with open(index_html_path, 'r', encoding='utf-8') as f:
@@ -253,7 +336,7 @@ def index():
 
 @app.route('/sim/which')
 def whichgefs():
-    # Read directly from storage to avoid importing heavy modules on cold start
+    """Get current GEFS timestamp."""
     f = open_gefs('whichgefs')
     s = f.readline()
     f.close()
@@ -396,12 +479,8 @@ def status():
 @app.route('/sim/models')
 def models():
     """Return available model IDs based on configuration"""
-    model_ids = []
-    if downloader.DOWNLOAD_CONTROL:
-        model_ids.append(0)
-    model_ids.extend(range(1, 1 + downloader.NUM_PERTURBED_MEMBERS))
     return jsonify({
-        "models": model_ids,
+        "models": get_model_ids(),
         "download_control": downloader.DOWNLOAD_CONTROL,
         "num_perturbed": downloader.NUM_PERTURBED_MEMBERS
     })
@@ -508,7 +587,7 @@ def singlezpb(timestamp, lat, lon, alt, equil, eqtime, asc, desc, model, coeffic
         
         # Extract final position from ascent phase to use as starting point for coast
         if len(rise) > 0:
-            timestamp, lat, lon, alt, __, __, __, __= rise[-1]
+            timestamp, lat, lon, alt = rise[-1][0], rise[-1][1], rise[-1][2], rise[-1][3]
             timestamp = datetime.utcfromtimestamp(timestamp).replace(tzinfo=timezone.utc)
         
         # ========================================================================
@@ -528,7 +607,7 @@ def singlezpb(timestamp, lat, lon, alt, equil, eqtime, asc, desc, model, coeffic
         
         # Extract final position from coast phase to use as starting point for descent
         if len(coast) > 0:
-            timestamp, lat, lon, alt, __, __, __, __ = coast[-1]
+            timestamp, lat, lon, alt = coast[-1][0], coast[-1][1], coast[-1][2], coast[-1][3]
             timestamp = datetime.utcfromtimestamp(timestamp).replace(tzinfo=timezone.utc)
         
         # ========================================================================
@@ -570,24 +649,24 @@ def singlezpb(timestamp, lat, lon, alt, equil, eqtime, asc, desc, model, coeffic
 
 
 @app.route('/sim/singlezpb')
-@cache_for(600)  # Cache for 10 minutes
+@cache_for(600)
 def singlezpbh():
-    worker_pid = os.getpid()
-    print(f"[WORKER {worker_pid}] /sim/singlezpb called", flush=True)
+    log("/sim/singlezpb called", 'info', os.getpid())
     args = request.args
-    timestamp = datetime.utcfromtimestamp(float(args['timestamp'])).replace(tzinfo=timezone.utc)
-    lat, lon = float(args['lat']), float(args['lon'])
-    alt = float(args['alt'])
-    equil = float(args['equil'])
-    eqtime = float(args['eqtime'])
-    asc, desc = float(args['asc']), float(args['desc'])
-    model = int(args['model'])
+    timestamp = datetime.utcfromtimestamp(get_arg(args, 'timestamp')).replace(tzinfo=timezone.utc)
+    lat = get_arg(args, 'lat')
+    lon = get_arg(args, 'lon')
+    alt = get_arg(args, 'alt')
+    equil = get_arg(args, 'equil')
+    eqtime = get_arg(args, 'eqtime')
+    asc = get_arg(args, 'asc')
+    desc = get_arg(args, 'desc')
+    model = get_arg(args, 'model', type_func=int)
     try:
         path = singlezpb(timestamp, lat, lon, alt, equil, eqtime, asc, desc, model)
         return jsonify(path)
     except FileNotFoundError as e:
-        # Model file not found in S3
-        app.logger.warning(f"Model file not found for request: {e}")
+        app.logger.warning(f"Model file not found: {e}")
         return make_response(jsonify({"error": "Model file not available. The requested model may not have been uploaded yet. Please check if the model timestamp is correct."}), 404)
 
 
@@ -651,98 +730,39 @@ def _decrement_ensemble_counter():
         app.logger.warning(f"Failed to decrement ensemble counter: {e}")
 
 @app.route('/sim/spaceshot')
-# NO CACHING - This is a real-time simulation with progress tracking
 def spaceshot():
     """
     Run all available ensemble models with Monte Carlo analysis.
-    Returns both the 21 main ensemble paths AND Monte Carlo landing positions for heatmap.
-    Respects DOWNLOAD_CONTROL and NUM_PERTURBED_MEMBERS.
-    
-    Weighting: Ensemble landing points are weighted more heavily than Monte Carlo points
-    to reflect that weather model uncertainty (different forecast scenarios) is typically
-    more significant than parameter uncertainty (measurement/launch variations).
-    Default: ensemble_weight = 2.0 (ensemble points count 2× in density calculation)
+    Returns both ensemble paths and Monte Carlo landing positions for heatmap.
+    Ensemble points are weighted 2× more than Monte Carlo points.
     """
-    import sys
-    import os
     worker_pid = os.getpid()
-    # CRITICAL: Use print() to stdout so it appears in Railway logs (same as access logs)
-    # app.logger goes to stderr which Railway may filter or show separately
-    # CRITICAL: Record activity immediately to prevent idle cleanup during long ensemble runs
     simulate.record_activity()
     
-    print(f"[WORKER {worker_pid}] ===== SPACESHOT ENDPOINT CALLED ===== (stdout for Railway visibility)", flush=True)
-    app.logger.info(f"[WORKER {worker_pid}] ===== SPACESHOT ENDPOINT CALLED ===== (spaceshot endpoint called)")
-    sys.stdout.flush()
-    sys.stderr.flush()
-    app.logger.info(f"[WORKER {worker_pid}] Ensemble run with Monte Carlo started: /sim/spaceshot endpoint called")
-    sys.stdout.flush()
-    sys.stderr.flush()
+    log("===== SPACESHOT ENDPOINT CALLED =====", 'info', worker_pid)
+    log("Ensemble run with Monte Carlo started", 'info', worker_pid)
     
-    # Weighting factor for ensemble points relative to Monte Carlo points
-    # Higher values give more weight to weather model uncertainty vs parameter uncertainty
-    # Reasonable range: 1.5-3.0 (2.0 = ensemble points count twice as much)
     ENSEMBLE_WEIGHT = 2.0
-    import time
     start_time = time.time()
     args = request.args
-    timestamp = datetime.utcfromtimestamp(float(args['timestamp'])).replace(tzinfo=timezone.utc)
-    base_lat, base_lon = float(args['lat']), float(args['lon'])
-    base_alt = float(args['alt'])
-    base_equil = float(args['equil'])
-    base_eqtime = float(args['eqtime'])
-    base_asc, base_desc = float(args['asc']), float(args['desc'])
-    # Coefficient defaults to 1.0 if not provided (STANDARD/ZPB modes don't send it)
-    base_coeff = float(args.get('coeff', 1.0))
     
-    # Optional: number of perturbations (default 20)
-    num_perturbations = int(args.get('num_perturbations', 20))
+    # Parse arguments using helper
+    timestamp = datetime.utcfromtimestamp(get_arg(args, 'timestamp')).replace(tzinfo=timezone.utc)
+    base_lat = get_arg(args, 'lat')
+    base_lon = get_arg(args, 'lon')
+    base_alt = get_arg(args, 'alt')
+    base_equil = get_arg(args, 'equil')
+    base_eqtime = get_arg(args, 'eqtime')
+    base_asc = get_arg(args, 'asc')
+    base_desc = get_arg(args, 'desc')
+    base_coeff = get_arg(args, 'coeff', default=1.0)
+    num_perturbations = get_arg(args, 'num_perturbations', type_func=int, default=20)
     
-    # Generate unique request ID for progress tracking
-    # Use simple hash that's easy to replicate on client side
-    request_key = f"{args['timestamp']}_{args['lat']}_{args['lon']}_{args['alt']}_{args['equil']}_{args['eqtime']}_{args['asc']}_{args['desc']}_{base_coeff}"
-    # Simple hash function (same as client-side)
-    hash_val = 0
-    for char in request_key:
-        hash_val = ((hash_val << 5) - hash_val) + ord(char)
-        hash_val = hash_val & 0xFFFFFFFF  # Convert to 32-bit integer
-    request_id = format(abs(hash_val), 'x').zfill(16)[:16]
+    # Generate request ID using MD5
+    request_id = generate_request_id(args, base_coeff)
     
-    # Enable ensemble mode (expanded cache) for 60 seconds
-    # NOTE: This is the ONLY endpoint that extends ensemble mode.
-    # This endpoint is only called when user explicitly clicks "Simulate" with ensemble toggle enabled.
-    # Single model requests (/sim/singlezpb) do NOT extend ensemble mode.
-    # Legacy /sim/montecarlo endpoint also does NOT extend ensemble mode.
-    # This prevents memory bloat from non-ensemble requests.
-    worker_pid = os.getpid()
-    # Use print() to stdout so it appears in Railway logs (same as access logs)
-    print(f"[WORKER {worker_pid}] /sim/spaceshot called - activating ensemble mode on THIS worker", flush=True)
-    # Also log to app.logger (stderr) for completeness
-    app.logger.info(f"[WORKER {worker_pid}] /sim/spaceshot called - activating ensemble mode on THIS worker")
-    import sys
-    sys.stdout.flush()  # Ensure log appears immediately
-    sys.stderr.flush()
-    
-    # CRITICAL: Activate ensemble mode BEFORE any simulations start
-    # This must happen synchronously before ThreadPoolExecutor begins
-    # Use longer duration (5 minutes) to ensure ensemble mode doesn't expire during long simulations
-    # Ensemble runs can take 5-15 minutes, especially with slow S3 downloads on first run
-    simulate.set_ensemble_mode(duration_seconds=600)  # 5 minutes to cover slow downloads + simulations
-    
-    # Verify ensemble mode was activated (for debugging)
-    with simulate._cache_lock:
-        cache_limit_after = simulate._current_max_cache
-        ensemble_until_after = simulate._ensemble_mode_until
-    print(f"[WORKER {worker_pid}] Ensemble mode enabled: cache_limit={cache_limit_after}, expires_at={ensemble_until_after:.1f}", flush=True)
-    app.logger.info(f"[WORKER {worker_pid}] Ensemble mode enabled: cache_limit={cache_limit_after}, expires_at={ensemble_until_after:.1f}")
-    sys.stdout.flush()  # Ensure log appears immediately
-    sys.stderr.flush()
-    
-    # Build model list based on configuration
-    model_ids = []
-    if downloader.DOWNLOAD_CONTROL:
-        model_ids.append(0)
-    model_ids.extend(range(1, 1 + downloader.NUM_PERTURBED_MEMBERS))
+    activate_ensemble_mode(worker_pid)
+    model_ids = get_model_ids()
     
     # Initialize progress tracking
     total_ensemble = len(model_ids)
@@ -759,72 +779,25 @@ def spaceshot():
             'montecarlo_total': total_montecarlo
         }
     
-    print(f"[WORKER {worker_pid}] Ensemble run: Processing {len(model_ids)} models + Monte Carlo ({num_perturbations} perturbations × {len(model_ids)} models), request_id={request_id}", flush=True)
-    app.logger.info(f"Ensemble run: Processing {len(model_ids)} models + Monte Carlo ({num_perturbations} perturbations × {len(model_ids)} models), request_id={request_id}")
+    log(f"Ensemble run: Processing {len(model_ids)} models + Monte Carlo ({num_perturbations} perturbations × {len(model_ids)} models), request_id={request_id}", 'info', worker_pid)
     
-    # ============================================================================
-    # MONTE CARLO SIMULATION: Generate Parameter Perturbations
-    # ============================================================================
-    # Monte Carlo simulation creates multiple variations of input parameters to
-    # explore uncertainty in landing position predictions. Each perturbation
-    # represents a plausible variation in launch conditions (position, altitude,
-    # timing, ascent/descent rates) that could occur in real-world launches.
-    #
-    # Process:
-    # 1. Generate N perturbations (default 20) with random variations
-    # 2. Run each perturbation through all ensemble models (21 models)
-    # 3. Collect final landing positions: 21 ensemble + 420 Monte Carlo = 441 total
-    # 4. Return landing positions for heatmap visualization
-    #
-    # Perturbation ranges (designed for high-altitude balloon launches):
-    # - Latitude/Longitude: ±0.001° (≈ ±111m) - accounts for launch site uncertainty
-    # - Altitude: ±50m - launch altitude variation
-    # - Equilibrium altitude: ±200m - burst altitude uncertainty
-    # - Equilibrium time: ±0.5 hours - timing variation at equilibrium (absolute, works even when base = 0)
-    # - Ascent/Descent rate: ±0.5 m/s - rate measurement uncertainty
-    # - Floating coefficient: 0.9 to 1.0, weighted towards 0.95-1.0 (70% in [0.95, 1.0], 30% in [0.9, 0.95])
-    #
-    # Note: Using uniform random distribution for most perturbations. Coefficient uses weighted
-    # distribution to favor values closer to 1.0. If landing positions appear circular/concentric,
-    # it's likely due to Google Maps heatmap smoothing (applies Gaussian-like aggregation),
-    # not the perturbation distribution itself.
-    # ============================================================================
+    # Generate Monte Carlo perturbations
     perturbations = []
-    # Use random seed based on request parameters for reproducibility while maintaining randomness
-    # This ensures perturbations are different each time but consistent within a request
+    request_key = f"{args['timestamp']}_{args['lat']}_{args['lon']}_{args['alt']}_{args['equil']}_{args['eqtime']}_{args['asc']}_{args['desc']}_{base_coeff}"
     random.seed(hash(request_key) & 0xFFFFFFFF)
+    
     for i in range(num_perturbations):
-        # Generate random perturbations within reasonable bounds
-        # Using uniform distribution - each parameter varies independently
-        pert_lat = base_lat + random.uniform(-0.001, 0.001)  # ±0.001° ≈ ±111m
-        pert_lon = (base_lon + random.uniform(-0.001, 0.001)) % 360  # Wrap longitude to [0, 360)
-        pert_alt = max(0, base_alt + random.uniform(-50, 50))  # ±50m, min 0
-        pert_equil = max(pert_alt, base_equil + random.uniform(-200, 200))  # ±200m, must be >= alt
-        # Use absolute perturbation for eqtime: ±0.5 hours (works even when base_eqtime = 0)
-        # For non-zero base_eqtime, this provides ±0.5h variation; for Standard mode (0), adds small coasting time variations
-        pert_eqtime = max(0, base_eqtime + random.uniform(-0.5, 0.5))  # ±0.5 hours, min 0
-        pert_asc = max(0.1, base_asc + random.uniform(-0.5, 0.5))  # ±0.5 m/s, min 0.1
-        pert_desc = max(0.1, base_desc + random.uniform(-0.5, 0.5))  # ±0.5 m/s, min 0.1
-        
-        # Floating coefficient perturbation: 0.9 to 1.0, weighted towards 0.95-1.0
-        # 90% chance: uniform in [0.95, 1.0] (higher values more likely)
-        # 10% chance: uniform in [0.9, 0.95] (lower values less likely)
-        # Note: Absolute range [0.9, 1.0], not relative to base_coeff
-        if random.random() < 0.9:
-            pert_coeff = random.uniform(0.95, 1.0)
-        else:
-            pert_coeff = random.uniform(0.9, 0.95)
-        
+        pert_alt = perturb_alt(base_alt)
         perturbations.append({
             'perturbation_id': i,
-            'lat': pert_lat,
-            'lon': pert_lon,
+            'lat': perturb_lat(base_lat),
+            'lon': perturb_lon(base_lon),
             'alt': pert_alt,
-            'equil': pert_equil,
-            'eqtime': pert_eqtime,
-            'asc': pert_asc,
-            'desc': pert_desc,
-            'coeff': pert_coeff
+            'equil': perturb_equil(base_equil, pert_alt),
+            'eqtime': perturb_eqtime(base_eqtime),
+            'asc': perturb_rate(base_asc),
+            'desc': perturb_rate(base_desc),
+            'coeff': perturb_coefficient()
         })
     
     from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -832,270 +805,149 @@ def spaceshot():
     landing_positions = []  # Landing positions: 21 ensemble + 420 Monte Carlo = 441 total
     
     def run_ensemble_simulation(model):
-        """Run standard ensemble simulation for one model.
-        
-        Returns full trajectory path for line plotting on map.
-        """
+        """Run ensemble simulation for one model. Returns trajectory path or None."""
         try:
-            return singlezpb(timestamp, base_lat, base_lon, base_alt, base_equil, base_eqtime, base_asc, base_desc, model)
+            result = singlezpb(timestamp, base_lat, base_lon, base_alt, base_equil, base_eqtime, base_asc, base_desc, model)
+            return None if result in ("error", "alt error") else result
         except FileNotFoundError as e:
             app.logger.warning(f"Model {model} file not found: {e}")
-            return "error"
+            return None
         except Exception as e:
-            app.logger.exception(f"Model {model} failed with error: {e}")
-            return "error"
+            app.logger.exception(f"Model {model} failed: {e}")
+            return None
     
     def run_montecarlo_simulation(pert, model):
-        """Run a single Monte Carlo simulation and extract final landing position.
-        
-        This function runs a full trajectory simulation with perturbed parameters,
-        then extracts only the final landing position (lat, lon) from the descent
-        phase. This landing position will be aggregated with all other Monte Carlo
-        results to create a probability density heatmap.
-        
-        Args:
-            pert: Dictionary with perturbed parameters (lat, lon, alt, equil, eqtime, asc, desc)
-            model: Model ID (0-20) to use for weather data
-            
-        Returns:
-            Dictionary with landing position {'lat': float, 'lon': float, ...} or None if failed
-        """
+        """Run Monte Carlo simulation and extract landing position. Returns dict or None."""
         try:
-            # Run full trajectory simulation with perturbed parameters
             result = singlezpb(timestamp, pert['lat'], pert['lon'], pert['alt'], 
                              pert['equil'], pert['eqtime'], pert['asc'], pert['desc'], model,
                              coefficient=pert.get('coeff', 1.0))
             
-            if result == "error" or result == "alt error":
+            if result in ("error", "alt error"):
                 return None
             
-            # Extract final landing position from descent phase
-            # Result format: (rise, coast, fall) where fall is list of [timestamp, lat, lon, alt, ...]
-            rise, coast, fall = result
-            if len(fall) > 0:
-                # Get last point in descent phase (final landing position)
-                __, final_lat, final_lon, __, __, __, __, __ = fall[-1]
-                return {
-                    'lat': float(final_lat),
-                    'lon': float(final_lon),
+            landing = extract_landing_position(result)
+            if landing:
+                landing.update({
                     'perturbation_id': pert['perturbation_id'],
                     'model_id': model,
-                    'weight': 1.0  # Standard weight for Monte Carlo (parameter uncertainty)
-                }
-            return None
+                    'weight': 1.0
+                })
+            return landing
         except Exception as e:
             app.logger.warning(f"Monte Carlo simulation failed: pert={pert['perturbation_id']}, model={model}, error={e}")
             return None
     
     try:
-        # Verify ensemble mode is active before starting simulations
-        with simulate._cache_lock:
-            verify_cache_limit = simulate._current_max_cache
-            verify_ensemble_active = simulate._is_ensemble_mode()
-        if verify_cache_limit < simulate.MAX_SIMULATOR_CACHE_ENSEMBLE:
-            print(f"[WORKER {worker_pid}] WARNING: Starting simulations but cache_limit={verify_cache_limit} < {simulate.MAX_SIMULATOR_CACHE_ENSEMBLE}! Ensemble mode may not be active!", flush=True)
-            app.logger.warning(f"[WORKER {worker_pid}] WARNING: Starting simulations but cache_limit={verify_cache_limit} < {simulate.MAX_SIMULATOR_CACHE_ENSEMBLE}! Ensemble mode may not be active!")
-        else:
-            print(f"[WORKER {worker_pid}] Verified: cache_limit={verify_cache_limit}, ensemble_active={verify_ensemble_active} - ready to start simulations", flush=True)
-            app.logger.info(f"[WORKER {worker_pid}] Verified: cache_limit={verify_cache_limit}, ensemble_active={verify_ensemble_active} - ready to start simulations")
-        sys.stdout.flush()
-        sys.stderr.flush()
+        verify_ensemble_mode(worker_pid)
+        wait_for_prefetch(model_ids, worker_pid)
         
-        # Wait for prefetch to complete at least the first few critical models
-        # This ensures simulators are preloaded before 32 threads compete for file I/O
-        # Prefetch loads models sequentially, so waiting for first few prevents I/O contention
-        import time
-        prefetch_wait_start = time.time()
-        prefetch_timeout = 60  # Max 60 seconds wait for prefetch (models should load in 20-30s)
-        models_to_wait_for = min(5, len(model_ids))  # Wait for first 5 models to be prefetched
-        
-        print(f"[WORKER {worker_pid}] Waiting for prefetch to complete first {models_to_wait_for} models before starting simulations...", flush=True)
-        for i in range(models_to_wait_for):
-            model_id = model_ids[i]
-            wait_start = time.time()
-            max_wait_per_model = prefetch_timeout / models_to_wait_for  # Distribute timeout across models
-            
-            while True:
-                # Check if simulator is in cache (prefetched and ready)
-                with simulate._cache_lock:
-                    if model_id in simulate._simulator_cache:
-                        print(f"[WORKER {worker_pid}] Model {model_id} prefetched ({time.time() - wait_start:.1f}s)", flush=True)
-                        break
-                
-                # Check timeout
-                if time.time() - wait_start > max_wait_per_model:
-                    print(f"[WORKER {worker_pid}] Prefetch timeout for model {model_id} ({time.time() - wait_start:.1f}s), starting simulations anyway", flush=True)
-                    break
-                
-                time.sleep(0.1)  # Check every 100ms
-        
-        prefetch_wait_time = time.time() - prefetch_wait_start
-        print(f"[WORKER {worker_pid}] Prefetch wait complete: {prefetch_wait_time:.1f}s - starting simulations", flush=True)
-        sys.stdout.flush()
-        
-        # ========================================================================
-        # PARALLEL EXECUTION: Ensemble + Monte Carlo Simulations
-        # ========================================================================
-        # Run both ensemble paths (for line plotting) and Monte Carlo simulations
-        # (for heatmap) in parallel using the same thread pool. This maximizes
-        # CPU utilization and minimizes total execution time.
-        #
-        # Total tasks: 21 ensemble + 420 Monte Carlo = 441 simulations
-        # Thread pool: 32 workers
-        # ========================================================================
-        with ThreadPoolExecutor(max_workers=32) as executor:
-            # Submit ALL tasks first (both ensemble and Monte Carlo)
-            # This ensures progress tracking starts immediately as tasks complete
+        # Run ensemble and Monte Carlo simulations in parallel
+        max_workers = min(32, os.cpu_count() or 4)
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
             ensemble_futures = {
                 executor.submit(run_ensemble_simulation, model): model
                 for model in model_ids
             }
             
-            # Submit Monte Carlo tasks (420 simulations: 20 perturbations × 21 models)
-            # Each task returns only the final landing position (lat, lon)
-            montecarlo_futures = []
-            for pert in perturbations:
-                for model in model_ids:
-                    montecarlo_futures.append(executor.submit(run_montecarlo_simulation, pert, model))
+            montecarlo_futures = [
+                executor.submit(run_montecarlo_simulation, pert, model)
+                for pert in perturbations
+                for model in model_ids
+            ]
             
-            # Combine all futures into one list for unified progress tracking
-            # This allows us to track progress as ANY simulation completes, not just ensemble or Monte Carlo separately
             all_futures = list(ensemble_futures.keys()) + montecarlo_futures
-            total_futures = len(all_futures)
-            
-            # Track which futures are ensemble vs Monte Carlo
             ensemble_future_set = set(ensemble_futures.keys())
             
-            # Collect results as they complete (unified progress tracking)
             ensemble_completed = 0
             montecarlo_completed = 0
             total_completed = 0
             
             for future in as_completed(all_futures):
                 total_completed += 1
+                update_progress(request_id, completed=total_completed)
                 
-                # Update progress immediately as each task completes
-                # This provides real-time progress updates instead of waiting for batches
-                with _progress_lock:
-                    if request_id in _progress_tracking:
-                        _progress_tracking[request_id]['completed'] = total_completed
-                
-                # Check if this is an ensemble or Monte Carlo future
                 if future in ensemble_future_set:
-                    # Ensemble simulation
                     model = ensemble_futures[future]
                     try:
                         idx = model_ids.index(model)
                         result = future.result()
                         paths[idx] = result
                         
-                        # Extract landing position from ensemble path and add to heatmap data
-                        # Result format: (rise, coast, fall) where fall is list of [timestamp, lat, lon, alt, ...]
-                        if result != "error" and result is not None:
-                            try:
-                                rise, coast, fall = result
-                                if len(fall) > 0:
-                                    # Get last point in descent phase (final landing position)
-                                    __, final_lat, final_lon, __, __, __, __, __ = fall[-1]
-                                    landing_positions.append({
-                                        'lat': float(final_lat),
-                                        'lon': float(final_lon),
-                                        'perturbation_id': -1,  # -1 indicates ensemble (not Monte Carlo)
+                        # Extract landing position from ensemble result
+                        landing = extract_landing_position(result)
+                        if landing:
+                            landing.update({
+                                'perturbation_id': -1,
                                         'model_id': model,
-                                        'weight': ENSEMBLE_WEIGHT  # Higher weight for weather model uncertainty
+                                'weight': ENSEMBLE_WEIGHT
                                     })
-                            except Exception as e:
-                                app.logger.warning(f"Failed to extract landing position from ensemble model {model}: {e}")
+                            landing_positions.append(landing)
                         
                         ensemble_completed += 1
-                        with _progress_lock:
-                            if request_id in _progress_tracking:
-                                _progress_tracking[request_id]['ensemble_completed'] = ensemble_completed
+                        update_progress(request_id, ensemble_completed=ensemble_completed)
                         app.logger.info(f"Ensemble model {model} completed ({ensemble_completed}/{len(model_ids)})")
                     except Exception as e:
-                        app.logger.exception(f"Ensemble model {model} result processing failed: {e}")
-                        idx = model_ids.index(model)
-                        paths[idx] = "error"
+                        app.logger.exception(f"Ensemble model {model} failed: {e}")
+                        paths[model_ids.index(model)] = None
                         ensemble_completed += 1
-                        with _progress_lock:
-                            if request_id in _progress_tracking:
-                                _progress_tracking[request_id]['ensemble_completed'] = ensemble_completed
+                        update_progress(request_id, ensemble_completed=ensemble_completed)
                 else:
-                    # Monte Carlo simulation
                     try:
                         result = future.result()
                         if result is not None:
                             landing_positions.append(result)
                         montecarlo_completed += 1
-                        with _progress_lock:
-                            if request_id in _progress_tracking:
-                                _progress_tracking[request_id]['montecarlo_completed'] = montecarlo_completed
-                        # Log progress every 50 simulations for visibility
+                        update_progress(request_id, montecarlo_completed=montecarlo_completed)
                         if montecarlo_completed % 50 == 0:
-                            app.logger.info(f"Monte Carlo progress: {montecarlo_completed}/{len(montecarlo_futures)} simulations completed")
+                            app.logger.info(f"Monte Carlo progress: {montecarlo_completed}/{len(montecarlo_futures)}")
                     except Exception as e:
-                        app.logger.warning(f"Monte Carlo simulation result processing failed: {e}")
+                        app.logger.warning(f"Monte Carlo simulation failed: {e}")
                         montecarlo_completed += 1
-                        with _progress_lock:
-                            if request_id in _progress_tracking:
-                                _progress_tracking[request_id]['montecarlo_completed'] = montecarlo_completed
+                        update_progress(request_id, montecarlo_completed=montecarlo_completed)
             
             # Ensure all ensemble models have results
             for i, path in enumerate(paths):
                 if path is None:
-                    app.logger.warning(f"Model {model_ids[i]} did not complete (timeout or missing)")
-                    paths[i] = "error"
+                    app.logger.warning(f"Model {model_ids[i]} did not complete")
+                    paths[i] = None
         
         # Log summary
-        ensemble_success = sum(1 for p in paths if p != "error" and p is not None)
+        ensemble_success = sum(1 for p in paths if p is not None)
         elapsed = time.time() - start_time
         ensemble_landings = sum(1 for p in landing_positions if p.get('perturbation_id') == -1)
         montecarlo_landings = len(landing_positions) - ensemble_landings
-        print(f"[WORKER {worker_pid}] Ensemble + Monte Carlo complete: {ensemble_success}/{len(model_ids)} ensemble paths, {ensemble_landings} ensemble + {montecarlo_landings} Monte Carlo = {len(landing_positions)} total landing positions in {elapsed:.1f} seconds", flush=True)
-        app.logger.info(f"Ensemble + Monte Carlo complete: {ensemble_success}/{len(model_ids)} ensemble paths, {ensemble_landings} ensemble + {montecarlo_landings} Monte Carlo = {len(landing_positions)} total landing positions in {elapsed:.1f} seconds")
+        log(f"Ensemble + Monte Carlo complete: {ensemble_success}/{len(model_ids)} ensemble paths, {ensemble_landings} ensemble + {montecarlo_landings} Monte Carlo = {len(landing_positions)} total landing positions in {elapsed:.1f} seconds", 'info', worker_pid)
         
     except Exception as e:
-        print(f"[WORKER {worker_pid}] Ensemble + Monte Carlo run FAILED: {e}", flush=True)
-        app.logger.exception(f"Ensemble + Monte Carlo run failed with unexpected error: {e}")
-        paths = ["error"] * len(model_ids)
+        log(f"Ensemble + Monte Carlo run FAILED: {e}", 'error', worker_pid)
+        app.logger.exception(f"Ensemble + Monte Carlo run failed: {e}")
+        paths = [None] * len(model_ids)
         landing_positions = []
     finally:
-        # Always decrement the ensemble counter when request completes (success or failure)
         _decrement_ensemble_counter()
-        
-        # Trim cache after ensemble completes (in finally block so it always runs)
-        print(f"[WORKER {worker_pid}] Spaceshot complete - trimming cache to normal", flush=True)
+        log("Spaceshot complete - trimming cache to normal", 'info', worker_pid)
         simulate._trim_cache_to_normal()
+        
         # Mark progress as completed and schedule cleanup after 30 seconds
-        # This allows clients to poll one last time to see 100% completion
-        # before the progress entry is deleted
         with _progress_lock:
             if request_id in _progress_tracking:
                 _progress_tracking[request_id]['completed'] = _progress_tracking[request_id]['total']
-                # Schedule cleanup in background thread
-                def cleanup_progress():
-                    import time
-                    time.sleep(30)  # Wait 30 seconds
-        with _progress_lock:
-            if request_id in _progress_tracking:
-                del _progress_tracking[request_id]
-                app.logger.debug(f"Cleaned up progress tracking for {request_id}")
-                # Schedule cleanup in background thread
-                cleanup_thread = threading.Thread(target=cleanup_progress, daemon=True)
-                cleanup_thread.start()
+        
+        def cleanup_progress():
+            time.sleep(30)
+            with _progress_lock:
+                if request_id in _progress_tracking:
+                    del _progress_tracking[request_id]
+                    app.logger.debug(f"Cleaned up progress tracking for {request_id}")
+        
+        cleanup_thread = threading.Thread(target=cleanup_progress, daemon=True)
+        cleanup_thread.start()
     
-    # ========================================================================
-    # RESPONSE FORMAT
-    # ========================================================================
-    # Returns both ensemble paths (for line plotting) and landing positions (for heatmap):
-    # - paths: 21 full trajectory paths for Polyline rendering
-    # - heatmap_data: 441 landing positions (21 ensemble + 420 Monte Carlo) for density visualization
-    # - request_id: Unique ID for progress tracking (client polls /sim/progress)
-    # ========================================================================
     return jsonify({
-        'paths': paths,  # Original 21 ensemble paths for line plotting
-        'heatmap_data': landing_positions,  # 441 landing positions (21 ensemble + 420 Monte Carlo) for heatmap
-        'request_id': request_id  # For progress polling
+        'paths': paths,
+        'heatmap_data': landing_positions,
+        'request_id': request_id
     })
 
 @app.route('/sim/progress')
@@ -1148,7 +1000,6 @@ def progress_stream():
             total = progress['total']
             percentage = round((current_completed / total) * 100) if total > 0 else 0
             
-            # Only send update if progress changed
             if current_completed != last_completed:
                 data = {
                     'completed': current_completed,
@@ -1161,65 +1012,43 @@ def progress_stream():
                 }
                 yield f"data: {json.dumps(data)}\n\n"
                 last_completed = current_completed
-                
-                # If completed, send final update and close
                 if current_completed >= total:
                     break
-            
-            # Sleep briefly before next check
-            import time
-            time.sleep(0.5)  # Check every 500ms
+            else:
+                time.sleep(0.5)  # Only sleep if no progress changed
     
     return Response(stream_with_context(generate()), mimetype='text/event-stream', headers={
         'Cache-Control': 'no-cache',
         'X-Accel-Buffering': 'no'  # Disable nginx buffering
     })
 
-'''
-Given a lat and lon, returns the elevation as a string
-'''
 @app.route('/sim/elev')
 def elevation():
-    lat, lon = float(request.args['lat']), float(request.args['lon'])
-    app.logger.info(f"[ELEV ENDPOINT] Called with lat={lat}, lon={lon}")
+    """Get elevation at specified coordinates."""
+    lat = get_arg(request.args, 'lat')
+    lon = get_arg(request.args, 'lon')
     try:
         result = elev.getElevation(lat, lon)
-        app.logger.info(f"[ELEV ENDPOINT] getElevation returned: {result} (type: {type(result)})")
-        return str(result)
+        return jsonify({'elevation': result or 0})
     except Exception as e:
-        app.logger.error(f"[ELEV ENDPOINT] Exception in getElevation: {e}", exc_info=True)
-        import traceback
-        traceback.print_exc()
-        return "0"
+        app.logger.exception(f"Elevation lookup failed: {e}")
+        return jsonify({'elevation': 0})
 
 
-'''
-Given a time (yr, mo, day, hr, mn), a location (lat, lon), and an altitude (alt)
-returns a json object of [u-wind, v-wind, du/dh, dv/dh], where
-
-u-wind = [u-wind-1, u-wind-2, u-wind-3...u-wind-20]
-v-wind = [v-wind-1, v-wind-2, v-wind-3...v-wind-20]
-du/dh = [du/dh-1, du/dh-2, du/dh-3...du/dh-20]
-dv/dh = [dv/dh-1, dv/dh-2, dv/dh-3...dv/dh-20]
-
-where the numbers are the GEFS model from which the data is extracted.
-'''
 @app.route('/sim/windensemble')
 def windensemble():
+    """Get wind data for all ensemble models (1-20)."""
     args = request.args
-    lat, lon = float(args['lat']), float(args['lon'])
-    alt = float(args['alt'])
-    yr, mo, day, hr, mn = int(args['yr']), int(args['mo']), int(args['day']), int(args['hr']), int(args['mn'])
-    time = datetime(yr, mo, day, hr, mn).replace(tzinfo=timezone.utc)
-    uList = list()
-    vList = list()
-    duList = list()
-    dvList = list()
-
+    lat = get_arg(args, 'lat')
+    lon = get_arg(args, 'lon')
+    alt = get_arg(args, 'alt')
+    time = parse_datetime(args)
+    yr = get_arg(args, 'yr', type_func=int)
     levels = simulate.GFSHIST if yr < 2019 else simulate.GEFS
 
+    uList, vList, duList, dvList = [], [], [], []
     for i in range(1, 21):
-        u, v, du, dv = simulate.get_wind(time,lat,lon,alt, i, levels)
+        u, v, du, dv = simulate.get_wind(time, lat, lon, alt, i, levels)
         uList.append(u)
         vList.append(v)
         duList.append(du)
@@ -1227,19 +1056,16 @@ def windensemble():
     
     return jsonify([uList, vList, duList, dvList])
 
-'''
-Given a time (yr, mo, day, hr, mn), a location (lat, lon), an altitude (alt),
-and a model (model) returns a json object of u-wind, v-wind, du/dh, dv/dh for that location
-extracted from that model.
-'''
 @app.route('/sim/wind')
 def wind():
+    """Get wind data for a specific model."""
     args = request.args
-    lat, lon = float(args['lat']), float(args['lon'])
-    model = int(args['model'])
-    alt = float(args['alt'])
-    yr, mo, day, hr, mn = int(args['yr']), int(args['mo']), int(args['day']), int(args['hr']), int(args['mn'])
+    lat = get_arg(args, 'lat')
+    lon = get_arg(args, 'lon')
+    model = get_arg(args, 'model', type_func=int)
+    alt = get_arg(args, 'alt')
+    time = parse_datetime(args)
+    yr = get_arg(args, 'yr', type_func=int)
     levels = simulate.GFSHIST if yr < 2019 else simulate.GEFS
-    time = datetime(yr, mo, day, hr, mn).replace(tzinfo=timezone.utc)
-    u, v, du, dv = simulate.get_wind(time,lat,lon,alt, model, levels)
+    u, v, du, dv = simulate.get_wind(time, lat, lon, alt, model, levels)
     return jsonify([u, v, du, dv])
