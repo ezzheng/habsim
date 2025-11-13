@@ -1740,15 +1740,15 @@ async function simulate() {
                         console.log(`New format: ${payloads.length} paths, ${heatmapData.length} heatmap points`);
                     }
                     
-                    // Verify request_id matches (should be the same as client-generated)
+                    // Verify request_id matches (should be the same as client-generated MD5)
                     if (requestIdFromServer && requestIdFromServer !== clientRequestId) {
                         console.warn(`Request ID mismatch: client=${clientRequestId}, server=${requestIdFromServer}, switching to server's ID`);
                         // Switch to server's request_id if different (server's is authoritative)
-                        if (progressPollInterval) {
-                            clearInterval(progressPollInterval);
-                            progressPollInterval = null;
+                        if (progressEventSource) {
+                            progressEventSource.close();
+                            progressEventSource = null;
                         }
-                        startProgressPolling(requestIdFromServer);
+                        startProgressSSE(requestIdFromServer);
                     }
                     
                     // Validate response structure
@@ -1764,10 +1764,8 @@ async function simulate() {
                     
                     // Clean up progress tracking when results are ready
                     if (payloads.length > 0) {
-                        if (progressPollInterval) {
-                            clearInterval(progressPollInterval);
-                            progressPollInterval = null;
-                        }
+                        // Mark progress mode as complete
+                        window.__inProgressMode = false;
                         if (progressEventSource) {
                             progressEventSource.close();
                             progressEventSource = null;
@@ -1833,10 +1831,7 @@ async function simulate() {
                     }
                 } catch (error) {
                     // Clean up progress tracking
-                    if (progressPollInterval) {
-                        clearInterval(progressPollInterval);
-                        progressPollInterval = null;
-                    }
+                    window.__inProgressMode = false;
                     if (progressEventSource) {
                         progressEventSource.close();
                         progressEventSource = null;
@@ -1914,15 +1909,19 @@ async function simulate() {
             simBtnFinal.disabled = false;
             simBtnFinal.classList.remove('loading');
             simBtnFinal.style.pointerEvents = 'auto';
-            // Only restore original text if button still shows percentage (not already restored)
+            // Only restore original text if not in progress mode
             // This prevents overwriting progress percentage during ensemble simulations
-            const currentText = simBtnFinal.textContent;
-            if (window.__originalButtonText !== null && window.__originalButtonText !== undefined && 
-                !currentText.match(/^\d+%$/)) {
-                simBtnFinal.textContent = window.__originalButtonText;
-            } else {
-                simBtnFinal.textContent = 'Simulate';
+            if (!window.__inProgressMode) {
+                const currentText = simBtnFinal.textContent;
+                if (window.__originalButtonText !== null && window.__originalButtonText !== undefined && 
+                    !currentText.match(/^\d+%$/)) {
+                    simBtnFinal.textContent = window.__originalButtonText;
+                } else {
+                    simBtnFinal.textContent = 'Simulate';
+                }
             }
+            // Reset progress mode flag
+            window.__inProgressMode = false;
         }
         
         // Update print overlay with current simulation parameters
