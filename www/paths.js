@@ -1600,7 +1600,26 @@ async function simulate() {
                 
                 try {
                     const response = await fetch(spaceshotUrl, { signal: window.__simAbort.signal });
-                    const data = await response.json(); // Now returns {paths: [...], heatmap_data: [...], request_id: ...}
+                    
+                    // Check if response is OK before parsing
+                    if (!response.ok) {
+                        const errorText = await response.text().catch(() => 'Unknown error');
+                        console.error('Spaceshot response not OK:', response.status, response.statusText, errorText);
+                        throw new Error(`Server returned ${response.status}: ${response.statusText}`);
+                    }
+                    
+                    // Parse JSON response
+                    let data;
+                    try {
+                        const responseText = await response.text();
+                        if (!responseText || responseText.trim().length === 0) {
+                            throw new Error('Empty response from server');
+                        }
+                        data = JSON.parse(responseText);
+                    } catch (parseError) {
+                        console.error('Failed to parse spaceshot response as JSON:', parseError);
+                        throw new Error('Server returned invalid JSON. The simulation may have timed out or failed.');
+                    }
                     
                     console.log('Spaceshot response received:', {
                         isArray: Array.isArray(data),
@@ -1623,6 +1642,17 @@ async function simulate() {
                         payloads = data.paths || [];
                         heatmapData = data.heatmap_data || [];
                         console.log(`New format: ${payloads.length} paths, ${heatmapData.length} heatmap points`);
+                    }
+                    
+                    // Validate response structure
+                    if (!payloads || !Array.isArray(payloads)) {
+                        console.error('Invalid spaceshot response: payloads is not an array', data);
+                        throw new Error('Server returned invalid response format. Expected array of paths.');
+                    }
+                    
+                    if (payloads.length === 0) {
+                        console.error('Spaceshot returned empty payloads array');
+                        throw new Error('Server returned no simulation results. The simulation may have failed.');
                     }
                     
                     // Ensemble simulation complete (no progress tracking needed)
@@ -1687,10 +1717,20 @@ async function simulate() {
                 } catch (error) {
                     if (error && (error.name === 'AbortError' || error.message === 'The operation was aborted.')) {
                         // Cancelled: stop processing
+                        console.log('Spaceshot request was cancelled');
                     } else {
                         console.error('Spaceshot fetch failed', error);
                         if (onlyonce) {
-                            alert('Failed to contact simulation server. Please try again later.');
+                            // Provide more specific error messages
+                            let errorMessage = 'Failed to contact simulation server. Please try again later.';
+                            if (error.message && error.message.includes('timeout')) {
+                                errorMessage = 'Simulation timed out. The request took too long. Please try again or use a shorter simulation time.';
+                            } else if (error.message && error.message.includes('JSON')) {
+                                errorMessage = 'Server returned invalid response. The simulation may have timed out or failed. Please try again.';
+                            } else if (error.message && error.message.includes('Server returned')) {
+                                errorMessage = error.message + '. Please try again later.';
+                            }
+                            alert(errorMessage);
                             onlyonce = false;
                         }
                     }
