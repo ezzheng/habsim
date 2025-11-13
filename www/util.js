@@ -287,19 +287,13 @@ google.maps.event.addListener(map, 'click', function (event) {
         };
         
         const closeSearchBar = () => {
-            // Hide autocomplete dropdown and "Powered by Google" badge immediately
+            // Immediately hide autocomplete dropdown container
             const pacContainer = document.querySelector('.pac-container');
             if (pacContainer) {
                 pacContainer.style.display = 'none';
                 pacContainer.style.visibility = 'hidden';
                 pacContainer.style.opacity = '0';
-                // Also hide any child elements (including "Powered by Google")
-                const allChildren = pacContainer.querySelectorAll('*');
-                allChildren.forEach(child => {
-                    child.style.display = 'none';
-                    child.style.visibility = 'hidden';
-                    child.style.opacity = '0';
-                });
+                pacContainer.style.pointerEvents = 'none';
             }
             
             // Clear input and remove expanded class
@@ -307,14 +301,28 @@ google.maps.event.addListener(map, 'click', function (event) {
             searchInput.blur();
             searchInputContainer.classList.remove('expanded');
             
-            // Additional cleanup after transition completes
+            // Additional cleanup after transition completes to catch any lingering elements
             setTimeout(() => {
                 const pacContainerAfter = document.querySelector('.pac-container');
                 if (pacContainerAfter) {
                     pacContainerAfter.style.display = 'none';
                     pacContainerAfter.style.visibility = 'hidden';
                     pacContainerAfter.style.opacity = '0';
+                    pacContainerAfter.style.pointerEvents = 'none';
                 }
+                
+                // Also check for any orphaned "Powered by Google" elements
+                const poweredByElements = document.querySelectorAll('.pac-logo, [class*="pac-logo"]');
+                poweredByElements.forEach(el => {
+                    // Only hide if not part of a visible pac-container
+                    if (!el.closest('.pac-container') || 
+                        (el.closest('.pac-container') && 
+                         el.closest('.pac-container').style.display === 'none')) {
+                        el.style.display = 'none';
+                        el.style.visibility = 'hidden';
+                        el.style.opacity = '0';
+                    }
+                });
             }, 350); // Wait for CSS transition to complete
         };
         
