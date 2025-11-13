@@ -1001,6 +1001,10 @@ def simulate(simtime, lat, lon, rate, step, max_duration, alt, model, coefficien
             if i.wind_vector is None:
                 raise Exception("alt out of range")
             
+            # Extend path array if we exceed pre-allocated size
+            if path_index >= len(path):
+                path.extend([None] * 50)  # Extend by 50 more slots
+            
             timestamp = (i.time - epoch).total_seconds()
             path[path_index] = (float(timestamp), float(i.location.getLat()), float(i.location.getLon()), 
                                float(i.alt), float(i.wind_vector[0]), float(i.wind_vector[1]), 0, 0)
