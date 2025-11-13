@@ -4,11 +4,9 @@ import gc
 import elev
 import hashlib
 import os
-import sys
 import time
 import threading
 import logging
-from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from windfile import WindFile
@@ -263,11 +261,14 @@ def _idle_memory_cleanup(idle_duration):
             gc.collect()
             gc.collect(generation=2)
         
-        # Force memory release back to OS when available (Linux only)
-        if _malloc_trim():
+        # Force memory release back to OS when available
+        try:
+            import ctypes
+            libc = ctypes.CDLL("libc.so.6")
+            libc.malloc_trim(0)
             logging.info("Idle cleanup: executed malloc_trim(0) to return free memory to OS")
-        else:
-            logging.debug("Idle cleanup: malloc_trim not available (non-Linux or error)")
+        except Exception as trim_error:
+            logging.debug(f"Idle cleanup: malloc_trim not available: {trim_error}")
 
         rss_after = _get_rss_memory_mb()
         if rss_after is not None and rss_before is not None:
@@ -443,53 +444,6 @@ def _get_rss_memory_mb():
         except:
             pass
     return None
-
-def _malloc_trim():
-    """Force OS to release free memory back to system (Linux only).
-    Returns True if successful, False otherwise."""
-    if sys.platform != 'linux':
-        return False  # malloc_trim is Linux-specific
-    try:
-        import ctypes
-        libc = ctypes.CDLL("libc.so.6")
-        libc.malloc_trim(0)
-        return True
-    except Exception:
-        return False
-
-@contextmanager
-def _in_use_model(model):
-    """Context manager to mark a model as in-use during simulation.
-    Automatically removes from _in_use_models when exiting, even on exceptions."""
-    with _in_use_lock:
-        _in_use_models.add(model)
-    try:
-        yield
-    finally:
-        with _in_use_lock:
-            _in_use_models.discard(model)
-
-def _validate_simulator(simulator, model_id=None):
-    """Validate that a simulator is still valid (not cleaned up).
-    Returns True if valid, False otherwise.
-    Logs warnings if invalid."""
-    if simulator is None:
-        if model_id is not None:
-            logging.warning(f"Simulator {model_id} is None")
-        return False
-    if not hasattr(simulator, 'wind_file'):
-        if model_id is not None:
-            logging.warning(f"Simulator {model_id} has no wind_file attribute")
-        return False
-    if simulator.wind_file is None:
-        if model_id is not None:
-            logging.warning(f"Simulator {model_id} has wind_file=None")
-        return False
-    if getattr(simulator.wind_file, 'data', None) is None:
-        if model_id is not None:
-            logging.warning(f"Simulator {model_id} has wind_file.data=None")
-        return False
-    return True
 
 def _cleanup_simulator_safely(simulator):
     """Safely clean up a simulator object, breaking all references to numpy arrays.
@@ -848,9 +802,13 @@ def _periodic_cache_trim():
                 for _ in range(3):
                     gc.collect()
                     gc.collect(generation=2)
-                # Force memory release back to OS (Linux only)
-                if _malloc_trim():
+                try:
+                    import ctypes
+                    libc = ctypes.CDLL("libc.so.6")
+                    libc.malloc_trim(0)
                     logging.info("Forced malloc_trim after cache trim")
+                except:
+                    pass
                 
                 # Check immediately after trimming to see if it worked
                 with _cache_lock:
@@ -957,8 +915,13 @@ def _force_aggressive_trim():
         for _ in range(5):
             gc.collect()
         
-        # Force OS memory release (Linux only)
-        _malloc_trim()
+        # Force OS memory release
+        try:
+            import ctypes
+            libc = ctypes.CDLL("libc.so.6")
+            libc.malloc_trim(0)
+        except:
+            pass
         
         logging.info(f"Aggressive trim complete: kept {len(_simulator_cache)} simulator(s)")
 
@@ -1022,16 +985,25 @@ def _get_simulator(model):
         if model in _simulator_cache:
             simulator = _simulator_cache[model]
             # Verify simulator is still valid (wind_file.data hasn't been cleaned up)
-            if _validate_simulator(simulator, model_id=model):
-                # Valid simulator - return it
-                _simulator_access_times[model] = now
-                return simulator
-            else:
-                # Invalid simulator - remove it and recreate
-                logging.warning(f"Simulator {model} found in cache but is invalid - removing and recreating")
-                del _simulator_cache[model]
-                if model in _simulator_access_times:
+            if simulator:
+                if not hasattr(simulator, 'wind_file') or simulator.wind_file is None:
+                    logging.warning(f"Simulator {model} has no wind_file - removing and recreating")
+                    del _simulator_cache[model]
                     del _simulator_access_times[model]
+                elif getattr(simulator.wind_file, 'data', None) is None:
+                    # Simulator was cleaned up but still in cache - remove it and recreate
+                    logging.warning(f"Simulator {model} found in cache but wind_file.data is None - removing and recreating")
+                    del _simulator_cache[model]
+                    del _simulator_access_times[model]
+                else:
+                    # Valid simulator - return it
+                    _simulator_access_times[model] = now
+                    return simulator
+            else:
+                # Invalid simulator - remove it
+                logging.warning(f"Simulator {model} found in cache but is invalid - removing")
+                del _simulator_cache[model]
+                del _simulator_access_times[model]
         
         # Cache miss - need to load new simulator
         # Evict oldest if cache is full
@@ -1121,9 +1093,6 @@ def simulate(simtime, lat, lon, rate, step, max_duration, alt, model, coefficien
     """
     func_start = time.time()
     
-    # Record activity for idle cleanup tracking
-    record_activity()
-    
     # Check cache first
     cache_key = _cache_key(simtime, lat, lon, rate, step, max_duration, alt, model, coefficient)
     cached_result = _get_cached_prediction(cache_key)
@@ -1133,63 +1102,72 @@ def simulate(simtime, lat, lon, rate, step, max_duration, alt, model, coefficien
         return cached_result
     
     # Mark model as in use to prevent cleanup races (do this BEFORE getting simulator)
-    # Use context manager to ensure cleanup even on exceptions
-    with _in_use_model(model):
-        try:
-            get_sim_start = time.time()
-            simulator = _get_simulator(model)
-            get_sim_time = time.time() - get_sim_start
-            if get_sim_time > 1.0:
-                logging.warning(f"[PERF] _get_simulator() slow: model={model}, time={get_sim_time:.2f}s")
+    with _in_use_lock:
+        _in_use_models.add(model)
+    try:
+        get_sim_start = time.time()
+        simulator = _get_simulator(model)
+        get_sim_time = time.time() - get_sim_start
+        if get_sim_time > 1.0:
+            logging.warning(f"[PERF] _get_simulator() slow: model={model}, time={get_sim_time:.2f}s")
+        
+        # CRITICAL: Verify simulator is still valid after getting it (race condition protection)
+        # Cleanup might have run between returning from _get_simulator() and here
+        if not hasattr(simulator, 'wind_file') or simulator.wind_file is None:
+            logging.error(f"Simulator {model} wind_file is None after retrieval - this indicates a race condition")
+            raise RuntimeError(f"Simulator {model} is invalid: wind_file is None (likely cleaned up during retrieval)")
+        
+        balloon = Balloon(location=(lat, lon), alt=alt, time=simtime, ascent_rate=rate)
+        
+        # Additional defensive check right before use (double protection against race conditions)
+        if not hasattr(simulator, 'wind_file') or simulator.wind_file is None:
+            logging.error(f"Simulator {model} wind_file became None between retrieval and use - race condition")
+            raise RuntimeError(f"Simulator {model} is invalid: wind_file is None (cleaned up during use)")
+        
+        # CRITICAL: Verify simulator is still valid right before simulation starts
+        # This is the last chance to catch cleanup races before they cause errors
+        if not hasattr(simulator, 'wind_file') or simulator.wind_file is None:
+            logging.error(f"Simulator {model} wind_file is None right before simulate() - race condition detected!")
+            raise RuntimeError(f"Simulator {model} is invalid: wind_file is None (cleaned up during use)")
+        
+        traj = simulator.simulate(balloon, step, coefficient, elevation, dur=max_duration)
+        
+        # Pre-allocate list for better memory efficiency
+        path = []
+        epoch = datetime(1970, 1, 1).replace(tzinfo=timezone.utc)
+        
+        for i in traj:
+            if i.wind_vector is None:
+                raise Exception("alt out of range")
             
-            # CRITICAL: Verify simulator is still valid after getting it (race condition protection)
-            # Cleanup might have run between returning from _get_simulator() and here
-            if not _validate_simulator(simulator, model_id=model):
-                logging.error(f"Simulator {model} is invalid after retrieval - this indicates a race condition")
-                raise RuntimeError(f"Simulator {model} is invalid (likely cleaned up during retrieval)")
+            timestamp = (i.time - epoch).total_seconds()
+            # Convert numpy types to native Python types for JSON serialization
+            path.append((float(timestamp), float(i.location.getLat()), float(i.location.getLon()), 
+                        float(i.alt), float(i.wind_vector[0]), float(i.wind_vector[1]), 0, 0))
             
-            balloon = Balloon(location=(lat, lon), alt=alt, time=simtime, ascent_rate=rate)
-            
-            # Additional defensive check right before use (double protection against race conditions)
-            if not _validate_simulator(simulator, model_id=model):
-                logging.error(f"Simulator {model} became invalid between retrieval and use - race condition")
-                raise RuntimeError(f"Simulator {model} is invalid (cleaned up during use)")
-            
-            traj = simulator.simulate(balloon, step, coefficient, elevation, dur=max_duration)
-            
-            # Pre-allocate list for better memory efficiency
-            path = []
-            epoch = datetime(1970, 1, 1).replace(tzinfo=timezone.utc)
-            
-            for i in traj:
-                if i.wind_vector is None:
-                    raise Exception("alt out of range")
-                
-                timestamp = (i.time - epoch).total_seconds()
-                # Convert numpy types to native Python types for JSON serialization
-                path.append((float(timestamp), float(i.location.getLat()), float(i.location.getLon()), 
-                            float(i.alt), float(i.wind_vector[0]), float(i.wind_vector[1]), 0, 0))
-                
-                # Early termination if balloon goes way out of bounds
-                lat_check = i.location.getLat()
-                lon_check = i.location.getLon()
-                if lat_check < -90 or lat_check > 90:
-                    break
-            
-            # Cache successful result
-            _cache_prediction(cache_key, path)
-            
-            total_time = time.time() - func_start
-            if total_time > 5.0:
-                logging.warning(f"[PERF] simulate() completed SLOW: model={model}, time={total_time:.2f}s, points={len(path)}")
-            else:
-                logging.debug(f"[PERF] simulate() completed: model={model}, time={total_time:.2f}s, points={len(path)}")
-            
-            return path
-            
-        except Exception as e:
-            # Don't cache errors
-            total_time = time.time() - func_start
-            logging.error(f"[PERF] simulate() FAILED: model={model}, time={total_time:.2f}s, error={e}")
-            raise e
+            # Early termination if balloon goes way out of bounds
+            lat_check = i.location.getLat()
+            lon_check = i.location.getLon()
+            if lat_check < -90 or lat_check > 90:
+                break
+        
+        # Cache successful result
+        _cache_prediction(cache_key, path)
+        
+        total_time = time.time() - func_start
+        if total_time > 5.0:
+            logging.warning(f"[PERF] simulate() completed SLOW: model={model}, time={total_time:.2f}s, points={len(path)}")
+        else:
+            logging.debug(f"[PERF] simulate() completed: model={model}, time={total_time:.2f}s, points={len(path)}")
+        
+        return path
+        
+    except Exception as e:
+        # Don't cache errors
+        total_time = time.time() - func_start
+        logging.error(f"[PERF] simulate() FAILED: model={model}, time={total_time:.2f}s, error={e}")
+        raise e
+    finally:
+        with _in_use_lock:
+            _in_use_models.discard(model)
 

@@ -11,12 +11,6 @@ import boto3
 from botocore.exceptions import ClientError, NoCredentialsError
 from botocore.config import Config
 
-# Import numpy at module level to avoid repeated imports
-try:
-    import numpy as np
-except ImportError:
-    np = None  # Will be imported locally if needed
-
 # Try to load from .env file if available (non-fatal)
 def _load_env_file():
     """Load environment variables from .env file if present.
@@ -404,9 +398,7 @@ def _ensure_cached(file_name: str) -> Path:
         # Validate NPZ integrity on cache hit; delete and re-download if corrupted
         try:
             if file_name.endswith('.npz'):
-                # Import numpy if not already imported at module level
-                if np is None:
-                    import numpy as np  # type: ignore
+                import numpy as np
                 with np.load(cache_path) as _:
                     pass
         except Exception as e:
@@ -416,10 +408,10 @@ def _ensure_cached(file_name: str) -> Path:
             except Exception:
                 pass
         else:
-            # Update access time to mark as recently used
+        # Update access time to mark as recently used
             cache_path.touch()
             logging.debug(f"[CACHE] HIT: {file_name} (no S3 egress)")
-            return cache_path
+        return cache_path
 
     cache_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -444,7 +436,7 @@ def _ensure_cached(file_name: str) -> Path:
     # For large files, prevent concurrent downloads of the same file ACROSS PROCESSES
     # This avoids connection pool exhaustion and partial download conflicts
     # Use file-based locking (fcntl) which works across Gunicorn worker processes
-    is_large_file = file_name == 'worldelev.npy' or file_name.endswith(('.npz', '.npy'))
+    is_large_file = file_name == 'worldelev.npy' or file_name.endswith('.npy')
     lock_file = None
     lock_fd = None
     if is_large_file:
@@ -514,7 +506,7 @@ def _ensure_cached(file_name: str) -> Path:
         
         # Use longer timeout for large files
         # NPZ wind files are ~300MB, worldelev.npy is 451MB
-        # Note: is_large_file already defined above, but keeping for clarity in this context
+        is_large_file = file_name == 'worldelev.npy' or file_name.endswith('.npz') or file_name.endswith('.npy')
         
         # Retry logic for large file downloads (up to 5 attempts for NPZ files)
         # NPZ wind files often have network interruptions due to size (~300MB)
@@ -552,7 +544,7 @@ def _ensure_cached(file_name: str) -> Path:
                     expected_size = head_response.get('ContentLength')
                 except ClientError as e:
                     error_code = e.response.get('Error', {}).get('Code', '')
-                    if error_code in ('404', 'NoSuchKey', 'NotFound'):
+                    if error_code in ('404', 'NoSuchKey'):
                         # File not found - fatal error, don't retry
                         error_msg = f"File not found in S3: {file_name}"
                         logging.error(error_msg)
@@ -684,9 +676,7 @@ def _ensure_cached(file_name: str) -> Path:
                 # Validate NPZ file structure before committing
                 if file_name.endswith('.npz'):
                     try:
-                        # Import numpy if not already imported at module level
-                        if np is None:
-                            import numpy as np  # type: ignore
+                        import numpy as np
                         test_npz = np.load(tmp_path)
                         test_npz.close()  # Close immediately after validation
                     except Exception as e:
@@ -826,6 +816,16 @@ def _ensure_cached(file_name: str) -> Path:
             
             download_time = time.time() - download_start
             logging.info(f"Cached {file_name} to disk in {download_time:.1f}s: {cache_path} (future reads will use zero egress)")
+        except FileNotFoundError as e:
+            # Temp file was deleted between check and rename (race condition)
+            error_msg = f"Download failed: temp file {tmp_path} not found during rename for {file_name}. This may indicate a race condition or premature cleanup."
+            logging.error(error_msg)
+            raise IOError(error_msg) from e
+        except OSError as e:
+            # File system error during rename
+            error_msg = f"Download failed: error renaming temp file for {file_name}: {e}"
+            logging.error(error_msg)
+            raise IOError(error_msg) from e
             
             # Release the file lock after successful download and rename
             if lock_fd:
@@ -845,16 +845,6 @@ def _ensure_cached(file_name: str) -> Path:
                             pass  # Non-critical if cleanup fails
                 except Exception as lock_error:
                     logging.warning(f"Error releasing lock for {file_name}: {lock_error}")
-        except FileNotFoundError as e:
-            # Temp file was deleted between check and rename (race condition)
-            error_msg = f"Download failed: temp file {tmp_path} not found during rename for {file_name}. This may indicate a race condition or premature cleanup."
-            logging.error(error_msg)
-            raise IOError(error_msg) from e
-        except OSError as e:
-            # File system error during rename
-            error_msg = f"Download failed: error renaming temp file for {file_name}: {e}"
-            logging.error(error_msg)
-            raise IOError(error_msg) from e
 
         # Final check that file exists
         if not cache_path.exists():
