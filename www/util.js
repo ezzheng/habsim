@@ -1,119 +1,25 @@
-//Maps initialization - wait for Google Maps API to load
-var map = null;
+//Maps initialization
+var element = document.getElementById("map");
+var map = new google.maps.Map(element, {
+    center: new google.maps.LatLng(37.4, -121.5),
+    zoom: 9,
+    mapTypeId: "OSM",
+    zoomControl: false, // Disable default - we'll use custom
+    gestureHandling: 'greedy',
+    mapTypeControl: false, // Disable default control - we'll use custom
+    fullscreenControl: false, // Disable default - we'll use custom
+    streetViewControl: false
+});
 var clickMarker = null;
 var heatmapLayer = null; // Global heatmap layer for Monte Carlo visualization
-
-// Initialize OSM map type BEFORE map initialization to ensure it's available
-function initOSMMapType() {
-    if (!map || typeof google === 'undefined' || !google.maps) {
-        setTimeout(initOSMMapType, 100);
-        return;
-    }
-    // Defensive check: ensure OSM is set if not already present
-    if (!map.mapTypes.get('OSM')) {
-        map.mapTypes.set("OSM", new google.maps.ImageMapType({
-            getTileUrl: function(coord, zoom) {
-                // "Wrap" x (longitude) at 180th meridian properly
-                // NB: Don't touch coord.x: because coord param is by reference, and changing its x property breaks something in Google's lib
-                var tilesPerGlobe = 1 << zoom;
-                var x = coord.x % tilesPerGlobe;
-                if (x < 0) {
-                    x = tilesPerGlobe+x;
-                }
-                // Wrap y (latitude) in a like manner if you want to enable vertical infinite scrolling
-
-                return "https://tile.openstreetmap.org/" + zoom + "/" + x + "/" + coord.y + ".png";
-            },
-            tileSize: new google.maps.Size(256, 256),
-            name: "OpenStreetMap",
-            maxZoom: 18
-        }));
-    }
-}
-
-function initMap() {
-    if (typeof google === 'undefined' || !google.maps) {
-        console.warn('Google Maps API not loaded yet, retrying...');
-        setTimeout(initMap, 100);
-        return;
-    }
-    
-    var element = document.getElementById("map");
-    if (!element) {
-        console.warn('Map element not found, retrying...');
-        setTimeout(initMap, 100);
-        return;
-    }
-    
-    // Fix 1: Use stable Google map type (ROADMAP) instead of OSM which may not be initialized yet
-    const isMobile = window.innerWidth <= 768;
-    map = new google.maps.Map(element, {
-        center: new google.maps.LatLng(37.4, -121.5),
-        zoom: 9,
-        mapTypeId: google.maps.MapTypeId.ROADMAP, // Changed from "OSM" to stable Google type
-        zoomControl: false, // Disable default - we'll use custom
-        gestureHandling: isMobile ? 'none' : 'greedy', // Fix 2: Disable gestures on mobile
-        draggable: !isMobile, // Fix 2: Disable dragging on mobile
-        mapTypeControl: false, // Disable default control - we'll use custom
-        fullscreenControl: false, // Disable default - we'll use custom
-        streetViewControl: false,
-        disableDefaultUI: true, // Disable all default UI controls
-        keyboardShortcuts: false // Disable keyboard shortcuts
-    });
-    
-    // Fix 2: Add resize listener to update gesture handling dynamically
-    function updateMobileGesture() {
-        const isMobile = window.innerWidth <= 768;
-        map.setOptions({
-            gestureHandling: isMobile ? 'none' : 'greedy',
-            draggable: !isMobile
-        });
-    }
-    window.addEventListener('resize', updateMobileGesture);
-    
-    // Initialize OSM map type after map is created
-    google.maps.event.addListenerOnce(map, 'idle', function() {
-        initOSMMapType();
-    });
-    
-    // Also hide zoom controls after map is created (defensive)
-    google.maps.event.addListenerOnce(map, 'idle', function() {
-        // Force hide any zoom controls that might appear
-        setTimeout(function() {
-            const zoomControls = document.querySelectorAll('.gm-bundled-control, .gm-bundled-control-on-bottom, [class*="gm-bundled"]');
-            zoomControls.forEach(function(control) {
-                control.style.display = 'none';
-                control.style.visibility = 'hidden';
-                control.style.height = '0';
-                control.style.width = '0';
-                control.style.opacity = '0';
-                control.style.pointerEvents = 'none';
-            });
-        }, 100);
-    });
-    
-    google.maps.event.addListener(map, 'click', function (event) {
-        displayCoordinates(event.latLng);
-    });
-}
-
-// Start initialization
-initMap();
+google.maps.event.addListener(map, 'click', function (event) {
+    displayCoordinates(event.latLng);
+});
 
 // Custom map type control with drop-up menu
 (function() {
-    function initMapTypeControl() {
-        if (!map) {
-            setTimeout(initMapTypeControl, 100);
-            return;
-        }
-        // Wait for map to be ready and OSM to be initialized
-        google.maps.event.addListenerOnce(map, 'idle', function() {
-            // Ensure OSM is available before creating menu
-            if (!map.mapTypes.get('OSM')) {
-                initOSMMapType();
-            }
-            
+    // Wait for map to be ready
+    google.maps.event.addListenerOnce(map, 'idle', function() {
         // Create custom control container
         const controlDiv = document.createElement('div');
         controlDiv.id = 'custom-map-type-control';
@@ -208,27 +114,14 @@ initMap();
                 this.style.backgroundColor = 'white';
             };
             
-            // Click handler - Fix 1: Ensure OSM is available before switching
+            // Click handler
             menuItem.onclick = function() {
                 try {
-                    if (mapType.id === 'OSM') {
-                        // Ensure OSM is initialized
-                        if (!map.mapTypes.get('OSM')) {
-                            initOSMMapType();
-                        }
-                        if (map.mapTypes.get('OSM')) {
-                            map.setMapTypeId('OSM');
-                            updateActiveMapType('OSM');
-                        } else {
-                            console.warn('OSM map type not available');
-                        }
-                    } else {
-                        map.setMapTypeId(mapType.id);
-                        updateActiveMapType(mapType.id);
-                    }
+                    map.setMapTypeId(mapType.id);
+                    updateActiveMapType(mapType.id);
                     dropdownMenu.style.display = 'none';
                 } catch(e) {
-                    console.warn('Map type not available:', mapType.id, e);
+                    console.warn('Map type not available:', mapType.id);
                 }
             };
             
@@ -283,239 +176,17 @@ initMap();
         
         // Initialize active state
         updateActiveMapType(map.getMapTypeId());
-        });
-    }
-    initMapTypeControl();
-})();
-
-// Custom search control with Google Places Autocomplete
-(function() {
-    let searchInput = null; // Make searchInput accessible for stylePacContainer
-    
-    function initSearchControl() {
-        if (!map) {
-            setTimeout(initSearchControl, 100);
-            return;
-        }
-        // Wait for map to be ready
-        google.maps.event.addListenerOnce(map, 'idle', function() {
-        // Fix 4: Create unified control wrapper for search and fullscreen buttons
-        const controlsWrapper = document.createElement('div');
-        controlsWrapper.className = 'custom-control-wrapper';
-        controlsWrapper.style.cssText = 'display: flex; gap: 8px; align-items: center; margin: 10px; position: absolute; left: 10px; bottom: 10px; z-index: 1000;';
-        
-        // Create search control container
-        const searchDiv = document.createElement('div');
-        searchDiv.id = 'custom-search-control';
-        searchDiv.className = 'custom-search-container';
-        searchDiv.style.cssText = 'display: flex; align-items: center; gap: 8px;';
-        
-        // Create search button
-        const searchButton = document.createElement('button');
-        searchButton.type = 'button';
-        searchButton.id = 'search-button';
-        searchButton.className = 'custom-search-button';
-        searchButton.innerHTML = '🔍';
-        searchButton.title = 'Search location';
-        searchButton.style.cssText = 'width: 40px; height: 40px; display: inline-flex; align-items: center; justify-content: center; padding: 0; background-color: white; border: none; border-radius: 2px; box-shadow: 0 1px 4px rgba(0,0,0,0.3); cursor: pointer; font-size: 18px; color: #5B5B5B;';
-        
-        // Create search input container (hidden by default, will expand smoothly)
-        const searchInputContainer = document.createElement('div');
-        searchInputContainer.id = 'search-input-container';
-        searchInputContainer.className = 'search-input-container';
-        searchInputContainer.style.position = 'relative';
-        
-        // Create search input
-        searchInput = document.createElement('input');
-        searchInput.type = 'text';
-        searchInput.id = 'search-input';
-        searchInput.placeholder = 'Search for a location...';
-        searchInput.className = 'search-input-field';
-        
-        searchInputContainer.appendChild(searchInput);
-        
-        // Initialize Places Autocomplete
-        let autocomplete = null;
-        let autocompleteInitialized = false;
-        
-        // Fix 3: Simple event-driven handler for pac-container styling (no MutationObserver, keep attribution)
-        function stylePacContainer() {
-            const pac = document.querySelector('.pac-container');
-            if (!pac || !searchInput) return;
-            
-            const rect = searchInput.getBoundingClientRect();
-            const isMobile = window.innerWidth <= 768;
-            
-            pac.style.width = rect.width + 'px';
-            pac.style.display = 'block';
-            pac.style.visibility = 'visible';
-            pac.style.pointerEvents = 'auto';
-            
-            // Position: mobile -> below input, desktop -> above input (dropup)
-            if (isMobile) {
-                pac.style.left = rect.left + 'px';
-                pac.style.top = (rect.bottom + window.scrollY + 6) + 'px';
-                pac.style.bottom = 'auto';
-            } else {
-                pac.style.left = rect.left + 'px';
-                pac.style.top = 'auto';
-                pac.style.bottom = (window.innerHeight - rect.top + 6) + 'px';
-            }
-        }
-        
-        function initAutocomplete() {
-            // Check if Places library is available
-            if (typeof google === 'undefined' || !google.maps || !google.maps.places || !google.maps.places.Autocomplete) {
-                console.warn('Places library not loaded yet');
-                searchInput.placeholder = 'Loading search...';
-                setTimeout(function() {
-                    if (typeof google !== 'undefined' && google.maps && google.maps.places && google.maps.places.Autocomplete) {
-                        initAutocomplete();
-                    } else {
-                        searchInput.placeholder = 'Search unavailable - please refresh';
-                        console.error('Places library failed to load');
-                    }
-                }, 500);
-                return;
-            }
-            
-            if (autocompleteInitialized) {
-                return; // Already initialized
-            }
-            
-            try {
-                searchInput.placeholder = 'Search for a location...';
-                
-                // Configure autocomplete - bind to input element
-                autocomplete = new google.maps.places.Autocomplete(searchInput, {
-                    types: ['geocode'],
-                    fields: ['geometry', 'name', 'formatted_address'],
-                    componentRestrictions: null // Allow all countries
-                });
-                
-                // Ensure input is properly bound to autocomplete and map bounds
-                try {
-                    autocomplete.bindTo('bounds', map);
-                } catch(e) {
-                    // bindTo may not be available in all API versions, ignore
-                    console.log('Autocomplete bindTo not available');
-                }
-                
-                // Fix 3: Call stylePacContainer on these events (no observers, keep attribution visible)
-                searchInput.addEventListener('focus', stylePacContainer);
-                searchInput.addEventListener('input', function() {
-                    stylePacContainer();
-                    // If value empty, hide results
-                    if (searchInput.value.trim() === '') {
-                        const pac = document.querySelector('.pac-container');
-                        if (pac) pac.style.display = 'none';
-                    }
-                });
-                window.addEventListener('resize', stylePacContainer);
-                
-                // Handle place selection
-                autocomplete.addListener('place_changed', function() {
-                    const place = autocomplete.getPlace();
-                    if (!place.geometry) {
-                        console.warn('No geometry available for place: ' + (place.name || 'unknown'));
-                        return;
-                    }
-                    
-                    const location = place.geometry.location;
-                    const lat = location.lat();
-                    const lng = location.lng();
-                    
-                    // Set pin to location
-                    displayCoordinates(new google.maps.LatLng(lat, lng));
-                    
-                    // Pan map to location
-                    map.panTo(location);
-                    
-                    // Close search input
-                    closeSearch();
-                });
-                
-                autocompleteInitialized = true;
-            } catch (e) {
-                console.error('Error initializing Places Autocomplete:', e);
-                searchInput.placeholder = 'Search error - please refresh';
-            }
-        }
-        
-        // Function to open search bar with smooth expansion
-        function openSearch() {
-            searchInputContainer.classList.add('search-expanded');
-            searchButton.classList.add('search-active');
-            initAutocomplete();
-            setTimeout(function() {
-                searchInput.focus();
-            }, 150);
-        }
-        
-        // Function to close search bar
-        function closeSearch() {
-            searchInputContainer.classList.remove('search-expanded');
-            searchButton.classList.remove('search-active');
-            searchInput.value = '';
-            searchButton.blur();
-            searchInput.blur();
-        }
-        
-        // Toggle search input on button click
-        searchButton.onclick = function(e) {
-            e.stopPropagation();
-            if (searchInputContainer.classList.contains('search-expanded')) {
-                closeSearch();
-            } else {
-                openSearch();
-            }
-        };
-        
-        // Close search input when clicking outside
-        document.addEventListener('click', function(e) {
-            if (!searchDiv.contains(e.target) && !document.querySelector('.pac-container')?.contains(e.target)) {
-                closeSearch();
-            }
-        });
-        
-        // Close search input on Escape key
-        searchInput.addEventListener('keydown', function(e) {
-            if (e.key === 'Escape') {
-                closeSearch();
-            }
-        });
-        
-        // Assemble search control
-        searchDiv.appendChild(searchButton);
-        searchDiv.appendChild(searchInputContainer);
-        
-        // Fix 4: Add search control to wrapper
-        controlsWrapper.appendChild(searchDiv);
-        
-        // Add wrapper to map
-        map.controls[google.maps.ControlPosition.BOTTOM_LEFT].push(controlsWrapper);
-        });
-    }
-    initSearchControl();
+    });
 })();
 
 // Custom fullscreen control (desktop only)
 (function() {
-    function initFullscreenControl() {
-        if (!map) {
-            setTimeout(initFullscreenControl, 100);
-            return;
-        }
-        // Wait for map to be ready
-        google.maps.event.addListenerOnce(map, 'idle', function() {
-        // Fix 4: Find existing control wrapper or create new one
-        let controlsWrapper = document.querySelector('.custom-control-wrapper');
-        if (!controlsWrapper) {
-            controlsWrapper = document.createElement('div');
-            controlsWrapper.className = 'custom-control-wrapper';
-            controlsWrapper.style.cssText = 'display: flex; gap: 8px; align-items: center; margin: 10px; position: absolute; left: 10px; bottom: 10px; z-index: 1000;';
-            map.controls[google.maps.ControlPosition.BOTTOM_LEFT].push(controlsWrapper);
-        }
+    // Wait for map to be ready
+    google.maps.event.addListenerOnce(map, 'idle', function() {
+        // Create controls container
+        const controlsContainer = document.createElement('div');
+        controlsContainer.id = 'custom-map-controls';
+        controlsContainer.className = 'custom-fullscreen-container';
         
         // Fullscreen button
         const fullscreenButton = document.createElement('button');
@@ -523,7 +194,6 @@ initMap();
         fullscreenButton.className = 'custom-fullscreen-button';
         fullscreenButton.innerHTML = '⛶';
         fullscreenButton.title = 'Toggle fullscreen';
-        fullscreenButton.style.cssText = 'width: 40px; height: 40px; display: inline-flex; align-items: center; justify-content: center; padding: 0; background-color: white; border: none; border-radius: 2px; box-shadow: 0 1px 4px rgba(0,0,0,0.3); cursor: pointer; font-size: 24px; color: #5B5B5B;';
         
         // Fullscreen functions
         function isFullscreenSupported() {
@@ -594,15 +264,39 @@ initMap();
             document.addEventListener(event, updateFullscreenIcon);
         });
         
-        // Fix 4: Add fullscreen button to existing wrapper
-        controlsWrapper.appendChild(fullscreenButton);
+        // Add fullscreen button
+        controlsContainer.appendChild(fullscreenButton);
+        
+        // Add to map container
+        const mapContainer = document.getElementById('map');
+        if (mapContainer) {
+            mapContainer.appendChild(controlsContainer);
+        }
         
         // Initialize fullscreen icon
         updateFullscreenIcon();
-        });
-    }
-    initFullscreenControl();
+    });
 })();
+
+
+//Define OSM map type pointing at the OpenStreetMap tile server
+map.mapTypes.set("OSM", new google.maps.ImageMapType({
+    getTileUrl: function(coord, zoom) {
+        // "Wrap" x (longitude) at 180th meridian properly
+        // NB: Don't touch coord.x: because coord param is by reference, and changing its x property breaks something in Google's lib
+        var tilesPerGlobe = 1 << zoom;
+        var x = coord.x % tilesPerGlobe;
+        if (x < 0) {
+            x = tilesPerGlobe+x;
+        }
+        // Wrap y (latitude) in a like manner if you want to enable vertical infinite scrolling
+
+        return "https://tile.openstreetmap.org/" + zoom + "/" + x + "/" + coord.y + ".png";
+    },
+    tileSize: new google.maps.Size(256, 256),
+    name: "OpenStreetMap",
+    maxZoom: 18
+}));
 
 // Functions for displaying things
 function displayCoordinates(pnt) {
