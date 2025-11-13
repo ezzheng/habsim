@@ -195,6 +195,15 @@
             opacity: 1;
         }
         
+        /* Mobile: ensure search bar has right padding and doesn't extend beyond map */
+        @media (max-width: 768px) {
+            .search-input-container.expanded {
+                /* Calculate: 100vw - left margin(10px) - map button(40px) - gap(8px) - search button(40px) - gap(8px) - right margin(10px) - extra right padding(10px) */
+                max-width: calc(100vw - 126px);
+                width: calc(100vw - 126px);
+            }
+        }
+        
         .search-input-field {
             width: 100%;
             padding: 8px 12px;
