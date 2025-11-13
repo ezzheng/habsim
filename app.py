@@ -81,6 +81,9 @@ from datetime import datetime, timezone
 from gefs import listdir_gefs, open_gefs
 import simulate
 import downloader
+from pathlib import Path
+import tempfile
+import json
 
 # ============================================================================
 # Helper Functions
@@ -229,7 +232,7 @@ def get_model_ids():
     return model_ids
 
 def update_progress(request_id, completed=None, ensemble_completed=None, montecarlo_completed=None):
-    """Update progress tracking atomically."""
+    """Update progress tracking atomically (both in-memory and file-based)."""
     with _progress_lock:
         if request_id in _progress_tracking:
             if completed is not None:
@@ -238,6 +241,8 @@ def update_progress(request_id, completed=None, ensemble_completed=None, monteca
                 _progress_tracking[request_id]['ensemble_completed'] = ensemble_completed
             if montecarlo_completed is not None:
                 _progress_tracking[request_id]['montecarlo_completed'] = montecarlo_completed
+            # Also update file-based cache for multi-worker access
+            _write_progress(request_id, _progress_tracking[request_id])
 
 
 def _is_authenticated():
@@ -265,6 +270,47 @@ def _record_worker_activity():
 
 _progress_tracking = {}
 _progress_lock = threading.Lock()
+
+# File-based progress cache for multi-worker support
+# Each worker can read/write progress to shared files
+_PROGRESS_CACHE_DIR = Path("/app/data/progress") if Path("/app/data").exists() else Path(tempfile.gettempdir()) / "habsim-progress"
+_PROGRESS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+def _get_progress_file(request_id):
+    """Get file path for progress tracking."""
+    return _PROGRESS_CACHE_DIR / f"{request_id}.json"
+
+def _read_progress(request_id):
+    """Read progress from file (shared across workers)."""
+    try:
+        progress_file = _get_progress_file(request_id)
+        if progress_file.exists():
+            with open(progress_file, 'r') as f:
+                return json.load(f)
+    except Exception as e:
+        print(f"[SERVER] Error reading progress file for {request_id}: {e}", flush=True)
+    return None
+
+def _write_progress(request_id, progress_data):
+    """Write progress to file (shared across workers)."""
+    try:
+        progress_file = _get_progress_file(request_id)
+        # Write atomically: write to temp file, then rename
+        temp_file = progress_file.with_suffix('.tmp')
+        with open(temp_file, 'w') as f:
+            json.dump(progress_data, f)
+        temp_file.replace(progress_file)
+    except Exception as e:
+        print(f"[SERVER] Error writing progress file for {request_id}: {e}", flush=True)
+
+def _delete_progress(request_id):
+    """Delete progress file."""
+    try:
+        progress_file = _get_progress_file(request_id)
+        if progress_file.exists():
+            progress_file.unlink()
+    except Exception as e:
+        print(f"[SERVER] Error deleting progress file for {request_id}: {e}", flush=True)
 
 def _start_cache_trim_thread():
     """Start cache trim thread early in each worker."""
@@ -790,15 +836,18 @@ def spaceshot():
     total_montecarlo = num_perturbations * len(model_ids)
     total_simulations = total_ensemble + total_montecarlo
     
+    progress_data = {
+        'completed': 0,
+        'total': total_simulations,
+        'ensemble_completed': 0,
+        'ensemble_total': total_ensemble,
+        'montecarlo_completed': 0,
+        'montecarlo_total': total_montecarlo
+    }
     with _progress_lock:
-        _progress_tracking[request_id] = {
-            'completed': 0,
-            'total': total_simulations,
-            'ensemble_completed': 0,
-            'ensemble_total': total_ensemble,
-            'montecarlo_completed': 0,
-            'montecarlo_total': total_montecarlo
-        }
+        _progress_tracking[request_id] = progress_data.copy()
+    # Also write to file for multi-worker access
+    _write_progress(request_id, progress_data)
     print(f"[SERVER] Created progress tracking for request_id: {request_id}", flush=True)
     
     _log(f"Ensemble run: {len(model_ids)} models + {num_perturbations}×{len(model_ids)} Monte Carlo", 'info', worker_pid)
@@ -962,12 +1011,14 @@ def spaceshot():
         with _progress_lock:
             if request_id in _progress_tracking:
                 _progress_tracking[request_id]['completed'] = _progress_tracking[request_id]['total']
+                _write_progress(request_id, _progress_tracking[request_id])
         
         def cleanup_progress():
             time.sleep(30)
             with _progress_lock:
                 if request_id in _progress_tracking:
                     del _progress_tracking[request_id]
+            _delete_progress(request_id)
         
         cleanup_thread = threading.Thread(target=cleanup_progress, daemon=True)
         cleanup_thread.start()
@@ -985,8 +1036,15 @@ def get_progress():
     if not request_id:
         return jsonify({'error': 'request_id required'}), 400
     
+    # Check both in-memory and file-based cache
     with _progress_lock:
         progress = _progress_tracking.get(request_id)
+    
+    if progress is None:
+        progress = _read_progress(request_id)
+        if progress:
+            with _progress_lock:
+                _progress_tracking[request_id] = progress
     
     if progress is None:
         return jsonify({'error': 'Progress not found or completed'}), 404
@@ -1023,8 +1081,17 @@ def progress_stream():
         max_wait = 20  # 20 * 0.1s = 2 seconds
         
         while True:
+            # Check both in-memory (this worker) and file-based (all workers) progress
             with _progress_lock:
                 progress = _progress_tracking.get(request_id)
+            
+            # If not in this worker's memory, check file-based cache (other workers)
+            if progress is None:
+                progress = _read_progress(request_id)
+                # If found in file, also add to this worker's memory for faster access
+                if progress:
+                    with _progress_lock:
+                        _progress_tracking[request_id] = progress
             
             if progress is None:
                 # Progress not found - wait a bit if we haven't waited too long yet
@@ -1037,10 +1104,21 @@ def progress_stream():
                 # After waiting, if still not found, send error and exit
                 with _progress_lock:
                     available_ids = list(_progress_tracking.keys())
+                # Also check file-based cache
+                file_ids = [f.stem for f in _PROGRESS_CACHE_DIR.glob("*.json") if f.suffix == '.json']
                 print(f"[SERVER] SSE error: Progress not found for request_id: {request_id} after {max_wait * 0.1}s", flush=True)
-                print(f"[SERVER] Available request_ids: {available_ids}", flush=True)
+                print(f"[SERVER] Available in-memory request_ids: {available_ids}", flush=True)
+                print(f"[SERVER] Available file-based request_ids: {file_ids}", flush=True)
                 yield f"data: {json.dumps({'error': 'Progress not found or completed'})}\n\n"
                 break
+            
+            # Re-read from file to get latest updates from other workers
+            file_progress = _read_progress(request_id)
+            if file_progress:
+                progress = file_progress
+                # Update in-memory cache
+                with _progress_lock:
+                    _progress_tracking[request_id] = progress
             
             current_completed = progress['completed']
             total = progress['total']
