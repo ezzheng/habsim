@@ -155,10 +155,10 @@ function setMode(mode) {
     };
     
     if (mode === "STANDARD") {
-        geqtime.style.display = "none";
-        gcoeff.style.display = "none";
-        gdur.style.display = "none";
-        gstep.style.display = "none";
+        if (geqtime) geqtime.style.display = "none";
+        if (gcoeff) gcoeff.style.display = "none";
+        if (gdur) gdur.style.display = "none";
+        if (gstep) gstep.style.display = "none";
         if (gtimer) gtimer.style.display = "flex";
         if (eqbtn) eqbtn.style.visibility = "visible";
         setDefaultIfEmpty('asc', 4);
@@ -166,10 +166,10 @@ function setMode(mode) {
         setDefaultIfEmpty('desc', 8);
         if (remain) remain.style.visibility = "visible";
     } else if (mode === "ZPB") {
-        geqtime.style.display = "flex";
-        gcoeff.style.display = "none";
-        gdur.style.display = "none";
-        gstep.style.display = "none";
+        if (geqtime) geqtime.style.display = "flex";
+        if (gcoeff) gcoeff.style.display = "none";
+        if (gdur) gdur.style.display = "none";
+        if (gstep) gstep.style.display = "none";
         if (gtimer) gtimer.style.display = "flex";
         if (eqbtn) eqbtn.style.visibility = "visible";
         setDefaultIfEmpty('asc', 4);
@@ -178,10 +178,10 @@ function setMode(mode) {
         setDefaultIfEmpty('eqtime', 1);
         if (remain) remain.style.visibility = "visible";
     } else { // FLOAT
-        geqtime.style.display = "none";
-        gcoeff.style.display = "flex";
-        gdur.style.display = "flex";
-        gstep.style.display = "flex";
+        if (geqtime) geqtime.style.display = "none";
+        if (gcoeff) gcoeff.style.display = "flex";
+        if (gdur) gdur.style.display = "flex";
+        if (gstep) gstep.style.display = "flex";
         if (gtimer) gtimer.style.display = "none";
         if (eqbtn) eqbtn.style.visibility = "hidden";
         setDefaultIfEmpty('asc', 4);

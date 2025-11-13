@@ -271,8 +271,6 @@ def _record_worker_activity():
 _progress_tracking = {}
 _progress_lock = threading.Lock()
 
-# File-based progress cache for multi-worker support
-# Each worker can read/write progress to shared files
 _PROGRESS_CACHE_DIR = Path("/app/data/progress") if Path("/app/data").exists() else Path(tempfile.gettempdir()) / "habsim-progress"
 _PROGRESS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -288,20 +286,19 @@ def _read_progress(request_id):
             with open(progress_file, 'r') as f:
                 return json.load(f)
     except Exception as e:
-        print(f"[SERVER] Error reading progress file for {request_id}: {e}", flush=True)
+        print(f"Error reading progress file for {request_id}: {e}", flush=True)
     return None
 
 def _write_progress(request_id, progress_data):
     """Write progress to file (shared across workers)."""
     try:
         progress_file = _get_progress_file(request_id)
-        # Write atomically: write to temp file, then rename
         temp_file = progress_file.with_suffix('.tmp')
         with open(temp_file, 'w') as f:
             json.dump(progress_data, f)
         temp_file.replace(progress_file)
     except Exception as e:
-        print(f"[SERVER] Error writing progress file for {request_id}: {e}", flush=True)
+        print(f"Error writing progress file for {request_id}: {e}", flush=True)
 
 def _delete_progress(request_id):
     """Delete progress file."""
@@ -310,7 +307,7 @@ def _delete_progress(request_id):
         if progress_file.exists():
             progress_file.unlink()
     except Exception as e:
-        print(f"[SERVER] Error deleting progress file for {request_id}: {e}", flush=True)
+        print(f"Error deleting progress file for {request_id}: {e}", flush=True)
 
 def _start_cache_trim_thread():
     """Start cache trim thread early in each worker."""
@@ -821,13 +818,7 @@ def spaceshot():
     base_coeff = get_arg(args, 'coeff', default=1.0)
     num_perturbations = get_arg(args, 'num_perturbations', type_func=int, default=20)
     
-    # Generate request ID using MD5
     request_id = generate_request_id(args, base_coeff)
-    
-    # Debug: Log the request_id and key for comparison with client
-    request_key = f"{args['timestamp']}_{args['lat']}_{args['lon']}_{args['alt']}_{args['equil']}_{args['eqtime']}_{args['asc']}_{args['desc']}_{base_coeff}"
-    print(f"[SERVER] Generated request_id: {request_id} from key: {request_key}", flush=True)
-    
     activate_ensemble_mode(worker_pid)
     model_ids = get_model_ids()
     
@@ -846,9 +837,7 @@ def spaceshot():
     }
     with _progress_lock:
         _progress_tracking[request_id] = progress_data.copy()
-    # Also write to file for multi-worker access
     _write_progress(request_id, progress_data)
-    print(f"[SERVER] Created progress tracking for request_id: {request_id}", flush=True)
     
     _log(f"Ensemble run: {len(model_ids)} models + {num_perturbations}×{len(model_ids)} Monte Carlo", 'info', worker_pid)
     
@@ -1071,54 +1060,34 @@ def progress_stream():
     if not request_id:
         return jsonify({'error': 'request_id required'}), 400
     
-    print(f"[SERVER] SSE connection requested for request_id: {request_id}", flush=True)
-    
     def generate():
         last_completed = -1
         initial_sent = False
-        # Wait up to 2 seconds for progress tracking to be created (handles race condition)
         wait_count = 0
-        max_wait = 20  # 20 * 0.1s = 2 seconds
+        max_wait = 20
         
         while True:
-            # Check both in-memory (this worker) and file-based (all workers) progress
             with _progress_lock:
                 progress = _progress_tracking.get(request_id)
             
-            # If not in this worker's memory, check file-based cache (other workers)
             if progress is None:
                 progress = _read_progress(request_id)
-                # If found in file, also add to this worker's memory for faster access
                 if progress:
                     with _progress_lock:
                         _progress_tracking[request_id] = progress
-                    if wait_count == 0:  # Log only on first successful read
-                        print(f"[SERVER] SSE found progress in file cache for request_id: {request_id}", flush=True)
             
             if progress is None:
-                # Progress not found - wait a bit if we haven't waited too long yet
                 if wait_count < max_wait:
                     wait_count += 1
-                    if wait_count % 5 == 0:  # Log every 0.5 seconds
-                        print(f"[SERVER] SSE waiting for request_id: {request_id} (attempt {wait_count}/{max_wait})", flush=True)
                     time.sleep(0.1)
                     continue
-                # After waiting, if still not found, send error and exit
-                with _progress_lock:
-                    available_ids = list(_progress_tracking.keys())
-                # Also check file-based cache
-                file_ids = [f.stem for f in _PROGRESS_CACHE_DIR.glob("*.json") if f.suffix == '.json']
-                print(f"[SERVER] SSE error: Progress not found for request_id: {request_id} after {max_wait * 0.1}s", flush=True)
-                print(f"[SERVER] Available in-memory request_ids: {available_ids}", flush=True)
-                print(f"[SERVER] Available file-based request_ids: {file_ids}", flush=True)
+                print(f"SSE: Progress not found for request_id: {request_id}", flush=True)
                 yield f"data: {json.dumps({'error': 'Progress not found or completed'})}\n\n"
                 break
             
-            # Re-read from file to get latest updates from other workers
             file_progress = _read_progress(request_id)
             if file_progress:
                 progress = file_progress
-                # Update in-memory cache
                 with _progress_lock:
                     _progress_tracking[request_id] = progress
             
@@ -1126,7 +1095,6 @@ def progress_stream():
             total = progress['total']
             percentage = round((current_completed / total) * 100) if total > 0 else 0
             
-            # Send update if progress changed OR if this is the first message
             if current_completed != last_completed or not initial_sent:
                 data = {
                     'completed': current_completed,
@@ -1137,16 +1105,13 @@ def progress_stream():
                     'montecarlo_total': progress['montecarlo_total'],
                     'percentage': percentage
                 }
-                if not initial_sent:
-                    print(f"[SERVER] SSE sending initial progress: {percentage}% ({current_completed}/{total}) for request_id: {request_id}", flush=True)
                 yield f"data: {json.dumps(data)}\n\n"
                 last_completed = current_completed
                 initial_sent = True
                 if current_completed >= total:
-                    print(f"[SERVER] SSE progress complete (100%), closing stream for request_id: {request_id}", flush=True)
                     break
             else:
-                time.sleep(0.5)  # Only sleep if no progress changed
+                time.sleep(0.5)
     
     return Response(stream_with_context(generate()), mimetype='text/event-stream', headers={
         'Cache-Control': 'no-cache',
