@@ -1092,6 +1092,8 @@ def progress_stream():
                 if progress:
                     with _progress_lock:
                         _progress_tracking[request_id] = progress
+                    if wait_count == 0:  # Log only on first successful read
+                        print(f"[SERVER] SSE found progress in file cache for request_id: {request_id}", flush=True)
             
             if progress is None:
                 # Progress not found - wait a bit if we haven't waited too long yet
@@ -1135,10 +1137,13 @@ def progress_stream():
                     'montecarlo_total': progress['montecarlo_total'],
                     'percentage': percentage
                 }
+                if not initial_sent:
+                    print(f"[SERVER] SSE sending initial progress: {percentage}% ({current_completed}/{total}) for request_id: {request_id}", flush=True)
                 yield f"data: {json.dumps(data)}\n\n"
                 last_completed = current_completed
                 initial_sent = True
                 if current_completed >= total:
+                    print(f"[SERVER] SSE progress complete (100%), closing stream for request_id: {request_id}", flush=True)
                     break
             else:
                 time.sleep(0.5)  # Only sleep if no progress changed
