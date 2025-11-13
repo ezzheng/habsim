@@ -19,13 +19,17 @@ $(document).ready(function() {
 var waypointsToggle = false;
 $(function() {
     const waypointBtn = $('#waypoint-toggle');
-    waypointBtn.on('click', function() {
+    waypointBtn.on('click', function(e) {
         waypointsToggle = !waypointsToggle;
         waypointBtn.toggleClass('on', waypointsToggle);
         if (waypointsToggle) {
             showWaypoints();
         } else {
             clearWaypoints();
+        }
+        // Blur button to clear active state on mobile
+        if (e.target) {
+            e.target.blur();
         }
     });
     waypointBtn.toggleClass('on', waypointsToggle);

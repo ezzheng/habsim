@@ -384,14 +384,20 @@
             font-weight: 500;
             transition: all 0.2s;
             box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+            -webkit-tap-highlight-color: transparent;
+            touch-action: manipulation;
         }
         .waypoint-toggle:hover { 
             background: var(--soft);
             box-shadow: 0 2px 6px rgba(0,0,0,0.1);
         }
-        .waypoint-toggle:focus,
+        .waypoint-toggle:focus {
+            outline: none;
+        }
         .waypoint-toggle:active {
             outline: none;
+            background: var(--bg) !important;
+            border-color: var(--line) !important;
         }
         .waypoint-toggle.on {
             background: var(--bg);
@@ -401,10 +407,13 @@
         .waypoint-toggle.on:hover { 
             background: rgba(16, 185, 129, 0.05);
         }
-        .waypoint-toggle.on:focus,
+        .waypoint-toggle.on:focus {
+            outline: none;
+        }
         .waypoint-toggle.on:active {
-            background: var(--bg);
-            border-color: #10b981;
+            outline: none;
+            background: var(--bg) !important;
+            border-color: #10b981 !important;
         }
         /* Mode dropdown styles */
         .mode-dropdown {
@@ -561,15 +570,21 @@
             font-weight: 500;
             transition: all 0.2s;
             box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+            -webkit-tap-highlight-color: transparent;
+            touch-action: manipulation;
         }
         .btn-ghost:hover{ 
             background: var(--soft); 
             color: var(--fg);
             box-shadow: 0 2px 6px rgba(0,0,0,0.1);
         }
-        .btn-ghost:focus,
+        .btn-ghost:focus {
+            outline: none;
+        }
         .btn-ghost:active {
             outline: none;
+            background: var(--bg) !important;
+            border-color: var(--line) !important;
         }
         .btn-ghost.active {
             background: var(--bg);
@@ -579,10 +594,13 @@
         .btn-ghost.active:hover {
             background: rgba(16, 185, 129, 0.05);
         }
-        .btn-ghost.active:focus,
+        .btn-ghost.active:focus {
+            outline: none;
+        }
         .btn-ghost.active:active {
-            background: var(--bg);
-            border-color: #10b981;
+            outline: none;
+            background: var(--bg) !important;
+            border-color: #10b981 !important;
         }
         .toggle {
             border: solid 1px #a2a2a2;
@@ -1409,7 +1427,7 @@
             
             const collapseBtn = document.getElementById('collapse-toggle');
             const panel = document.getElementById('param-panel');
-            collapseBtn.addEventListener('click', () => {
+            collapseBtn.addEventListener('click', (e) => {
                 if (panel.classList.contains('collapsed')) {
                     panel.classList.remove('collapsed');
                     collapseBtn.classList.add('active');
@@ -1417,6 +1435,8 @@
                     panel.classList.add('collapsed');
                     collapseBtn.classList.remove('active');
                 }
+                // Blur button to clear active state on mobile
+                e.target.blur();
                 // No layout adjustment needed - panel is floating overlay
             });
             
