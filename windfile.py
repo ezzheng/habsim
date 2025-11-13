@@ -12,6 +12,9 @@ from numpy.lib.format import open_memmap
 
 _MEMMAP_LOCKS: dict[Path, threading.Lock] = {}
 _MEMMAP_LOCKS_LOCK = threading.Lock()
+# Per-file locks for entire file loading (prevents zipfile contention)
+_FILE_LOAD_LOCKS: dict[Path, threading.Lock] = {}
+_FILE_LOAD_LOCKS_LOCK = threading.Lock()
 
 def _normalize_path(path: Union[BytesIO, str]) -> Union[BytesIO, Path]:
     if isinstance(path, (str, Path)):
@@ -24,6 +27,26 @@ def _get_memmap_lock(path: Path) -> threading.Lock:
         if lock is None:
             lock = threading.Lock()
             _MEMMAP_LOCKS[path] = lock
+        return lock
+
+def _get_file_load_lock(path: Union[Path, BytesIO]) -> threading.Lock:
+    """Get per-file lock for entire file loading process (prevents zipfile contention)"""
+    # BytesIO objects don't need locking (they're already in memory)
+    if isinstance(path, BytesIO):
+        # Return a no-op lock for BytesIO (no contention possible)
+        class NoOpLock:
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                pass
+        return NoOpLock()
+    
+    # For Path objects, use per-file locking
+    with _FILE_LOAD_LOCKS_LOCK:
+        lock = _FILE_LOAD_LOCKS.get(path)
+        if lock is None:
+            lock = threading.Lock()
+            _FILE_LOAD_LOCKS[path] = lock
         return lock
 
 # Cache altitude-to-pressure conversions (common altitudes in HAB simulations)
@@ -48,26 +71,33 @@ class WindFile:
                     Default: False (memory-efficient mode)
         """
         normalized_path = _normalize_path(path)
-        npz = np.load(normalized_path)
+        
+        # CRITICAL: Lock entire file loading process to prevent zipfile contention
+        # Multiple threads trying to read from the same .npz file simultaneously causes deadlocks
+        file_lock = _get_file_load_lock(normalized_path)
+        with file_lock:
+            npz = np.load(normalized_path)
 
-        try:
-            self.time = float(npz['timestamp'][()])
-            self.levels = np.array(npz['levels'], copy=True)
-            self.interval = float(npz['interval'][()])
+            try:
+                self.time = float(npz['timestamp'][()])
+                self.levels = np.array(npz['levels'], copy=True)
+                self.interval = float(npz['interval'][()])
 
-            if isinstance(normalized_path, Path) and normalized_path.suffix == '.npz':
-                if preload:
-                    # Pre-load full array into RAM for faster access (ensemble mode)
-                    # This makes simulations CPU-bound instead of I/O-bound
-                    self.data = np.array(npz['data'], copy=True)
+                if isinstance(normalized_path, Path) and normalized_path.suffix == '.npz':
+                    if preload:
+                        # Pre-load full array into RAM for faster access (ensemble mode)
+                        # This makes simulations CPU-bound instead of I/O-bound
+                        self.data = np.array(npz['data'], copy=True)
+                    else:
+                        # Use memory-mapping for memory efficiency (normal mode)
+                        # Note: _load_memmap_data has its own lock for extraction, but we need
+                        # this outer lock to prevent concurrent npz['data'] access
+                        self.data = self._load_memmap_data(npz, normalized_path)
                 else:
-                    # Use memory-mapping for memory efficiency (normal mode)
-                    self.data = self._load_memmap_data(npz, normalized_path)
-            else:
-                # BytesIO path - always load into RAM
-                self.data = np.array(npz['data'], copy=True)
-        finally:
-            npz.close()
+                    # BytesIO path - always load into RAM
+                    self.data = np.array(npz['data'], copy=True)
+            finally:
+                npz.close()
 
         # Validate that data was loaded successfully
         if self.data is None:

@@ -590,19 +590,30 @@ def _trim_cache_to_normal():
         ensemble_exceeded_max = _ensemble_mode_started > 0 and (now - _ensemble_mode_started) >= MAX_ENSEMBLE_DURATION
         
         if ensemble_expired or ensemble_exceeded_max:
-            _current_max_cache = MAX_SIMULATOR_CACHE_NORMAL
-            if ensemble_exceeded_max:
-                _ensemble_mode_until = 0  # Force expiration even if still being extended
-                _ensemble_mode_started = 0
+            # Check if any models are currently in use before resetting ensemble mode
+            with _in_use_lock:
+                models_in_use = _in_use_models.copy()
+            
+            if models_in_use:
+                # Models are in use - don't reset ensemble mode yet to avoid cleanup during use
                 worker_pid = os.getpid()
-                print(f"[WORKER {worker_pid}] Ensemble mode exceeded max duration (5 min): forcing cache trim to normal", flush=True)
-                logging.info("Ensemble mode exceeded max duration (5 min): forcing cache trim to normal (5 simulators)")
+                print(f"[WORKER {worker_pid}] Ensemble mode expired/exceeded but {len(models_in_use)} models in use, deferring reset", flush=True)
+                logging.info(f"Ensemble mode expired/exceeded but {len(models_in_use)} models in use: {models_in_use}, deferring cache limit reset")
             else:
-                _ensemble_mode_until = 0
-                _ensemble_mode_started = 0
-                worker_pid = os.getpid()
-                print(f"[WORKER {worker_pid}] Ensemble mode expired: cache limit reset to normal", flush=True)
-                logging.info("Ensemble mode expired: cache limit reset to normal (5 simulators)")
+                # No models in use - safe to reset ensemble mode
+                _current_max_cache = MAX_SIMULATOR_CACHE_NORMAL
+                if ensemble_exceeded_max:
+                    _ensemble_mode_until = 0  # Force expiration even if still being extended
+                    _ensemble_mode_started = 0
+                    worker_pid = os.getpid()
+                    print(f"[WORKER {worker_pid}] Ensemble mode exceeded max duration (5 min): forcing cache trim to normal", flush=True)
+                    logging.info("Ensemble mode exceeded max duration (5 min): forcing cache trim to normal (5 simulators)")
+                else:
+                    _ensemble_mode_until = 0
+                    _ensemble_mode_started = 0
+                    worker_pid = os.getpid()
+                    print(f"[WORKER {worker_pid}] Ensemble mode expired: cache limit reset to normal", flush=True)
+                    logging.info("Ensemble mode expired: cache limit reset to normal (5 simulators)")
         
         # If cache is too large, trim to normal size keeping most recently used
         # Also trim if cache is significantly larger than current limit (memory leak protection)
@@ -759,23 +770,33 @@ def _periodic_cache_trim():
                 logging.info(f"Cache trim check: size={cache_size}, max={current_max}, ensemble_expired={ensemble_expired}, exceeded_max={ensemble_exceeded_max}")
             
             if (ensemble_expired or ensemble_exceeded_max) and cache_size > MAX_SIMULATOR_CACHE_NORMAL:
-                # Ensemble mode expired but cache still large - trim immediately and aggressively
-                worker_pid = os.getpid()
-                rss_before = _get_rss_memory_mb()
-                if rss_before is not None:
-                    print(f"[WORKER {worker_pid}] Periodic trim: ensemble expired, trimming cache from {cache_size} to {MAX_SIMULATOR_CACHE_NORMAL} (RSS: {rss_before:.1f} MB)", flush=True)
-                    logging.info(f"Ensemble mode expired/exceeded, trimming cache from {cache_size} to {MAX_SIMULATOR_CACHE_NORMAL} (RSS: {rss_before:.1f} MB)")
+                # Check if any models are currently in use before trimming
+                with _in_use_lock:
+                    models_in_use = _in_use_models.copy()
+                
+                if models_in_use:
+                    # Models are in use - skip trimming to avoid cleaning up active simulators
+                    worker_pid = os.getpid()
+                    print(f"[WORKER {worker_pid}] Periodic trim: ensemble expired but {len(models_in_use)} models in use, skipping trim", flush=True)
+                    logging.info(f"Ensemble mode expired/exceeded but {len(models_in_use)} models in use: {models_in_use}, skipping trim to avoid cleanup during use")
                 else:
-                    print(f"[WORKER {worker_pid}] Periodic trim: ensemble expired, trimming cache from {cache_size} to {MAX_SIMULATOR_CACHE_NORMAL}", flush=True)
-                    logging.info(f"Ensemble mode expired/exceeded, trimming cache from {cache_size} to {MAX_SIMULATOR_CACHE_NORMAL}")
-                
-                _trim_cache_to_normal()
-                
-                # Wait for delayed cleanup to process (simulators are cleaned up after _CLEANUP_DELAY)
-                time.sleep(_CLEANUP_DELAY + 1)  # Wait slightly longer than cleanup delay
-                
-                # Process cleanup queue to actually free memory
-                _process_cleanup_queue()
+                    # No models in use - safe to trim
+                    worker_pid = os.getpid()
+                    rss_before = _get_rss_memory_mb()
+                    if rss_before is not None:
+                        print(f"[WORKER {worker_pid}] Periodic trim: ensemble expired, trimming cache from {cache_size} to {MAX_SIMULATOR_CACHE_NORMAL} (RSS: {rss_before:.1f} MB)", flush=True)
+                        logging.info(f"Ensemble mode expired/exceeded, trimming cache from {cache_size} to {MAX_SIMULATOR_CACHE_NORMAL} (RSS: {rss_before:.1f} MB)")
+                    else:
+                        print(f"[WORKER {worker_pid}] Periodic trim: ensemble expired, trimming cache from {cache_size} to {MAX_SIMULATOR_CACHE_NORMAL}", flush=True)
+                        logging.info(f"Ensemble mode expired/exceeded, trimming cache from {cache_size} to {MAX_SIMULATOR_CACHE_NORMAL}")
+                    
+                    _trim_cache_to_normal()
+                    
+                    # Wait for delayed cleanup to process (simulators are cleaned up after _CLEANUP_DELAY)
+                    time.sleep(_CLEANUP_DELAY + 1)  # Wait slightly longer than cleanup delay
+                    
+                    # Process cleanup queue to actually free memory
+                    _process_cleanup_queue()
                 
                 # Force additional GC passes to ensure memory is released
                 for _ in range(3):
