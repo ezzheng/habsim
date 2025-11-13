@@ -1616,6 +1616,11 @@ async function simulate() {
                 const requestId = `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
                 console.log(`[${requestId}] Using spaceshot endpoint (with Monte Carlo):`, spaceshotUrl);
                 
+                // For ensemble mode, immediately show 0% instead of "Simulating…"
+                if (simBtn) {
+                    simBtn.textContent = '0%';
+                }
+                
                 // Generate request_id on client side using MD5 (matching server's algorithm)
                 // Server uses: hashlib.md5(request_key.encode()).hexdigest()[:16]
                 // where request_key = f"{timestamp}_{lat}_{lon}_{alt}_${equil}_{eqtime}_{asc}_{desc}_{coeff}"
@@ -1661,6 +1666,11 @@ async function simulate() {
                     
                     try {
                         progressEventSource = new EventSource(sseUrl);
+                        
+                        // Set initial 0% immediately when SSE connection opens
+                        if (buttonRef) {
+                            buttonRef.textContent = '0%';
+                        }
                         
                         progressEventSource.onmessage = function(event) {
                             try {
