@@ -230,9 +230,12 @@ google.maps.event.addListener(map, 'click', function (event) {
                                 pacContainer.style.transform = 'none';
                             } else {
                                 // Desktop: dropdown appears above input (dropup)
-                                pacContainer.style.top = 'auto';
-                                pacContainer.style.bottom = (window.innerHeight - inputRect.top + window.scrollY + 5) + 'px';
-                                pacContainer.style.transform = 'translateY(100%)';
+                                // Calculate distance from top of viewport to top of input
+                                const distanceFromTop = inputRect.top + window.scrollY;
+                                // Position dropdown above input
+                                pacContainer.style.top = (distanceFromTop - 5) + 'px';
+                                pacContainer.style.bottom = 'auto';
+                                pacContainer.style.transform = 'translateY(-100%)';
                             }
                             pacContainer.style.left = inputRect.left + 'px';
                             pacContainer.style.width = inputRect.width + 'px';
