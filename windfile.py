@@ -276,7 +276,7 @@ class WindFile:
         if lon < 0:
             lon = 360 + lon
 
-        if isinstance(time, datetime.datetime):
+        if isinstance(time, datetime):
             time = time.timestamp()
         
         # Use pre-computed time bound
