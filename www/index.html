@@ -75,17 +75,18 @@
         
         /* Desktop: bottom-left positioning */
         .map-controls-container {
-            bottom: 0;
-            left: 0;
-            top: auto;
+            bottom: 0 !important;
+            left: 0 !important;
+            top: auto !important;
         }
         
-        /* Mobile: top-left positioning - directly under top bar */
+        /* Mobile: top-left positioning - directly under top bar
+           Positioned at top of map container, which sits below the fixed top bar */
         @media (max-width: 768px) {
             .map-controls-container {
-                bottom: auto;
-                top: 0;
-                left: 0;
+                bottom: auto !important;
+                top: 0 !important;
+                left: 0 !important;
             }
         }
         
