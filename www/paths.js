@@ -237,7 +237,7 @@ function showWaypoints() {
                         var roundedLon = isNaN(lon) ? allpaths[index][point][2] : lon.toFixed(5);
                         
                         var infowindow = new google.maps.InfoWindow({
-                            content: '<div style="font-family: -apple-system, BlinkMacSystemFont, \'Segoe UI\', Roboto, \'Helvetica Neue\', Arial, sans-serif; padding: 4px 6px; line-height: 1.5;">' +
+                            content: '<div style="font-family: -apple-system, BlinkMacSystemFont, \'Segoe UI\', Roboto, \'Helvetica Neue\', Arial, sans-serif; padding: 4px 6px; line-height: 1.5; color: #000000;">' +
                                      '<div style="margin-bottom: 4px;"><strong style="font-weight: 600;">Wayp. Lat:</strong> ' + roundedLat + '°</div>' +
                                      '<div style="margin-bottom: 4px;"><strong style="font-weight: 600;">Wayp. Lon:</strong> ' + roundedLon + '°</div>' +
                                      '<div style="margin-bottom: 4px;"><strong style="font-weight: 600;">Wayp. Altitude:</strong> ' + roundedAltitude + ' m</div>' +
@@ -1388,11 +1388,10 @@ async function simulate() {
     window.__originalButtonText = originalButtonText;
     
     if (simBtn) {
-        simBtn.disabled = true; // Keep disabled to prevent double-clicks
+        simBtn.disabled = false; // Allow clicking to cancel
         simBtn.classList.add('loading');
-        simBtn.textContent = 'Simulating…';
-        // Prevent any further clicks during simulation
-        simBtn.style.pointerEvents = 'none';
+        // Keep button clickable - clicking will call simulate() which detects running state and aborts
+        // Don't set pointer-events: none - allow clicks to cancel
     }
     if (spinner) { spinner.classList.add('active'); }
     try {
@@ -1877,7 +1876,7 @@ async function simulate() {
         if (simBtnFinal) {
             simBtnFinal.disabled = false;
             simBtnFinal.classList.remove('loading');
-            simBtnFinal.style.pointerEvents = 'auto';
+            // onclick handler from HTML remains (calls simulate())
             // Only restore original text if not in progress mode
             // This prevents overwriting progress percentage during ensemble simulations
             if (!window.__inProgressMode) {
