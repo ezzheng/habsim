@@ -84,10 +84,8 @@ The system is optimized for high-concurrency ensemble workloads with intelligent
 **Endpoints**:
 - `/sim/singlezpb`: Single model simulation
 - `/sim/spaceshot`: Ensemble + Monte Carlo simulation
-- `/sim/progress`: Polling progress endpoint
 - `/sim/progress-stream`: Server-Sent Events (SSE) progress stream
 - `/sim/elev`: Elevation lookup
-- `/sim/wind`, `/sim/windensemble`: Wind data lookup
 - `/sim/models`, `/sim/status`, `/sim/cache-status`: Status endpoints
 - `/login`, `/logout`: Authentication
 

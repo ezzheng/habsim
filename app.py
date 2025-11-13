@@ -3,8 +3,8 @@ Flask WSGI application serving REST API and static assets for HABSIM.
 
 Provides endpoints for:
 - Single and ensemble trajectory simulations (/sim/singlezpb, /sim/spaceshot)
-- Real-time progress tracking (/sim/progress, /sim/progress-stream)
-- Elevation and wind data lookups (/sim/elev, /sim/wind, /sim/windensemble)
+- Real-time progress tracking (/sim/progress-stream via SSE)
+- Elevation data lookup (/sim/elev)
 - Cache and model status (/sim/status, /sim/models, /sim/cache-status)
 - Authentication (login/logout)
 
@@ -118,8 +118,11 @@ def parse_datetime(args):
     ).replace(tzinfo=timezone.utc)
 
 def generate_request_id(args, base_coeff):
-    """Generate unique request ID using MD5 hash."""
-    request_key = f"{args['timestamp']}_{args['lat']}_{args['lon']}_{args['alt']}_{args['equil']}_{args['eqtime']}_{args['asc']}_{args['desc']}_{base_coeff}"
+    """Generate unique request ID using MD5 hash.
+    Ensures base_coeff is formatted consistently (1.0 not 1) to match client."""
+    # Format base_coeff to ensure consistent string representation (1.0 not 1)
+    base_coeff_str = f"{base_coeff:.1f}" if isinstance(base_coeff, float) else str(base_coeff)
+    request_key = f"{args['timestamp']}_{args['lat']}_{args['lon']}_{args['alt']}_{args['equil']}_{args['eqtime']}_{args['asc']}_{args['desc']}_{base_coeff_str}"
     return hashlib.md5(request_key.encode()).hexdigest()[:16]
 
 def _ensure_ensemble_optimizations(worker_pid):
@@ -807,10 +810,12 @@ def spaceshot():
     num_perturbations = get_arg(args, 'num_perturbations', type_func=int, default=20)
     
     request_id = generate_request_id(args, base_coeff)
-    _ensure_ensemble_optimizations(worker_pid)
-    model_ids = get_model_ids()
     
-    # Initialize progress tracking
+    # CRITICAL: Initialize progress tracking IMMEDIATELY before any other processing
+    # This ensures SSE connections can find progress even if they connect early
+    _log(f"Ensemble request_id: {request_id}", 'info', worker_pid)
+    
+    model_ids = get_model_ids()
     total_ensemble = len(model_ids)
     total_montecarlo = num_perturbations * len(model_ids)
     total_simulations = total_ensemble + total_montecarlo
@@ -827,6 +832,8 @@ def spaceshot():
     with _progress_lock:
         _progress_tracking[request_id] = progress_data.copy()
     _write_progress(request_id, progress_data)
+    
+    _ensure_ensemble_optimizations(worker_pid)
     
     _log(f"Ensemble run: {len(model_ids)} models + {num_perturbations}×{len(model_ids)} Monte Carlo", 'info', worker_pid)
     
@@ -1013,40 +1020,6 @@ def spaceshot():
         'request_id': request_id
     })
 
-@app.route('/sim/progress')
-def get_progress():
-    """Get progress for a running simulation (polling endpoint)"""
-    request_id = request.args.get('request_id')
-    if not request_id:
-        return jsonify({'error': 'request_id required'}), 400
-    
-    # Check both in-memory and file-based cache
-    with _progress_lock:
-        progress = _progress_tracking.get(request_id)
-    
-    if progress is None:
-        progress = _read_progress(request_id)
-        if progress:
-            with _progress_lock:
-                _progress_tracking[request_id] = progress
-    
-    if progress is None:
-        return jsonify({'error': 'Progress not found or completed'}), 404
-    
-    # Calculate percentage with integer rounding for cleaner display
-    percentage = round((progress['completed'] / progress['total']) * 100) if progress['total'] > 0 else 0
-    
-    return jsonify({
-        'completed': progress['completed'],
-        'total': progress['total'],
-        'ensemble_completed': progress['ensemble_completed'],
-        'ensemble_total': progress['ensemble_total'],
-        'montecarlo_completed': progress['montecarlo_completed'],
-        'montecarlo_total': progress['montecarlo_total'],
-        'percentage': percentage,
-        'status': progress.get('status', 'simulating')
-    })
-
 @app.route('/sim/progress-stream')
 def progress_stream():
     """Server-Sent Events stream for real-time progress updates"""
@@ -1060,7 +1033,7 @@ def progress_stream():
         last_completed = -1
         initial_sent = False
         wait_count = 0
-        max_wait = 20
+        max_wait = 100  # Wait up to 10 seconds (100 * 0.1s) for progress to be created
         
         while True:
             with _progress_lock:
@@ -1077,8 +1050,11 @@ def progress_stream():
                     wait_count += 1
                     time.sleep(0.1)
                     continue
-                print(f"SSE: Progress not found for request_id: {request_id}", flush=True)
-                yield f"data: {json.dumps({'error': 'Progress not found or completed'})}\n\n"
+                # Progress still not found after waiting - might be wrong request_id, request failed, or different worker
+                # Log once for debugging (not on every check)
+                if wait_count == max_wait:
+                    print(f"SSE: Progress not found for request_id: {request_id} after {max_wait * 0.1:.1f}s wait", flush=True)
+                yield f"data: {json.dumps({'error': 'Progress not found. The request may have failed or the request_id is incorrect.'})}\n\n"
                 break
             
             file_progress = _read_progress(request_id)
@@ -1132,37 +1108,3 @@ def elevation():
         return "0"
 
 
-@app.route('/sim/windensemble')
-def windensemble():
-    """Get wind data for all ensemble models (1-20)."""
-    args = request.args
-    lat = get_arg(args, 'lat')
-    lon = get_arg(args, 'lon')
-    alt = get_arg(args, 'alt')
-    time = parse_datetime(args)
-    yr = get_arg(args, 'yr', type_func=int)
-    levels = simulate.GFSHIST if yr < 2019 else simulate.GEFS
-
-    uList, vList, duList, dvList = [], [], [], []
-    for i in range(1, 21):
-        u, v, du, dv = simulate.get_wind(time, lat, lon, alt, i, levels)
-        uList.append(u)
-        vList.append(v)
-        duList.append(du)
-        dvList.append(dv)
-    
-    return jsonify([uList, vList, duList, dvList])
-
-@app.route('/sim/wind')
-def wind():
-    """Get wind data for a specific model."""
-    args = request.args
-    lat = get_arg(args, 'lat')
-    lon = get_arg(args, 'lon')
-    model = get_arg(args, 'model', type_func=int)
-    alt = get_arg(args, 'alt')
-    time = parse_datetime(args)
-    yr = get_arg(args, 'yr', type_func=int)
-    levels = simulate.GFSHIST if yr < 2019 else simulate.GEFS
-    u, v, du, dv = simulate.get_wind(time, lat, lon, alt, model, levels)
-    return jsonify([u, v, du, dv])
