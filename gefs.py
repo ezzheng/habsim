@@ -423,6 +423,9 @@ def _ensure_cached(file_name: str) -> Path:
         max_retries = 5 if file_name.endswith('.npz') else (3 if is_large_file else 1)
         last_error = None
         
+        # Log download start
+        print(f"INFO: Downloading {file_name} from S3...", flush=True)
+        
         for attempt in range(max_retries):
             # Clean up any incomplete temp files from previous attempts
             # BUT: Only clean up OUR OWN temp files (from previous attempts by this worker)
@@ -571,6 +574,8 @@ def _ensure_cached(file_name: str) -> Path:
                 
                 # Log successful download with size (for egress tracking)
                 size_mb = actual_size / (1024 * 1024)
+                download_time = time.time() - download_start
+                print(f"INFO: Downloaded {file_name} ({size_mb:.1f} MB) in {download_time:.1f}s", flush=True)
                 
                 # Validate NPZ file structure before committing
                 if file_name.endswith('.npz'):

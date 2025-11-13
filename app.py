@@ -705,6 +705,7 @@ def singlezpb(timestamp, lat, lon, alt, equil, eqtime, asc, desc, model, coeffic
 @app.route('/sim/singlezpb')
 @cache_for(600)
 def singlezpbh():
+    worker_pid = os.getpid()
     args = request.args
     timestamp = datetime.utcfromtimestamp(get_arg(args, 'timestamp')).replace(tzinfo=timezone.utc)
     lat = get_arg(args, 'lat')
@@ -715,6 +716,7 @@ def singlezpbh():
     asc = get_arg(args, 'asc')
     desc = get_arg(args, 'desc')
     model = get_arg(args, 'model', type_func=int)
+    print(f"INFO: [WORKER {worker_pid}] Single simulate call: model={model}, lat={lat}, lon={lon}, alt={alt}", flush=True)
     try:
         path = singlezpb(timestamp, lat, lon, alt, equil, eqtime, asc, desc, model)
         return jsonify(path)
