@@ -1674,12 +1674,20 @@ async function simulate() {
                         
                         progressEventSource.onmessage = function(event) {
                             try {
+                                console.log(`[${requestId}] SSE message received:`, event.data);
                                 const progressData = JSON.parse(event.data);
+                                
+                                // Handle error messages
+                                if (progressData.error) {
+                                    console.warn(`[${requestId}] SSE error:`, progressData.error);
+                                    return;
+                                }
+                                
                                 if (progressData.percentage !== undefined) {
                                     const percentage = progressData.percentage;
                                     if (buttonRef) {
                                         buttonRef.textContent = percentage + '%';
-                                        console.log(`[${requestId}] Progress update via SSE: ${percentage}%`);
+                                        console.log(`[${requestId}] Progress update via SSE: ${percentage}% (${progressData.completed}/${progressData.total})`);
                                     }
                                     // Close SSE when complete
                                     if (percentage >= 100) {
@@ -1688,10 +1696,16 @@ async function simulate() {
                                             progressEventSource = null;
                                         }
                                     }
+                                } else {
+                                    console.warn(`[${requestId}] SSE message missing percentage:`, progressData);
                                 }
                             } catch (e) {
-                                console.warn(`[${requestId}] Failed to parse SSE progress data:`, e);
+                                console.warn(`[${requestId}] Failed to parse SSE progress data:`, e, 'Raw data:', event.data);
                             }
+                        };
+                        
+                        progressEventSource.onopen = function(event) {
+                            console.log(`[${requestId}] SSE connection opened`);
                         };
                         
                         progressEventSource.onerror = function(event) {

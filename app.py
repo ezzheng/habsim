@@ -1010,6 +1010,8 @@ def progress_stream():
     
     def generate():
         last_completed = -1
+        # Send initial update immediately when connection opens
+        initial_sent = False
         while True:
             with _progress_lock:
                 progress = _progress_tracking.get(request_id)
@@ -1023,7 +1025,8 @@ def progress_stream():
             total = progress['total']
             percentage = round((current_completed / total) * 100) if total > 0 else 0
             
-            if current_completed != last_completed:
+            # Send update if progress changed OR if this is the first message
+            if current_completed != last_completed or not initial_sent:
                 data = {
                     'completed': current_completed,
                     'total': total,
@@ -1035,6 +1038,7 @@ def progress_stream():
                 }
                 yield f"data: {json.dumps(data)}\n\n"
                 last_completed = current_completed
+                initial_sent = True
                 if current_completed >= total:
                     break
             else:
