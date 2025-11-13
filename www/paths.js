@@ -1623,9 +1623,11 @@ async function simulate() {
                 
                 // Generate request_id on client side using MD5 (matching server's algorithm)
                 // Server uses: hashlib.md5(request_key.encode()).hexdigest()[:16]
-                // where request_key = f"{timestamp}_{lat}_{lon}_{alt}_${equil}_{eqtime}_{asc}_{desc}_{coeff}"
+                // where request_key = f"{args['timestamp']}_{args['lat']}_{args['lon']}_{args['alt']}_{args['equil']}_{args['eqtime']}_{args['asc']}_{args['desc']}_{base_coeff}"
+                // Note: Server receives args as strings from URL, so we need to match that format exactly
                 const baseCoeff = 1.0; // Default coefficient
-                const requestKey = `${time}_${lat}_${lon}_${alt}_${equil}_${eqtime}_${asc}_${desc}_${baseCoeff}`;
+                // Convert to strings to match server's request.args format (all values are strings from URL)
+                const requestKey = `${String(time)}_${String(lat)}_${String(lon)}_${String(alt)}_${String(equil)}_${String(eqtime)}_${String(asc)}_${String(desc)}_${String(baseCoeff)}`;
                 
                 // Generate MD5 hash using crypto-js library (matches server's hashlib.md5)
                 let clientRequestId;
@@ -1723,12 +1725,20 @@ async function simulate() {
                 window.__inProgressMode = true;
                 
                 try {
-                    // Generate request_id and start SSE immediately
+                    // Start spaceshot fetch first (but don't await yet) to ensure progress tracking is created
+                    console.log(`[${requestId}] Starting spaceshot fetch...`);
+                    const spaceshotPromise = fetch(spaceshotUrl, { signal: window.__simAbort.signal });
+                    
+                    // Wait a brief moment for server to create progress tracking, then start SSE
+                    // This ensures progress tracking exists before SSE tries to connect
+                    await new Promise(resolve => setTimeout(resolve, 100));
+                    
+                    // Generate request_id and start SSE after spaceshot request has been initiated
                     console.log(`[${requestId}] Generated client request_id: ${clientRequestId}, starting SSE progress stream...`);
                     startProgressSSE(clientRequestId);
                     
-                    console.log(`[${requestId}] Starting spaceshot fetch...`);
-                    const response = await fetch(spaceshotUrl, { signal: window.__simAbort.signal });
+                    // Now await the spaceshot response
+                    const response = await spaceshotPromise;
                     console.log(`[${requestId}] Spaceshot fetch completed, status:`, response.status);
                     
                     // Check if response is OK before parsing
