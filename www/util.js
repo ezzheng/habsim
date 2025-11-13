@@ -196,11 +196,6 @@ google.maps.event.addListener(map, 'click', function (event) {
                     const lat = location.lat();
                     const lng = location.lng();
                     
-                    // Re-enable map clicks after selection
-                    if (map) {
-                        map.setOptions({ clickableIcons: true });
-                    }
-                    
                     // Pan and zoom to location
                     map.panTo(location);
                     map.setZoom(12);
@@ -258,19 +253,20 @@ google.maps.event.addListener(map, 'click', function (event) {
                                 item.style.cursor = 'pointer';
                             });
                             
-                            // Temporarily disable map clicks when autocomplete is visible
-                            // This prevents clicks from going through to the map
-                            if (map) {
-                                map.setOptions({ clickableIcons: false });
-                                // Re-enable after a delay if autocomplete closes
-                                setTimeout(() => {
-                                    const pacStillVisible = document.querySelector('.pac-container') && 
-                                                           document.querySelector('.pac-container').style.display !== 'none';
-                                    if (!pacStillVisible && searchInputContainer.classList.contains('expanded')) {
-                                        map.setOptions({ clickableIcons: true });
-                                    }
-                                }, 100);
-                            }
+                            // Ensure autocomplete container blocks map clicks
+                            // Add click handler to prevent event propagation
+                            pacContainer.addEventListener('click', (e) => {
+                                e.stopPropagation(); // Prevent click from reaching map
+                            }, true); // Use capture phase to catch early
+                            
+                            // Also prevent mousedown/touchstart to be thorough
+                            pacContainer.addEventListener('mousedown', (e) => {
+                                e.stopPropagation();
+                            }, true);
+                            
+                            pacContainer.addEventListener('touchstart', (e) => {
+                                e.stopPropagation();
+                            }, true);
                         }
                     });
                 };
@@ -314,11 +310,6 @@ google.maps.event.addListener(map, 'click', function (event) {
         };
         
         const closeSearchBar = () => {
-            // Re-enable map clicks when closing search
-            if (map) {
-                map.setOptions({ clickableIcons: true });
-            }
-            
             // Immediately hide autocomplete dropdown container
             const pacContainer = document.querySelector('.pac-container');
             if (pacContainer) {
