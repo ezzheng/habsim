@@ -357,12 +357,13 @@ initMap();
                 function styleDropdown() {
                     const pacContainer = document.querySelector('.pac-container');
                     if (pacContainer) {
-                        // Ensure dropdown is visible and properly styled
-                        pacContainer.style.zIndex = '1002';
+                        // Ensure dropdown is visible and properly styled with very high z-index
+                        pacContainer.style.zIndex = '99999';
                         pacContainer.style.display = 'block';
                         pacContainer.style.visibility = 'visible';
                         pacContainer.style.opacity = '1';
                         pacContainer.style.pointerEvents = 'auto';
+                        pacContainer.style.overflow = 'visible';
                         
                         // Hide "Powered by Google" text - target only the logo/attribution, not the dropdown
                         const pacLogo = pacContainer.querySelector('.pac-logo');
