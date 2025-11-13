@@ -245,7 +245,7 @@ def _idle_memory_cleanup(idle_duration):
         rss_after = _get_rss_memory_mb()
         if rss_after is not None and rss_before is not None:
             rss_delta = rss_before - rss_after
-            print(f"INFO: Idle cleanup: {evicted} simulators, {rss_delta:.1f} MB freed", flush=True)
+            print(f"INFO: [WORKER {worker_pid}] Idle cleanup: {evicted} simulators, {rss_delta:.1f} MB freed", flush=True)
         return True
     finally:
         _idle_cleanup_lock.release()
