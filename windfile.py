@@ -6,7 +6,11 @@ Provides 4D interpolation for wind vectors at arbitrary lat/lon/alt/time.
 Thread-safe file loading with per-file locks to prevent zipfile contention.
 """
 import math
+import os
+import time
 import threading
+import logging
+from datetime import datetime
 from io import BytesIO
 from pathlib import Path
 from typing import Union

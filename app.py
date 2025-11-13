@@ -1029,10 +1029,10 @@ def elevation():
     lon = get_arg(request.args, 'lon')
     try:
         result = elev.getElevation(lat, lon)
-        return jsonify({'elevation': result or 0})
+        return str(result or 0)
     except Exception as e:
         app.logger.exception(f"Elevation lookup failed: {e}")
-        return jsonify({'elevation': 0})
+        return "0"
 
 
 @app.route('/sim/windensemble')
