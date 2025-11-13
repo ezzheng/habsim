@@ -3,6 +3,34 @@ var map = null;
 var clickMarker = null;
 var heatmapLayer = null; // Global heatmap layer for Monte Carlo visualization
 
+// Initialize OSM map type BEFORE map initialization to ensure it's available
+function initOSMMapType() {
+    if (!map || typeof google === 'undefined' || !google.maps) {
+        setTimeout(initOSMMapType, 100);
+        return;
+    }
+    // Defensive check: ensure OSM is set if not already present
+    if (!map.mapTypes.get('OSM')) {
+        map.mapTypes.set("OSM", new google.maps.ImageMapType({
+            getTileUrl: function(coord, zoom) {
+                // "Wrap" x (longitude) at 180th meridian properly
+                // NB: Don't touch coord.x: because coord param is by reference, and changing its x property breaks something in Google's lib
+                var tilesPerGlobe = 1 << zoom;
+                var x = coord.x % tilesPerGlobe;
+                if (x < 0) {
+                    x = tilesPerGlobe+x;
+                }
+                // Wrap y (latitude) in a like manner if you want to enable vertical infinite scrolling
+
+                return "https://tile.openstreetmap.org/" + zoom + "/" + x + "/" + coord.y + ".png";
+            },
+            tileSize: new google.maps.Size(256, 256),
+            name: "OpenStreetMap",
+            maxZoom: 18
+        }));
+    }
+}
+
 function initMap() {
     if (typeof google === 'undefined' || !google.maps) {
         console.warn('Google Maps API not loaded yet, retrying...');
@@ -17,17 +45,35 @@ function initMap() {
         return;
     }
     
+    // Fix 1: Use stable Google map type (ROADMAP) instead of OSM which may not be initialized yet
+    const isMobile = window.innerWidth <= 768;
     map = new google.maps.Map(element, {
         center: new google.maps.LatLng(37.4, -121.5),
         zoom: 9,
-        mapTypeId: "OSM",
+        mapTypeId: google.maps.MapTypeId.ROADMAP, // Changed from "OSM" to stable Google type
         zoomControl: false, // Disable default - we'll use custom
-        gestureHandling: 'greedy',
+        gestureHandling: isMobile ? 'none' : 'greedy', // Fix 2: Disable gestures on mobile
+        draggable: !isMobile, // Fix 2: Disable dragging on mobile
         mapTypeControl: false, // Disable default control - we'll use custom
         fullscreenControl: false, // Disable default - we'll use custom
         streetViewControl: false,
         disableDefaultUI: true, // Disable all default UI controls
         keyboardShortcuts: false // Disable keyboard shortcuts
+    });
+    
+    // Fix 2: Add resize listener to update gesture handling dynamically
+    function updateMobileGesture() {
+        const isMobile = window.innerWidth <= 768;
+        map.setOptions({
+            gestureHandling: isMobile ? 'none' : 'greedy',
+            draggable: !isMobile
+        });
+    }
+    window.addEventListener('resize', updateMobileGesture);
+    
+    // Initialize OSM map type after map is created
+    google.maps.event.addListenerOnce(map, 'idle', function() {
+        initOSMMapType();
     });
     
     // Also hide zoom controls after map is created (defensive)
@@ -61,8 +107,13 @@ initMap();
             setTimeout(initMapTypeControl, 100);
             return;
         }
-        // Wait for map to be ready
+        // Wait for map to be ready and OSM to be initialized
         google.maps.event.addListenerOnce(map, 'idle', function() {
+            // Ensure OSM is available before creating menu
+            if (!map.mapTypes.get('OSM')) {
+                initOSMMapType();
+            }
+            
         // Create custom control container
         const controlDiv = document.createElement('div');
         controlDiv.id = 'custom-map-type-control';
@@ -157,20 +208,20 @@ initMap();
                 this.style.backgroundColor = 'white';
             };
             
-            // Click handler
+            // Click handler - Fix 1: Ensure OSM is available before switching
             menuItem.onclick = function() {
                 try {
-                    // Ensure OSM map type is initialized before switching
-                    if (mapType.id === 'OSM' && !map.mapTypes.get('OSM')) {
-                        // OSM not initialized yet, wait a bit
-                        setTimeout(function() {
-                            if (map.mapTypes.get('OSM')) {
-                                map.setMapTypeId('OSM');
-                                updateActiveMapType('OSM');
-                            } else {
-                                console.warn('OSM map type not available');
-                            }
-                        }, 100);
+                    if (mapType.id === 'OSM') {
+                        // Ensure OSM is initialized
+                        if (!map.mapTypes.get('OSM')) {
+                            initOSMMapType();
+                        }
+                        if (map.mapTypes.get('OSM')) {
+                            map.setMapTypeId('OSM');
+                            updateActiveMapType('OSM');
+                        } else {
+                            console.warn('OSM map type not available');
+                        }
                     } else {
                         map.setMapTypeId(mapType.id);
                         updateActiveMapType(mapType.id);
@@ -239,6 +290,8 @@ initMap();
 
 // Custom search control with Google Places Autocomplete
 (function() {
+    let searchInput = null; // Make searchInput accessible for stylePacContainer
+    
     function initSearchControl() {
         if (!map) {
             setTimeout(initSearchControl, 100);
@@ -246,11 +299,16 @@ initMap();
         }
         // Wait for map to be ready
         google.maps.event.addListenerOnce(map, 'idle', function() {
+        // Fix 4: Create unified control wrapper for search and fullscreen buttons
+        const controlsWrapper = document.createElement('div');
+        controlsWrapper.className = 'custom-control-wrapper';
+        controlsWrapper.style.cssText = 'display: flex; gap: 8px; align-items: center; margin: 10px; position: absolute; left: 10px; bottom: 10px; z-index: 1000;';
+        
         // Create search control container
         const searchDiv = document.createElement('div');
         searchDiv.id = 'custom-search-control';
         searchDiv.className = 'custom-search-container';
-        searchDiv.style.cssText = 'margin: 10px; position: absolute; bottom: 0; left: 48px; z-index: 1000; display: flex; align-items: center; gap: 8px;';
+        searchDiv.style.cssText = 'display: flex; align-items: center; gap: 8px;';
         
         // Create search button
         const searchButton = document.createElement('button');
@@ -259,15 +317,16 @@ initMap();
         searchButton.className = 'custom-search-button';
         searchButton.innerHTML = '🔍';
         searchButton.title = 'Search location';
+        searchButton.style.cssText = 'width: 40px; height: 40px; display: inline-flex; align-items: center; justify-content: center; padding: 0; background-color: white; border: none; border-radius: 2px; box-shadow: 0 1px 4px rgba(0,0,0,0.3); cursor: pointer; font-size: 18px; color: #5B5B5B;';
         
         // Create search input container (hidden by default, will expand smoothly)
         const searchInputContainer = document.createElement('div');
         searchInputContainer.id = 'search-input-container';
         searchInputContainer.className = 'search-input-container';
-        searchInputContainer.style.position = 'relative'; // Ensure relative positioning for dropdown
+        searchInputContainer.style.position = 'relative';
         
         // Create search input
-        const searchInput = document.createElement('input');
+        searchInput = document.createElement('input');
         searchInput.type = 'text';
         searchInput.id = 'search-input';
         searchInput.placeholder = 'Search for a location...';
@@ -279,51 +338,29 @@ initMap();
         let autocomplete = null;
         let autocompleteInitialized = false;
         
-        // Function to aggressively hide "Powered by Google" bar (but NOT the dropdown suggestions)
-        function hidePoweredByGoogle() {
-            // Check multiple times to catch dynamically added elements
-            const hideAttempts = [0, 50, 100, 200, 500, 1000];
-            hideAttempts.forEach(function(delay) {
-                setTimeout(function() {
-                    // Hide pac-logo and all variations, but NOT pac-item (suggestions)
-                    const pacLogos = document.querySelectorAll('.pac-logo, [class*="pac-logo"]:not([class*="pac-item"]), [class*="attribution"]:not([class*="pac-item"]), [class*="logo"]:not([class*="pac-item"])');
-                    pacLogos.forEach(function(el) {
-                        // Skip if it's part of a suggestion item
-                        if (!el.closest('.pac-item') && !el.classList.contains('pac-item')) {
-                            const text = el.textContent || el.innerText || '';
-                            if (text.toLowerCase().includes('powered by') || text.toLowerCase().includes('google') || el.classList.contains('pac-logo')) {
-                                el.style.display = 'none';
-                                el.style.visibility = 'hidden';
-                                el.style.height = '0';
-                                el.style.width = '0';
-                                el.style.overflow = 'hidden';
-                                el.style.opacity = '0';
-                                el.style.pointerEvents = 'none';
-                            }
-                        }
-                    });
-                    // Also check pac-container children, but preserve pac-item elements
-                    const pacContainer = document.querySelector('.pac-container');
-                    if (pacContainer) {
-                        const allChildren = pacContainer.querySelectorAll('*:not(.pac-item):not([class*="pac-item"])');
-                        allChildren.forEach(function(el) {
-                            // Skip if it's part of a suggestion item
-                            if (!el.closest('.pac-item') && !el.classList.contains('pac-item')) {
-                                const text = el.textContent || el.innerText || '';
-                                if (text.toLowerCase().includes('powered by google')) {
-                                    el.style.display = 'none';
-                                    el.style.visibility = 'hidden';
-                                    el.style.height = '0';
-                                    el.style.width = '0';
-                                    el.style.overflow = 'hidden';
-                                    el.style.opacity = '0';
-                                    el.style.pointerEvents = 'none';
-                                }
-                            }
-                        });
-                    }
-                }, delay);
-            });
+        // Fix 3: Simple event-driven handler for pac-container styling (no MutationObserver, keep attribution)
+        function stylePacContainer() {
+            const pac = document.querySelector('.pac-container');
+            if (!pac || !searchInput) return;
+            
+            const rect = searchInput.getBoundingClientRect();
+            const isMobile = window.innerWidth <= 768;
+            
+            pac.style.width = rect.width + 'px';
+            pac.style.display = 'block';
+            pac.style.visibility = 'visible';
+            pac.style.pointerEvents = 'auto';
+            
+            // Position: mobile -> below input, desktop -> above input (dropup)
+            if (isMobile) {
+                pac.style.left = rect.left + 'px';
+                pac.style.top = (rect.bottom + window.scrollY + 6) + 'px';
+                pac.style.bottom = 'auto';
+            } else {
+                pac.style.left = rect.left + 'px';
+                pac.style.top = 'auto';
+                pac.style.bottom = (window.innerHeight - rect.top + 6) + 'px';
+            }
         }
         
         function initAutocomplete() {
@@ -356,9 +393,6 @@ initMap();
                     componentRestrictions: null // Allow all countries
                 });
                 
-                // Ensure autocomplete is properly attached to the input
-                // The autocomplete should automatically show predictions when typing
-                
                 // Ensure input is properly bound to autocomplete and map bounds
                 try {
                     autocomplete.bindTo('bounds', map);
@@ -367,157 +401,17 @@ initMap();
                     console.log('Autocomplete bindTo not available');
                 }
                 
-                // Style dropdown when it appears
-                function styleDropdown() {
-                    const pacContainer = document.querySelector('.pac-container');
-                    if (pacContainer) {
-                        // Ensure dropdown is visible and properly styled
-                        pacContainer.style.zIndex = '1002';
-                        pacContainer.style.display = 'block';
-                        pacContainer.style.visibility = 'visible';
-                        pacContainer.style.opacity = '1';
-                        pacContainer.style.pointerEvents = 'auto';
-                        
-                        // Hide "Powered by Google" text - target only the logo/attribution, not the dropdown
-                        const pacLogo = pacContainer.querySelector('.pac-logo');
-                        if (pacLogo) {
-                            pacLogo.style.display = 'none';
-                            pacLogo.style.visibility = 'hidden';
-                            pacLogo.style.height = '0';
-                            pacLogo.style.width = '0';
-                            pacLogo.style.overflow = 'hidden';
-                            pacLogo.style.opacity = '0';
-                            pacLogo.style.pointerEvents = 'none';
-                        }
-                        // Hide attribution/logo elements, but NOT pac-item elements (those are the suggestions)
-                        const allAttribution = pacContainer.querySelectorAll('[class*="pac-logo"], [class*="attribution"], [class*="logo"]:not([class*="pac-item"])');
-                        allAttribution.forEach(function(el) {
-                            // Only hide if it's not a suggestion item
-                            if (!el.closest('.pac-item') && !el.classList.contains('pac-item')) {
-                                const text = el.textContent || el.innerText || '';
-                                if (text.toLowerCase().includes('powered by') || text.toLowerCase().includes('google') || el.classList.contains('pac-logo')) {
-                                    el.style.display = 'none';
-                                    el.style.visibility = 'hidden';
-                                    el.style.height = '0';
-                                    el.style.width = '0';
-                                    el.style.overflow = 'hidden';
-                                    el.style.opacity = '0';
-                                    el.style.pointerEvents = 'none';
-                                }
-                            }
-                        });
-                        // Hide any divs that contain "Powered by Google" but are NOT pac-item containers
-                        const allDivs = pacContainer.querySelectorAll('div:not(.pac-item):not([class*="pac-item"])');
-                        allDivs.forEach(function(el) {
-                            // Skip if it's a suggestion item or contains suggestion items
-                            if (!el.closest('.pac-item') && !el.querySelector('.pac-item')) {
-                                const text = el.textContent || el.innerText || '';
-                                if (text.toLowerCase().includes('powered by') && text.toLowerCase().includes('google')) {
-                                    el.style.display = 'none';
-                                    el.style.visibility = 'hidden';
-                                    el.style.height = '0';
-                                    el.style.width = '0';
-                                    el.style.overflow = 'hidden';
-                                    el.style.opacity = '0';
-                                    el.style.pointerEvents = 'none';
-                                }
-                            }
-                        });
-                        
-                        // Get input position on page
-                        const inputRect = searchInput.getBoundingClientRect();
-                        const isMobile = window.innerWidth <= 768;
-                        
-                        if (isMobile) {
-                            // Mobile: dropdown appears below
-                            pacContainer.style.position = 'fixed';
-                            pacContainer.style.top = (inputRect.bottom + window.scrollY + 5) + 'px';
-                            pacContainer.style.left = inputRect.left + 'px';
-                            pacContainer.style.width = inputRect.width + 'px';
-                            pacContainer.style.maxWidth = inputRect.width + 'px';
-                            pacContainer.style.transform = 'none'; // Reset transform for mobile
-                        } else {
-                            // Desktop: dropdown appears above
-                            pacContainer.style.position = 'fixed';
-                            pacContainer.style.bottom = 'auto';
-                            pacContainer.style.top = (inputRect.top + window.scrollY - 5) + 'px';
-                            pacContainer.style.left = inputRect.left + 'px';
-                            pacContainer.style.width = inputRect.width + 'px';
-                            pacContainer.style.maxWidth = inputRect.width + 'px';
-                            // Transform to position above
-                            pacContainer.style.transform = 'translateY(-100%)';
-                        }
-                    }
-                }
-                
-                // Style dropdown on input events - ensure it appears when typing
-                function checkAndStyleDropdown() {
-                    // Immediate check
-                    styleDropdown();
-                    // Check again after delays to catch delayed rendering
-                    setTimeout(styleDropdown, 10);
-                    setTimeout(styleDropdown, 50);
-                    setTimeout(styleDropdown, 100);
-                    setTimeout(styleDropdown, 200);
-                }
-                
-                // Ensure dropdown appears on input
-                searchInput.addEventListener('input', function(e) {
-                    checkAndStyleDropdown();
-                    // The autocomplete should automatically show predictions
-                    // But we ensure the container is visible
-                    if (searchInput.value.length > 0) {
-                        // Force check for pac-container
-                        setTimeout(function() {
-                            const pacContainer = document.querySelector('.pac-container');
-                            if (pacContainer) {
-                                pacContainer.style.display = 'block';
-                                pacContainer.style.visibility = 'visible';
-                                pacContainer.style.opacity = '1';
-                                styleDropdown();
-                            }
-                        }, 50);
+                // Fix 3: Call stylePacContainer on these events (no observers, keep attribution visible)
+                searchInput.addEventListener('focus', stylePacContainer);
+                searchInput.addEventListener('input', function() {
+                    stylePacContainer();
+                    // If value empty, hide results
+                    if (searchInput.value.trim() === '') {
+                        const pac = document.querySelector('.pac-container');
+                        if (pac) pac.style.display = 'none';
                     }
                 });
-                
-                searchInput.addEventListener('focus', function() {
-                    checkAndStyleDropdown();
-                });
-                
-                searchInput.addEventListener('keydown', function() {
-                    setTimeout(checkAndStyleDropdown, 10);
-                });
-                
-                // Also check when search bar expands - use MutationObserver to catch dynamically added elements
-                const observer = new MutationObserver(function() {
-                    styleDropdown();
-                    // Also hide "Powered by Google" when mutations occur
-                    hidePoweredByGoogle();
-                });
-                
-                // Observe the pac-container for changes (when it's created)
-                const observePacContainer = function() {
-                    const pacContainer = document.querySelector('.pac-container');
-                    if (pacContainer) {
-                        observer.observe(pacContainer, {
-                            childList: true,
-                            subtree: true,
-                            attributes: false
-                        });
-                        // Immediately hide "Powered by Google" when container is found
-                        hidePoweredByGoogle();
-                    } else {
-                        // Check again if container doesn't exist yet
-                        setTimeout(observePacContainer, 100);
-                    }
-                };
-                
-                // Start observing when input is focused or typed
-                searchInput.addEventListener('focus', observePacContainer);
-                searchInput.addEventListener('input', observePacContainer);
-                
-                // Listen for window resize to reposition dropdown
-                window.addEventListener('resize', styleDropdown);
+                window.addEventListener('resize', stylePacContainer);
                 
                 // Handle place selection
                 autocomplete.addListener('place_changed', function() {
@@ -555,8 +449,6 @@ initMap();
             initAutocomplete();
             setTimeout(function() {
                 searchInput.focus();
-                // Aggressively hide "Powered by Google" bar when search opens
-                hidePoweredByGoogle();
             }, 150);
         }
         
@@ -593,12 +485,15 @@ initMap();
             }
         });
         
-        // Assemble control
+        // Assemble search control
         searchDiv.appendChild(searchButton);
         searchDiv.appendChild(searchInputContainer);
         
-        // Add to map
-        map.controls[google.maps.ControlPosition.BOTTOM_LEFT].push(searchDiv);
+        // Fix 4: Add search control to wrapper
+        controlsWrapper.appendChild(searchDiv);
+        
+        // Add wrapper to map
+        map.controls[google.maps.ControlPosition.BOTTOM_LEFT].push(controlsWrapper);
         });
     }
     initSearchControl();
@@ -613,10 +508,14 @@ initMap();
         }
         // Wait for map to be ready
         google.maps.event.addListenerOnce(map, 'idle', function() {
-        // Create controls container
-        const controlsContainer = document.createElement('div');
-        controlsContainer.id = 'custom-map-controls';
-        controlsContainer.className = 'custom-fullscreen-container';
+        // Fix 4: Find existing control wrapper or create new one
+        let controlsWrapper = document.querySelector('.custom-control-wrapper');
+        if (!controlsWrapper) {
+            controlsWrapper = document.createElement('div');
+            controlsWrapper.className = 'custom-control-wrapper';
+            controlsWrapper.style.cssText = 'display: flex; gap: 8px; align-items: center; margin: 10px; position: absolute; left: 10px; bottom: 10px; z-index: 1000;';
+            map.controls[google.maps.ControlPosition.BOTTOM_LEFT].push(controlsWrapper);
+        }
         
         // Fullscreen button
         const fullscreenButton = document.createElement('button');
@@ -624,6 +523,7 @@ initMap();
         fullscreenButton.className = 'custom-fullscreen-button';
         fullscreenButton.innerHTML = '⛶';
         fullscreenButton.title = 'Toggle fullscreen';
+        fullscreenButton.style.cssText = 'width: 40px; height: 40px; display: inline-flex; align-items: center; justify-content: center; padding: 0; background-color: white; border: none; border-radius: 2px; box-shadow: 0 1px 4px rgba(0,0,0,0.3); cursor: pointer; font-size: 24px; color: #5B5B5B;';
         
         // Fullscreen functions
         function isFullscreenSupported() {
@@ -694,14 +594,8 @@ initMap();
             document.addEventListener(event, updateFullscreenIcon);
         });
         
-        // Add fullscreen button
-        controlsContainer.appendChild(fullscreenButton);
-        
-        // Add to map container
-        const mapContainer = document.getElementById('map');
-        if (mapContainer) {
-            mapContainer.appendChild(controlsContainer);
-        }
+        // Fix 4: Add fullscreen button to existing wrapper
+        controlsWrapper.appendChild(fullscreenButton);
         
         // Initialize fullscreen icon
         updateFullscreenIcon();
@@ -709,33 +603,6 @@ initMap();
     }
     initFullscreenControl();
 })();
-
-
-//Define OSM map type pointing at the OpenStreetMap tile server
-function initOSMMapType() {
-    if (!map || typeof google === 'undefined' || !google.maps) {
-        setTimeout(initOSMMapType, 100);
-        return;
-    }
-    map.mapTypes.set("OSM", new google.maps.ImageMapType({
-        getTileUrl: function(coord, zoom) {
-            // "Wrap" x (longitude) at 180th meridian properly
-            // NB: Don't touch coord.x: because coord param is by reference, and changing its x property breaks something in Google's lib
-            var tilesPerGlobe = 1 << zoom;
-            var x = coord.x % tilesPerGlobe;
-            if (x < 0) {
-                x = tilesPerGlobe+x;
-            }
-            // Wrap y (latitude) in a like manner if you want to enable vertical infinite scrolling
-
-            return "https://tile.openstreetmap.org/" + zoom + "/" + x + "/" + coord.y + ".png";
-        },
-        tileSize: new google.maps.Size(256, 256),
-        name: "OpenStreetMap",
-        maxZoom: 18
-    }));
-}
-initOSMMapType();
 
 // Functions for displaying things
 function displayCoordinates(pnt) {

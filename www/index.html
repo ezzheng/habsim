@@ -87,14 +87,25 @@
             top: auto !important;
         }
         
-        /* Search autocomplete dropdown: appears above on desktop */
+        /* Fix 3: Make autocomplete stable and above everything (keep attribution visible) */
         .pac-container {
-            z-index: 1002 !important;
+            position: fixed !important;
+            z-index: 2147483000 !important; /* very high, but safe */
+            box-shadow: 0 6px 18px rgba(0,0,0,0.12) !important;
+            border-radius: 8px !important;
+            overflow: hidden !important;
+            transition: none !important; /* avoid flicker caused by CSS transitions */
+            -webkit-transform: none !important;
+            transform: none !important;
             display: block !important;
             visibility: visible !important;
             opacity: 1 !important;
             pointer-events: auto !important;
-            /* Position is set by JavaScript using fixed positioning */
+        }
+        
+        /* Fix 3: Ensure wrapper doesn't clip it */
+        .custom-search-container, .search-input-container, .map-container, #map {
+            overflow: visible !important;
         }
         
         /* Ensure pac-item (suggestions) are visible and clickable */
@@ -304,54 +315,70 @@
             box-shadow: 0 1px 4px rgba(0,0,0,0.3);
         }
         
-        /* Search input container - smooth expansion */
+        /* Fix 5: Search input container - smooth expansion, no flicker */
         .search-input-container {
-            position: relative; /* Changed to relative for dropdown positioning */
-            left: 0;
-            bottom: 0;
-            background-color: white;
-            border-radius: 2px;
-            box-shadow: 0 2px 6px rgba(0,0,0,0.3);
-            padding: 0;
-            z-index: 1001;
-            font-family: Roboto, Arial, sans-serif;
-            width: 0;
-            overflow: visible; /* Changed to visible so dropdown can show */
-            opacity: 0;
-            transition: width 0.3s ease, opacity 0.3s ease;
-            border: none; /* Remove any border */
-            outline: none; /* Remove outline */
-            /* Gap is handled by flexbox gap on parent container */
-        }
-        
-        .search-input-container.search-expanded {
-            width: 300px;
-            opacity: 1;
-            border: none; /* Ensure no border on expansion */
-            outline: none; /* Ensure no outline on expansion */
+            position: relative;
+            overflow: visible !important;
         }
         
         .search-input-field {
-            width: 100%;
-            padding: 10px 16px;
-            border: none;
-            outline: none;
+            border: none !important;
+            outline: none !important;
+            background: white;
+            border-radius: 6px;
+            padding: 8px 12px;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+            transition: width 180ms ease, opacity 120ms;
             font-size: 14px;
             color: #5B5B5B;
             font-family: Roboto, Arial, sans-serif;
             box-sizing: border-box;
-            background-color: transparent; /* Ensure no background color flash */
         }
         
-        .search-input-field:focus {
-            outline: none;
-            border: none;
-            box-shadow: none;
+        .search-input-container .search-input-field {
+            width: 0;
+            opacity: 0;
+            pointer-events: none;
         }
         
-        .search-input-field:active {
-            outline: none;
-            border: none;
+        .search-input-container.search-expanded .search-input-field {
+            width: 260px;
+            opacity: 1;
+            pointer-events: auto;
+        }
+        
+        .search-input-field:focus,
+        .search-input-field:active,
+        .search-input-field:hover {
+            outline: none !important;
+            border: none !important;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.08) !important;
+        }
+        
+        /* Fix 4: Unified control wrapper for buttons */
+        .custom-control-wrapper {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            margin: 10px;
+            position: absolute;
+            left: 10px;
+            bottom: 10px;
+            z-index: 1000;
+        }
+        
+        .custom-control-wrapper button {
+            width: 40px;
+            height: 40px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0;
+        }
+        
+        .search-input-container.search-expanded {
+            margin-left: 8px; /* keep search input right next to buttons */
+            align-self: center;
         }
         
         /* Hide fullscreen button on mobile */
