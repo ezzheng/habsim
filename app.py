@@ -20,6 +20,7 @@ import random
 import time
 import os
 import secrets
+import logging
 
 app = Flask(__name__)
 # Configure session for authentication (frontend only)
@@ -30,6 +31,15 @@ app.config['SESSION_COOKIE_SECURE'] = os.environ.get('FLASK_ENV') == 'production
 # Don't set SESSION_COOKIE_MAX_AGE - this makes it a session cookie that expires when browser closes
 CORS(app)
 Compress(app)  # Automatically compress responses (10x size reduction)
+
+# Suppress access logging for /sim/status endpoint to reduce Railway log noise
+# Configure Werkzeug logger to filter out /sim/status requests
+werkzeug_logger = logging.getLogger('werkzeug')
+class StatusLogFilter(logging.Filter):
+    def filter(self, record):
+        # Filter out /sim/status access logs
+        return '/sim/status' not in record.getMessage()
+werkzeug_logger.addFilter(StatusLogFilter())
 
 # Password for authentication
 LOGIN_PASSWORD = os.environ.get('HABSIM_PASSWORD')
@@ -461,7 +471,9 @@ def cache_status():
 
 @app.route('/sim/status')
 def status():
-    """Status endpoint - should be fast and non-blocking even during heavy load."""
+    """Status endpoint - should be fast and non-blocking even during heavy load.
+    Access logging is suppressed for this endpoint to reduce Railway log noise.
+    """
     try:
         f = open_gefs('whichgefs')
         line = f.readline()

@@ -24,6 +24,13 @@ errorlog = '-'
 loglevel = 'warning'
 access_log_format = '%(h)s %(l)s %(u)s %(t)s "%(r)s" %(s)s %(b)s "%(f)s" "%(a)s" %(D)s'
 
+# Custom access log filter to suppress /sim/status requests
+def access_log_filter(status_code, path):
+    """Filter out /sim/status requests from access logs"""
+    if '/sim/status' in path:
+        return False
+    return True
+
 proc_name = 'habsim'
 
 def on_starting(server):

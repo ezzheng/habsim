@@ -1617,6 +1617,62 @@ async function simulate() {
                 const requestId = `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
                 console.log(`[${requestId}] Using spaceshot endpoint (with Monte Carlo):`, spaceshotUrl);
                 
+                // Set up progress tracking for ensemble mode
+                let progressEventSource = null;
+                let requestIdFromServer = null;
+                let progressPollInterval = null;
+                
+                // Start progress polling immediately (spaceshot returns request_id in response)
+                // We'll get the request_id from the response and then switch to SSE
+                const startProgressPolling = (requestId) => {
+                    if (progressPollInterval) return; // Already polling
+                    
+                    const progressUrl = URL_ROOT + "/sim/progress?request_id=" + requestId;
+                    progressPollInterval = setInterval(async () => {
+                        try {
+                            const progressResponse = await fetch(progressUrl, { signal: window.__simAbort.signal });
+                            if (progressResponse.ok) {
+                                const progressData = await progressResponse.json();
+                                if (progressData.percentage !== undefined && simBtn) {
+                                    simBtn.textContent = progressData.percentage + '%';
+                                }
+                                // If complete, switch to SSE for real-time updates
+                                if (progressData.percentage >= 100 && !progressEventSource) {
+                                    clearInterval(progressPollInterval);
+                                    progressPollInterval = null;
+                                    // Switch to SSE for final updates
+                                    const sseUrl = URL_ROOT + "/sim/progress-stream?request_id=" + requestId;
+                                    progressEventSource = new EventSource(sseUrl);
+                                    progressEventSource.onmessage = function(event) {
+                                        try {
+                                            const data = JSON.parse(event.data);
+                                            if (data.percentage !== undefined && simBtn) {
+                                                simBtn.textContent = data.percentage + '%';
+                                            }
+                                            if (data.percentage >= 100) {
+                                                if (progressEventSource) {
+                                                    progressEventSource.close();
+                                                    progressEventSource = null;
+                                                }
+                                            }
+                                        } catch (e) {
+                                            console.warn('Failed to parse SSE progress data:', e);
+                                        }
+                                    };
+                                    progressEventSource.onerror = function() {
+                                        if (progressEventSource) {
+                                            progressEventSource.close();
+                                            progressEventSource = null;
+                                        }
+                                    };
+                                }
+                            }
+                        } catch (e) {
+                            // Ignore polling errors (request may have completed)
+                        }
+                    }, 500); // Poll every 500ms
+                };
+                
                 try {
                     console.log(`[${requestId}] Starting spaceshot fetch...`);
                     const response = await fetch(spaceshotUrl, { signal: window.__simAbort.signal });
@@ -1662,7 +1718,13 @@ async function simulate() {
                         // New format: object with paths and heatmap_data
                         payloads = data.paths || [];
                         heatmapData = data.heatmap_data || [];
+                        requestIdFromServer = data.request_id || null;
                         console.log(`New format: ${payloads.length} paths, ${heatmapData.length} heatmap points`);
+                    }
+                    
+                    // Start progress tracking if we have request_id
+                    if (requestIdFromServer) {
+                        startProgressPolling(requestIdFromServer);
                     }
                     
                     // Validate response structure
@@ -1671,12 +1733,22 @@ async function simulate() {
                         throw new Error('Server returned invalid response format. Expected array of paths.');
                     }
                     
-                    if (payloads.length === 0) {
+                    if (payloads.length === 0 && !requestIdFromServer) {
                         console.error('Spaceshot returned empty payloads array');
                         throw new Error('Server returned no simulation results. The simulation may have failed.');
                     }
                     
-                    // Ensemble simulation complete (no progress tracking needed)
+                    // Clean up progress tracking when results are ready
+                    if (payloads.length > 0) {
+                        if (progressPollInterval) {
+                            clearInterval(progressPollInterval);
+                            progressPollInterval = null;
+                        }
+                        if (progressEventSource) {
+                            progressEventSource.close();
+                            progressEventSource = null;
+                        }
+                    }
 
                     // Process ensemble paths (existing functionality)
                     // Note: payloads array order matches modelIds order from server config
@@ -1736,6 +1808,16 @@ async function simulate() {
                         console.warn('No heatmap data to display (heatmapData is empty or null)');
                     }
                 } catch (error) {
+                    // Clean up progress tracking
+                    if (progressPollInterval) {
+                        clearInterval(progressPollInterval);
+                        progressPollInterval = null;
+                    }
+                    if (progressEventSource) {
+                        progressEventSource.close();
+                        progressEventSource = null;
+                    }
+                    
                     if (error && (error.name === 'AbortError' || error.message === 'The operation was aborted.')) {
                         // Cancelled: stop processing
                         console.log('Spaceshot request was cancelled');
