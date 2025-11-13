@@ -132,14 +132,14 @@ def _ensure_ensemble_optimizations(worker_pid):
     with simulate._cache_lock:
         cache_limit = simulate._current_max_cache
         cache_size = len(simulate._simulator_cache)
-    _log(f"Ensemble run starting: cache_size={cache_size}, cache_limit={cache_limit}", 'info', worker_pid)
+    print(f"INFO: [WORKER {worker_pid}] Ensemble run starting: cache_size={cache_size}, cache_limit={cache_limit}", flush=True)
 
 def _prefetch_model(model_id, worker_pid):
     """Prefetch a single model (downloads file and builds simulator)."""
     try:
         simulate._get_simulator(model_id)
     except Exception as e:
-        _log(f"Prefetch failed for model {model_id}: {e}", 'warning', worker_pid)
+        print(f"WARNING: [WORKER {worker_pid}] Prefetch failed for model {model_id}: {e}", flush=True)
 
 def wait_for_prefetch(model_ids, worker_pid, timeout=60, max_models=5):
     """Start background prefetching and wait for first few models. Returns wait time."""
@@ -813,8 +813,6 @@ def spaceshot():
     
     # CRITICAL: Initialize progress tracking IMMEDIATELY before any other processing
     # This ensures SSE connections can find progress even if they connect early
-    _log(f"Ensemble request_id: {request_id}", 'info', worker_pid)
-    
     model_ids = get_model_ids()
     total_ensemble = len(model_ids)
     total_montecarlo = num_perturbations * len(model_ids)
@@ -833,9 +831,15 @@ def spaceshot():
         _progress_tracking[request_id] = progress_data.copy()
     _write_progress(request_id, progress_data)
     
-    _ensure_ensemble_optimizations(worker_pid)
+    # Log ensemble call with key information
+    with simulate._cache_lock:
+        cache_size = len(simulate._simulator_cache)
+        cache_limit = simulate._current_max_cache
+    print(f"INFO: [WORKER {worker_pid}] Ensemble call: request_id={request_id}, models={len(model_ids)}, "
+          f"montecarlo={num_perturbations}×{len(model_ids)}={total_montecarlo}, total_sims={total_simulations}, "
+          f"cache_size={cache_size}, cache_limit={cache_limit}", flush=True)
     
-    _log(f"Ensemble run: {len(model_ids)} models + {num_perturbations}×{len(model_ids)} Monte Carlo", 'info', worker_pid)
+    _ensure_ensemble_optimizations(worker_pid)
     
     # Generate Monte Carlo perturbations
     perturbations = []
@@ -987,7 +991,8 @@ def spaceshot():
         elapsed = time.time() - start_time
         ensemble_landings = sum(1 for p in landing_positions if p.get('perturbation_id') == -1)
         montecarlo_landings = len(landing_positions) - ensemble_landings
-        _log(f"Ensemble complete: {ensemble_success}/{len(model_ids)} paths, {len(landing_positions)} landings in {elapsed:.0f}s", 'info', worker_pid)
+        print(f"INFO: [WORKER {worker_pid}] Ensemble complete: {ensemble_success}/{len(model_ids)} paths, "
+              f"{len(landing_positions)} landings in {elapsed:.0f}s", flush=True)
         
     except Exception as e:
         print(f"ERROR: Ensemble run failed: {e}", flush=True)
