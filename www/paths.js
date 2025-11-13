@@ -1,23 +1,15 @@
 // Controls fetching and rendering of trajectories.
 
-// Cache of compount paths
-rawpathcache = []
-// Track model ids corresponding to each entry in rawpathcache
-rawpathcacheModels = []
-// End pin state
+rawpathcache = [];
+rawpathcacheModels = [];
 var endPinMarker = null;
 var endPinInfoWindow = null;
-// Support multiple end pins in Multi mode
 var endPinMarkers = [];
 var endPinInfoWindows = [];
-// Waypoint info windows (for closing on mobile when toggling off)
 var waypointInfoWindows = [];
-// Launch info captured at simulate-time
 var lastLaunchInfo = null;
-// Multi connector path and collected end positions
 var multiConnectorPath = null;
 var multiEndPositions = [];
-// Zoom listener for end pins
 var endPinZoomListener = null;
 
 function updateEndPinVisibility() {
@@ -69,8 +61,7 @@ function clearEndPinZoomListener() {
     } catch (e) {}
 }
 
-// Shows a single compound path, mode unaware
-function makepaths(btype, allpaths, isControl = false){
+function makepaths(btype, allpaths, isControl = false) {
     rawpathcache.push(allpaths)
     for (index in allpaths) {
         var pathpoints = [];
@@ -97,15 +88,11 @@ function makepaths(btype, allpaths, isControl = false){
 
 
 }
-// Centralized function to clear all visualizations (paths, heatmap, contours)
 function clearAllVisualizations() {
-    // Clear waypoints
     clearWaypoints();
-    // Clear end pin
     clearEndPin();
-    // Clear zoom listener
     clearEndPinZoomListener();
-    // Clear multi connector path and positions
+    
     try {
         if (multiConnectorPath) {
             multiConnectorPath.setMap(null);
@@ -114,24 +101,17 @@ function clearAllVisualizations() {
         multiEndPositions = [];
     } catch (e) {}
     
-    // Clear all paths
     for (let path in currpaths) {
-        if (currpaths[path] && currpaths[path].setMap) {
+        if (currpaths[path]?.setMap) {
             currpaths[path].setMap(null);
         }
     }
-    currpaths = new Array();
+    currpaths = [];
     
-    // Clear heatmap
     if (heatmapLayer) {
         try {
-            if (heatmapLayer.setMap) {
-                heatmapLayer.setMap(null);
-            }
-            if (heatmapLayer.onRemove) {
-                heatmapLayer.onRemove();
-            }
-            // Also remove any event listeners
+            if (heatmapLayer.setMap) heatmapLayer.setMap(null);
+            if (heatmapLayer.onRemove) heatmapLayer.onRemove();
             if (heatmapLayer._boundsListener) {
                 google.maps.event.removeListener(heatmapLayer._boundsListener);
             }
@@ -141,30 +121,19 @@ function clearAllVisualizations() {
         heatmapLayer = null;
     }
     
-    // Clear contours
     clearContours();
-    
-    // Clear raw path cache
-    rawpathcache = new Array();
-    rawpathcacheModels = new Array();
-    
-    console.log("Cleared all visualizations (paths, heatmap, contours)");
+    rawpathcache = [];
+    rawpathcacheModels = [];
 }
 
 function clearWaypoints() {
-    // Close all waypoint info windows (important for mobile where hover panels persist)
-    for (var i = 0; i < waypointInfoWindows.length; i++) {
+    waypointInfoWindows.forEach(win => {
         try {
-            if (waypointInfoWindows[i] && waypointInfoWindows[i].getMap()) {
-                waypointInfoWindows[i].close();
-            }
+            if (win?.getMap()) win.close();
         } catch (e) {}
-    }
+    });
     waypointInfoWindows = [];
-    //Loop through all the markers and remove
-    for (var i = 0; i < circleslist.length; i++) {
-        circleslist[i].setMap(null);
-    }
+    circleslist.forEach(circle => circle.setMap(null));
     circleslist = [];
 }
 
@@ -459,7 +428,6 @@ function setEndPin(endPoint, color, hourOffset) {
     return marker;
 }
 
-// Adds an end pin for multi mode and toggles its trajectory on click
 function addMultiEndPin(payload, hourOffset, color) {
     try {
         // Derive segments from payload depending on mode
@@ -548,10 +516,8 @@ function addMultiEndPin(payload, hourOffset, color) {
     }
 }
 
-// Cache of circles
 circleslist = [];
 
-// Shows a single compound path, but is mode-aware
 function showpath(path, modelId = 1, hourOffset = null, endpointColor = null) {
     switch(btype) {
         case 'STANDARD':
@@ -615,12 +581,9 @@ function getcolor(index){
     }
 }
 
-// Cache of polyline objects
-var currpaths = new Array();
-
-// Contour layers for probability visualization
-var contourLayers = [];  // Array of {polyline, label} objects
-var contourLabels = [];  // Array of label markers
+var currpaths = [];
+var contourLayers = [];
+var contourLabels = [];
 
 // ============================================================================
 // CUSTOM HEATMAP OVERLAY: Preserves actual data shape without circular smoothing
@@ -855,25 +818,6 @@ class CustomHeatmapOverlay extends google.maps.OverlayView {
     }
 }
 
-// ============================================================================
-// HEATMAP VISUALIZATION: Monte Carlo Landing Probability Density
-// ============================================================================
-// Displays a probability density heatmap of landing positions from Monte Carlo
-// simulations using a custom canvas overlay that preserves the actual data shape.
-//
-// How it works:
-// 1. Receives array of landing positions from server (420 points: {lat, lon})
-// 2. Creates custom overlay with controllable smoothing (no forced circular patterns)
-// 3. Renders density grid on canvas with custom color gradient
-// 4. Color gradient: cyan (low density) → green → yellow → orange → red (high)
-// 5. Red areas indicate high probability landing zones (many simulations landed there)
-//
-// Smoothing options:
-// - 'none': Raw density grid (no smoothing, preserves exact shape)
-// - 'epanechnikov': Epanechnikov kernel (rectangular-like, preserves shape well)
-// - 'uniform': Uniform kernel (rectangular, preserves shape)
-// - 'gaussian': Gaussian kernel (smooth but circular - default Google Maps behavior)
-// ============================================================================
 function displayHeatmap(heatmapData) {
     try {
         // Check if Google Maps API is loaded
@@ -1608,16 +1552,35 @@ async function simulate() {
             const useSpaceshot = ensembleEnabled && !isHistorical && (btype === 'STANDARD' || btype === 'ZPB');
             
             if (useSpaceshot && modelIds.length > 1) {
+                // Build URL and extract exact parameter values to match server's request_id generation
                 const spaceshotUrl = URL_ROOT + "/spaceshot?timestamp="
                     + time + "&lat=" + lat + "&lon=" + lon + "&alt=" + alt 
                     + "&equil=" + equil + "&eqtime=" + eqtime 
                     + "&asc=" + asc + "&desc=" + desc;
-                const requestId = `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
                 
-                // Generate request_id matching server's MD5 algorithm
+                // Extract exact URL parameter values (as strings, matching server's request.args)
+                // Parse URL to get exact parameter values that server will receive
+                const urlObj = new URL(spaceshotUrl);
+                const urlParams = urlObj.searchParams;
+                const timestamp = urlParams.get('timestamp') || '';
+                const urlLat = urlParams.get('lat') || '';
+                const urlLon = urlParams.get('lon') || '';
+                const urlAlt = urlParams.get('alt') || '';
+                const urlEquil = urlParams.get('equil') || '';
+                const urlEqtime = urlParams.get('eqtime') || '';
+                const urlAsc = urlParams.get('asc') || '';
+                const urlDesc = urlParams.get('desc') || '';
+                
+                // Server uses base_coeff as float (default 1.0), which becomes "1.0" in f-string
+                // Must match exactly: float 1.0 -> string "1.0" (not "1")
                 const baseCoeff = 1.0;
-                const requestKey = `${String(time)}_${String(lat)}_${String(lon)}_${String(alt)}_${String(equil)}_${String(eqtime)}_${String(asc)}_${String(desc)}_${String(baseCoeff)}`;
+                const baseCoeffStr = baseCoeff.toFixed(1); // Ensures "1.0" format
+                
+                // Generate request_id using exact URL parameter values (matching server)
+                const requestKey = `${timestamp}_${urlLat}_${urlLon}_${urlAlt}_${urlEquil}_${urlEqtime}_${urlAsc}_${urlDesc}_${baseCoeffStr}`;
                 const clientRequestId = CryptoJS?.MD5 ? CryptoJS.MD5(requestKey).toString().substring(0, 16) : null;
+                
+                console.log(`[Client] Generated request_id: ${clientRequestId} from key: ${requestKey}`);
                 
                 if (simBtn) simBtn.textContent = '0%';
                 

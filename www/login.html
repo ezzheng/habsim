@@ -336,38 +336,28 @@
                 redirect: 'follow'
             })
             .then(response => {
-                // Check if redirect is to main page (success) or login page (failure)
+                const showError = () => {
+                    errorMessage.textContent = 'Incorrect password. Please try again.';
+                    errorMessage.classList.add('show');
+                    loginButton.disabled = false;
+                    buttonText.textContent = 'Log In';
+                    passwordInput.focus();
+                };
+                
                 if (response.redirected) {
                     if (response.url.includes('/login') && response.url.includes('error=1')) {
-                        // Wrong password - show error
-                        errorMessage.textContent = 'Incorrect password. Please try again.';
-                        errorMessage.classList.add('show');
-                        loginButton.disabled = false;
-                        buttonText.textContent = 'Log In';
-                        passwordInput.focus();
+                        showError();
                     } else if (response.url === window.location.origin + '/' || response.url.endsWith('/')) {
-                        // Success - store in sessionStorage (expires when tab closes)
                         sessionStorage.setItem('authenticated', 'true');
-                        // Redirect to main app
                         window.location.href = response.url;
                     } else {
-                        // Other redirect - follow it
                         window.location.href = response.url;
                     }
+                } else if (response.ok) {
+                    sessionStorage.setItem('authenticated', 'true');
+                    window.location.href = '/';
                 } else {
-                    // No redirect - check status
-                    if (response.ok) {
-                        // Success
-                        sessionStorage.setItem('authenticated', 'true');
-                        window.location.href = '/';
-                    } else {
-                        // Error - show message
-                        errorMessage.textContent = 'Incorrect password. Please try again.';
-                        errorMessage.classList.add('show');
-                        loginButton.disabled = false;
-                        buttonText.textContent = 'Log In';
-                        passwordInput.focus();
-                    }
+                    showError();
                 }
             })
             .catch(error => {

@@ -152,18 +152,12 @@ google.maps.event.addListener(map, 'click', function (event) {
         
         searchInputContainer.appendChild(searchInput);
         
-        // Initialize Places Autocomplete - only when input is visible
         let autocomplete = null;
         let autocompleteInitialized = false;
         
         const initAutocomplete = () => {
-            // Only initialize if not already done and input is visible
             if (autocompleteInitialized) return;
-            
-            // Check if input is actually visible (expanded)
-            if (!searchInputContainer.classList.contains('expanded')) {
-                return;
-            }
+            if (!searchInputContainer.classList.contains('expanded')) return;
             
             if (typeof google === 'undefined' || !google.maps || !google.maps.places || !google.maps.places.Autocomplete) {
                 console.warn('Places library not loaded');
@@ -184,8 +178,6 @@ google.maps.event.addListener(map, 'click', function (event) {
                     // bindTo may not be available in all API versions
                 }
                 
-                // Immediately hide the container if it gets created (prevents initial flicker)
-                // Check multiple times as Google may create it asynchronously
                 const hideContainerIfNoText = () => {
                     const pacContainer = document.querySelector('.pac-container');
                     if (pacContainer && searchInput.value.trim().length === 0) {
@@ -196,11 +188,7 @@ google.maps.event.addListener(map, 'click', function (event) {
                     }
                 };
                 
-                // Check immediately and after short delays
-                setTimeout(hideContainerIfNoText, 0);
-                setTimeout(hideContainerIfNoText, 50);
-                setTimeout(hideContainerIfNoText, 100);
-                setTimeout(hideContainerIfNoText, 200);
+                [0, 50, 100, 200].forEach(delay => setTimeout(hideContainerIfNoText, delay));
                 
                 // Handle place selection
                 autocomplete.addListener('place_changed', () => {
@@ -225,12 +213,9 @@ google.maps.event.addListener(map, 'click', function (event) {
                     closeSearchBar();
                 });
                 
-                // Function to show/hide autocomplete based on input text
                 const toggleAutocompleteVisibility = () => {
                     const pacContainer = document.querySelector('.pac-container');
                     if (!pacContainer) return;
-                    
-                    // Only show if input has text
                     const hasText = searchInput.value.trim().length > 0;
                     if (hasText) {
                         pacContainer.classList.add('has-text');
@@ -239,101 +224,59 @@ google.maps.event.addListener(map, 'click', function (event) {
                     }
                 };
                 
-                // Style and position autocomplete dropdown based on screen size
                 const styleAutocomplete = () => {
-                    // Only style if search bar is expanded
-                    if (!searchInputContainer.classList.contains('expanded')) {
-                        return;
-                    }
+                    if (!searchInputContainer.classList.contains('expanded')) return;
                     
-                    // Wait for pac-container to be created by Google
                     requestAnimationFrame(() => {
                         const pacContainer = document.querySelector('.pac-container');
-                        if (pacContainer && searchInput) {
-                            // Check if input has text before showing
-                            const hasText = searchInput.value.trim().length > 0;
-                            
-                            const isMobile = window.innerWidth <= 768;
-                            const inputRect = searchInput.getBoundingClientRect();
-                            
-                            // Ensure high z-index, visibility, and pointer events
-                            pacContainer.style.zIndex = '10000';
-                            pacContainer.style.position = 'fixed';
-                            pacContainer.style.pointerEvents = 'auto'; // Enable clicks on container
-                            
-                            // Only show if input has text
-                            if (hasText) {
-                                pacContainer.style.display = 'block';
-                                pacContainer.style.visibility = 'visible';
-                                pacContainer.style.opacity = '1';
-                            } else {
-                                pacContainer.style.display = 'none';
-                                pacContainer.style.visibility = 'hidden';
-                                pacContainer.style.opacity = '0';
-                            }
-                            
-                            if (isMobile) {
-                                // Mobile: dropdown appears below input
-                                pacContainer.style.top = (inputRect.bottom + window.scrollY + 5) + 'px';
-                                pacContainer.style.bottom = 'auto';
-                                pacContainer.style.transform = 'none';
-                            } else {
-                                // Desktop: dropdown appears above input (dropup)
-                                // Calculate distance from top of viewport to top of input
-                                const distanceFromTop = inputRect.top + window.scrollY;
-                                // Position dropdown above input
-                                pacContainer.style.top = (distanceFromTop - 5) + 'px';
-                                pacContainer.style.bottom = 'auto';
-                                pacContainer.style.transform = 'translateY(-100%)';
-                            }
-                            pacContainer.style.left = inputRect.left + 'px';
-                            pacContainer.style.width = inputRect.width + 'px';
-                            
-                            // Ensure all suggestion items can receive clicks
-                            const pacItems = pacContainer.querySelectorAll('.pac-item');
-                            pacItems.forEach(item => {
-                                item.style.pointerEvents = 'auto';
-                                item.style.cursor = 'pointer';
-                            });
-                            
-                            // Ensure autocomplete container blocks map clicks
-                            // Add click handler to prevent event propagation
-                            pacContainer.addEventListener('click', (e) => {
-                                e.stopPropagation(); // Prevent click from reaching map
-                            }, true); // Use capture phase to catch early
-                            
-                            // Also prevent mousedown/touchstart to be thorough
-                            pacContainer.addEventListener('mousedown', (e) => {
-                                e.stopPropagation();
-                            }, true);
-                            
-                            pacContainer.addEventListener('touchstart', (e) => {
-                                e.stopPropagation();
-                            }, true);
+                        if (!pacContainer || !searchInput) return;
+                        
+                        const hasText = searchInput.value.trim().length > 0;
+                        const isMobile = window.innerWidth <= 768;
+                        const inputRect = searchInput.getBoundingClientRect();
+                        
+                        pacContainer.style.zIndex = '10000';
+                        pacContainer.style.position = 'fixed';
+                        pacContainer.style.pointerEvents = 'auto';
+                        pacContainer.style.display = hasText ? 'block' : 'none';
+                        pacContainer.style.visibility = hasText ? 'visible' : 'hidden';
+                        pacContainer.style.opacity = hasText ? '1' : '0';
+                        pacContainer.style.left = inputRect.left + 'px';
+                        pacContainer.style.width = inputRect.width + 'px';
+                        
+                        if (isMobile) {
+                            pacContainer.style.top = (inputRect.bottom + window.scrollY + 5) + 'px';
+                            pacContainer.style.bottom = 'auto';
+                            pacContainer.style.transform = 'none';
+                        } else {
+                            pacContainer.style.top = (inputRect.top + window.scrollY - 5) + 'px';
+                            pacContainer.style.bottom = 'auto';
+                            pacContainer.style.transform = 'translateY(-100%)';
                         }
+                        
+                        pacContainer.querySelectorAll('.pac-item').forEach(item => {
+                            item.style.pointerEvents = 'auto';
+                            item.style.cursor = 'pointer';
+                        });
+                        
+                        ['click', 'mousedown', 'touchstart'].forEach(event => {
+                            pacContainer.addEventListener(event, e => e.stopPropagation(), true);
+                        });
                     });
                 };
                 
-                // Monitor input changes to show/hide autocomplete
                 searchInput.addEventListener('input', () => {
                     toggleAutocompleteVisibility();
                     styleAutocomplete();
-                    // Also check after a short delay to catch delayed rendering
                     setTimeout(() => {
                         toggleAutocompleteVisibility();
                         styleAutocomplete();
                     }, 50);
                 });
                 
-                // Don't show on focus - only on input
-                searchInput.addEventListener('focus', () => {
-                    // Just style positioning, but don't show container yet
-                    styleAutocomplete();
-                });
+                searchInput.addEventListener('focus', styleAutocomplete);
                 
-                // Hide when input loses focus (but keep it if user clicked a suggestion)
-                searchInput.addEventListener('blur', (e) => {
-                    // Small delay to allow click events on suggestions to fire first
+                searchInput.addEventListener('blur', () => {
                     setTimeout(() => {
                         const pacContainer = document.querySelector('.pac-container');
                         if (pacContainer && !pacContainer.contains(document.activeElement)) {
@@ -344,36 +287,21 @@ google.maps.event.addListener(map, 'click', function (event) {
                 
                 window.addEventListener('resize', styleAutocomplete);
                 
-                // Use MutationObserver to watch for pac-container creation and hide it initially
-                // This prevents the flicker when Google creates the container on focus
                 const observer = new MutationObserver((mutations) => {
                     mutations.forEach((mutation) => {
                         mutation.addedNodes.forEach((node) => {
-                            if (node.nodeType === 1) { // Element node
-                                // Check if the added node is pac-container or contains it
-                                if (node.classList && node.classList.contains('pac-container')) {
-                                    // Immediately hide if input has no text
+                            if (node.nodeType === 1) {
+                                if (node.classList?.contains('pac-container') || node.querySelector?.('.pac-container')) {
                                     toggleAutocompleteVisibility();
                                     styleAutocomplete();
-                                } else if (node.querySelector && node.querySelector('.pac-container')) {
-                                    const pacContainer = node.querySelector('.pac-container');
-                                    if (pacContainer) {
-                                        toggleAutocompleteVisibility();
-                                        styleAutocomplete();
-                                    }
                                 }
                             }
                         });
                     });
                 });
                 
-                // Start observing the document body for new elements
-                observer.observe(document.body, {
-                    childList: true,
-                    subtree: true
-                });
+                observer.observe(document.body, { childList: true, subtree: true });
                 
-                // Also check immediately in case container already exists
                 setTimeout(() => {
                     const pacContainer = document.querySelector('.pac-container');
                     if (pacContainer) {
@@ -388,26 +316,20 @@ google.maps.event.addListener(map, 'click', function (event) {
             }
         };
         
-        // Toggle search bar
         const toggleSearchBar = (e) => {
             e.stopPropagation();
             const isExpanded = searchInputContainer.classList.contains('expanded');
             if (isExpanded) {
                 closeSearchBar();
             } else {
-                closeMapTypeMenu(); // Close map menu if open
+                closeMapTypeMenu();
                 searchInputContainer.classList.add('expanded');
-                
-                // Wait for expansion animation to complete, then initialize autocomplete
-                // This ensures the input is visible before autocomplete attaches
                 setTimeout(() => {
-                    // Double-check input is visible before initializing
-                    if (searchInputContainer.classList.contains('expanded') && 
-                        searchInputContainer.offsetWidth > 0) {
+                    if (searchInputContainer.classList.contains('expanded') && searchInputContainer.offsetWidth > 0) {
                         initAutocomplete();
                         searchInput.focus();
                     }
-                }, 350); // Wait for CSS transition (300ms) + small buffer
+                }, 350);
             }
         };
         
@@ -505,52 +427,37 @@ google.maps.event.addListener(map, 'click', function (event) {
         fullscreenButton.title = 'Toggle fullscreen';
         
         // Fullscreen functions
-        function isFullscreenSupported() {
-            return !!(document.fullscreenEnabled || 
-                     document.webkitFullscreenEnabled || 
-                     document.mozFullScreenEnabled || 
-                     document.msFullscreenEnabled);
-        }
+        const isFullscreenSupported = () => !!(document.fullscreenEnabled || document.webkitFullscreenEnabled || document.mozFullScreenEnabled || document.msFullscreenEnabled);
         
-        function getFullscreenElement() {
-            return document.fullscreenElement || 
-                   document.webkitFullscreenElement || 
-                   document.mozFullScreenElement || 
-                   document.msFullscreenElement;
-        }
+        const getFullscreenElement = () => document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement;
         
-        function enterFullscreen() {
+        const enterFullscreen = () => {
             const mapElement = document.getElementById('map');
             if (!mapElement) return;
-            
-            if (mapElement.requestFullscreen) {
-                mapElement.requestFullscreen();
-            } else if (mapElement.webkitRequestFullscreen) {
-                mapElement.webkitRequestFullscreen();
-            } else if (mapElement.mozRequestFullScreen) {
-                mapElement.mozRequestFullScreen();
-            } else if (mapElement.msRequestFullscreen) {
-                mapElement.msRequestFullscreen();
+            const methods = ['requestFullscreen', 'webkitRequestFullscreen', 'mozRequestFullScreen', 'msRequestFullscreen'];
+            for (const method of methods) {
+                if (mapElement[method]) {
+                    mapElement[method]();
+                    break;
+                }
             }
-        }
+        };
         
-        function exitFullscreen() {
-            if (document.exitFullscreen) {
-                document.exitFullscreen();
-            } else if (document.webkitExitFullscreen) {
-                document.webkitExitFullscreen();
-            } else if (document.mozCancelFullScreen) {
-                document.mozCancelFullScreen();
-            } else if (document.msExitFullscreen) {
-                document.msExitFullscreen();
+        const exitFullscreen = () => {
+            const methods = ['exitFullscreen', 'webkitExitFullscreen', 'mozCancelFullScreen', 'msExitFullscreen'];
+            for (const method of methods) {
+                if (document[method]) {
+                    document[method]();
+                    break;
+                }
             }
-        }
+        };
         
-        function updateFullscreenIcon() {
+        const updateFullscreenIcon = () => {
             const isFullscreen = !!getFullscreenElement();
-            fullscreenButton.innerHTML = isFullscreen ? '⛶' : '⛶';
+            fullscreenButton.innerHTML = '⛶';
             fullscreenButton.title = isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen';
-        }
+        };
         
         fullscreenButton.onclick = function(e) {
             e.stopPropagation();
@@ -558,31 +465,18 @@ google.maps.event.addListener(map, 'click', function (event) {
                 console.warn('Fullscreen not supported');
                 return;
             }
-            
             const isFullscreen = !!getFullscreenElement();
-            if (isFullscreen) {
-                exitFullscreen();
-            } else {
-                enterFullscreen();
-            }
+            if (isFullscreen) exitFullscreen();
+            else enterFullscreen();
         };
         
-        // Listen for fullscreen changes
-        const fullscreenEvents = ['fullscreenchange', 'webkitfullscreenchange', 'mozfullscreenchange', 'MSFullscreenChange'];
-        fullscreenEvents.forEach(function(event) {
+        ['fullscreenchange', 'webkitfullscreenchange', 'mozfullscreenchange', 'MSFullscreenChange'].forEach(event => {
             document.addEventListener(event, updateFullscreenIcon);
         });
         
-        // Add fullscreen button
         controlsContainer.appendChild(fullscreenButton);
-        
-        // Add to map container
         const mapContainer = document.getElementById('map');
-        if (mapContainer) {
-            mapContainer.appendChild(controlsContainer);
-        }
-        
-        // Initialize fullscreen icon
+        if (mapContainer) mapContainer.appendChild(controlsContainer);
         updateFullscreenIcon();
     });
 })();
@@ -706,28 +600,25 @@ function getElev() {
         });
 }
 function getTimeremain() {
-    var remainNode = document.getElementById("timeremain");
-    if (!remainNode) {
-        return;
-    }
-    alt = document.getElementById("alt").value;
-    eqalt = document.getElementById("equil").value;
-    if (parseFloat(alt) < parseFloat(eqalt)) {
-        ascr = document.getElementById("asc").value;
-        console.log(alt,eqalt,ascr);
-        time = (eqalt - alt)/(3600*ascr);
-        console.log(time)
-        remainNode.textContent = time.toFixed(2) + " hr ascent remaining"
-    }
-    else {
-        descr = document.getElementById("desc").value;
-        lat = document.getElementById("lat").value;
-        lng = document.getElementById("lon").value;
+    const remainNode = document.getElementById("timeremain");
+    if (!remainNode) return;
+    
+    const alt = parseFloat(document.getElementById("alt").value);
+    const eqalt = parseFloat(document.getElementById("equil").value);
+    
+    if (alt < eqalt) {
+        const ascr = parseFloat(document.getElementById("asc").value);
+        const time = (eqalt - alt) / (3600 * ascr);
+        remainNode.textContent = time.toFixed(2) + " hr ascent remaining";
+    } else {
+        const descr = parseFloat(document.getElementById("desc").value);
+        const lat = document.getElementById("lat").value;
+        const lng = document.getElementById("lon").value;
         fetch(URL_ROOT + "/elev?lat=" + lat + "&lon=" + lng)
             .then(res => res.json())
-            .then((ground) => {
-                time = (alt - ground)/(3600*descr);
-                remainNode.textContent = time.toFixed(2) + " hr descent remaining"
+            .then(ground => {
+                const time = (alt - ground) / (3600 * descr);
+                remainNode.textContent = time.toFixed(2) + " hr descent remaining";
             })
             .catch(err => {
                 console.error('Elevation fetch failed', err);
@@ -746,11 +637,9 @@ async function habmc(){
     getTimeremain();
     
 }
-function toTimestamp(year,month,day,hour,minute){
-    // Create date in local time, then convert to UTC timestamp
-    // This allows users to enter local time and it gets converted to UTC for the simulation
-    var datum = new Date(year,month-1,day,hour,minute);
-    return datum.getTime()/1000;
+function toTimestamp(year, month, day, hour, minute) {
+    const datum = new Date(year, month - 1, day, hour, minute);
+    return datum.getTime() / 1000;
 }
 
 function checkNumPos(numlist){
@@ -786,38 +675,36 @@ function habmcshow(data){
 
 }
 
-function habmcshoweach(data2){
-    let datetime = data2["Human Time"];
-    var res = (datetime.substring(0,11)).split("-");
-    var res2 = (datetime.substring(11,20)).split(":");
-    var hourutc = parseInt(res2[0]) + 7;// Fix this for daylight savings...
-    if(hourutc >= 24){
-        document.getElementById("hr").value = hourutc - 24;
-        const hrMobile = document.getElementById("hr-mobile");
-        if(hrMobile) hrMobile.value = hourutc - 24;
+function habmcshoweach(data2) {
+    const datetime = data2["Human Time"];
+    const res = datetime.substring(0, 11).split("-");
+    const res2 = datetime.substring(11, 20).split(":");
+    let hourutc = parseInt(res2[0]) + 7;
+    
+    if (hourutc >= 24) {
+        hourutc -= 24;
         document.getElementById("day").value = parseInt(res[2]) + 1;
-    }
-    else{
-        document.getElementById("hr").value = hourutc;
-        const hrMobile = document.getElementById("hr-mobile");
-        if(hrMobile) hrMobile.value = hourutc;
+    } else {
         document.getElementById("day").value = parseInt(res[2]);
     }
+    
+    document.getElementById("hr").value = hourutc;
     document.getElementById("mn").value = parseInt(res2[1]);
-    const mnMobile = document.getElementById("mn-mobile");
-    if(mnMobile) mnMobile.value = parseInt(res2[1]);
-
-    console.log(res2);
-
     document.getElementById("yr").value = parseInt(res[0]);
     document.getElementById("mo").value = parseInt(res[1]);
-    document.getElementById("lat").value = lat = parseFloat(data2["latitude"]);
-    document.getElementById("lon").value = lon = parseFloat(data2["longitude"]);
-    position = {
-        lat: lat,
-        lng: lon,
-    };
-    var circle = new google.maps.Circle({
+    
+    const hrMobile = document.getElementById("hr-mobile");
+    const mnMobile = document.getElementById("mn-mobile");
+    if (hrMobile) hrMobile.value = hourutc;
+    if (mnMobile) mnMobile.value = parseInt(res2[1]);
+    
+    const lat = parseFloat(data2["latitude"]);
+    const lon = parseFloat(data2["longitude"]);
+    document.getElementById("lat").value = lat;
+    document.getElementById("lon").value = lon;
+    
+    const position = { lat, lng: lon };
+    const circle = new google.maps.Circle({
         strokeColor: '#FF0000',
         strokeOpacity: 0.8,
         strokeWeight: 2,
@@ -828,31 +715,25 @@ function habmcshoweach(data2){
         radius: 5000,
         clickable: true
     });
-    //var formattedTime = hours + ':' + minutes.substr(-2) + ':' + seconds.substr(-2);
-    var infowindow = new google.maps.InfoWindow({
+    
+    const infowindow = new google.maps.InfoWindow({
         content: "Altitude: " + data2["altitude_gps"] + " Ground speed: " + data2["groundSpeed"] + data2["direction"] + " Ascent rate " + data2["ascentRate"]
     });
-
-    //{"Human Time":"2019-10-05 14:47:14 -0700","transmit_time":1570312034000,"internal_temp":"-18.6","pressure":"  9632","altitude_barometer":"16002","latitude":"  37.082","longitude":"-119.419","altitude_gps":"16892","ballast_time":"0","vent_time":"0","iridium_latitude":"37.1840","iridium_longitude":"-119.5492","iridium_cep":5.0,"imei":"300234067160720","momsn":"93","id":19710,"updated_at":"2019-10-05 14:47:18 -0700","flightTime":15134,"batteryPercent":"NaN","ballastRemaining":0.0,"ballastPercent":"NaN","filtered_iridium_lat":36.911748,"filtered_iridium_lon":-120.754041,"raw_data":"2d31382e362c2020393633322c31363030322c202033372e3038322c2d3131392e3431392c31363839322c302c30","mission":66,"ascentRate":-0.03,"groundSpeed":8.88,"direction":"NORTH-EAST"}
-
-    circle.addListener("mouseover", function () {
+    
+    circle.addListener("mouseover", () => {
         infowindow.setPosition(circle.getCenter());
         infowindow.open(map);
     });
-    circle.addListener("mouseout", function () {
-        infowindow.close(map);
-    });
+    circle.addListener("mouseout", () => infowindow.close(map));
     map.panTo(new google.maps.LatLng(lat, lon));
-
-    alt = parseFloat(data2["altitude_gps"]);
+    
+    const alt = parseFloat(data2["altitude_gps"]);
     document.getElementById("alt").value = alt;
-    rate = parseFloat(data2["ascentRate"]);
-    console.log(rate)
-    if(rate > 0){
+    const rate = parseFloat(data2["ascentRate"]);
+    
+    if (rate > 0) {
         document.getElementById("asc").value = rate;
-    }
-    else {
-        // This order matters because on standard profile there is no eqtime
+    } else {
         document.getElementById("equil").value = alt;
         document.getElementById("desc").value = -rate;
         document.getElementById("eqtime").value = 0;

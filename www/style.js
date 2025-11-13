@@ -59,12 +59,6 @@ if (ascEl) ascEl.value = 4;
 if (equilEl) equilEl.value = 30000;
 if (descEl) descEl.value = 8;
 
-/*document.getElementById("yr").value = 2020
-document.getElementById("mo").value = 9
-document.getElementById("day").value = 23
-document.getElementById("hr").value = 12
-document.getElementById("mn").value = 00*/
-
 fetch(URL_ROOT + "/which").then(res => res.text()).then((result) => {
             document.getElementById("run").textContent = result
         });
@@ -145,56 +139,43 @@ if (document.readyState === 'loading') {
 } else {
     initializeDefaults();
 }
-
-
-// Missions UI removed
-
-function setMode(mode){
+function setMode(mode) {
     btype = mode;
-    // groups
-    var geqtime = document.getElementById("group-eqtime");
-    var gcoeff = document.getElementById("group-coeff");
-    var gdur = document.getElementById("group-dur");
-    var gstep = document.getElementById("group-step");
-    var gtimer = document.getElementById("group-timeremain");
-    // buttons
-    var eqbtn = document.getElementById("eqtimebtn");
-
-    if (mode === "STANDARD"){
+    const geqtime = document.getElementById("group-eqtime");
+    const gcoeff = document.getElementById("group-coeff");
+    const gdur = document.getElementById("group-dur");
+    const gstep = document.getElementById("group-step");
+    const gtimer = document.getElementById("group-timeremain");
+    const eqbtn = document.getElementById("eqtimebtn");
+    const remain = document.getElementById("timeremain");
+    
+    const setDefaultIfEmpty = (id, value) => {
+        const el = document.getElementById(id);
+        if (el && (!el.value || el.value.trim() === "")) el.value = value;
+    };
+    
+    if (mode === "STANDARD") {
         geqtime.style.display = "none";
         gcoeff.style.display = "none";
         gdur.style.display = "none";
         gstep.style.display = "none";
         if (gtimer) gtimer.style.display = "flex";
         if (eqbtn) eqbtn.style.visibility = "visible";
-        // Only set defaults if fields are empty (don't overwrite user changes)
-        // Set on desktop inputs (mobile will sync via event listeners)
-        const ascEl = document.getElementById('asc');
-        const equilEl = document.getElementById('equil');
-        const descEl = document.getElementById('desc');
-        if (ascEl && (!ascEl.value || ascEl.value.trim() === "")) ascEl.value = 4;
-        if (equilEl && (!equilEl.value || equilEl.value.trim() === "")) equilEl.value = 30000;
-        if (descEl && (!descEl.value || descEl.value.trim() === "")) descEl.value = 8;
-        var remain = document.getElementById("timeremain");
+        setDefaultIfEmpty('asc', 4);
+        setDefaultIfEmpty('equil', 30000);
+        setDefaultIfEmpty('desc', 8);
         if (remain) remain.style.visibility = "visible";
-    } else if (mode === "ZPB"){
+    } else if (mode === "ZPB") {
         geqtime.style.display = "flex";
         gcoeff.style.display = "none";
         gdur.style.display = "none";
         gstep.style.display = "none";
         if (gtimer) gtimer.style.display = "flex";
         if (eqbtn) eqbtn.style.visibility = "visible";
-        // Only set defaults if fields are empty (don't overwrite user changes)
-        // Set on desktop inputs (mobile will sync via event listeners)
-        const ascEl = document.getElementById('asc');
-        const equilEl = document.getElementById('equil');
-        const descEl = document.getElementById('desc');
-        if (ascEl && (!ascEl.value || ascEl.value.trim() === "")) ascEl.value = 4;
-        if (equilEl && (!equilEl.value || equilEl.value.trim() === "")) equilEl.value = 30000;
-        if (descEl && (!descEl.value || descEl.value.trim() === "")) descEl.value = 8;
-        const eqtimeEl = document.getElementById("eqtime");
-        if (eqtimeEl && (!eqtimeEl.value || eqtimeEl.value.trim() === "")) eqtimeEl.value = 1;
-        var remain = document.getElementById("timeremain");
+        setDefaultIfEmpty('asc', 4);
+        setDefaultIfEmpty('equil', 30000);
+        setDefaultIfEmpty('desc', 8);
+        setDefaultIfEmpty('eqtime', 1);
         if (remain) remain.style.visibility = "visible";
     } else { // FLOAT
         geqtime.style.display = "none";
@@ -203,21 +184,12 @@ function setMode(mode){
         gstep.style.display = "flex";
         if (gtimer) gtimer.style.display = "none";
         if (eqbtn) eqbtn.style.visibility = "hidden";
-        // Only set defaults if fields are empty (don't overwrite user changes)
-        // Set on desktop inputs (mobile will sync via event listeners)
-        const ascEl = document.getElementById('asc');
-        const equilEl = document.getElementById('equil');
-        const descEl = document.getElementById('desc');
-        if (ascEl && (!ascEl.value || ascEl.value.trim() === "")) ascEl.value = 4;
-        if (equilEl && (!equilEl.value || equilEl.value.trim() === "")) equilEl.value = 30000;
-        if (descEl && (!descEl.value || descEl.value.trim() === "")) descEl.value = 8;
-        const coeffEl = document.getElementById("coeff");
-        const durEl = document.getElementById("dur");
-        const stepEl = document.getElementById("step");
-        if (coeffEl && (!coeffEl.value || coeffEl.value.trim() === "")) coeffEl.value = 0.5;
-        if (durEl && (!durEl.value || durEl.value.trim() === "")) durEl.value = 48;
-            if (stepEl && (!stepEl.value || stepEl.value.trim() === "")) stepEl.value = 120;
-        var remain = document.getElementById("timeremain");
+        setDefaultIfEmpty('asc', 4);
+        setDefaultIfEmpty('equil', 30000);
+        setDefaultIfEmpty('desc', 8);
+        setDefaultIfEmpty('coeff', 0.5);
+        setDefaultIfEmpty('dur', 48);
+        setDefaultIfEmpty('step', 120);
         if (remain) remain.style.visibility = "hidden";
     }
 }
