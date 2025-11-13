@@ -16,64 +16,29 @@ google.maps.event.addListener(map, 'click', function (event) {
     displayCoordinates(event.latLng);
 });
 
-// Custom map type control with drop-up menu
+// Unified control container for Map and Search buttons
 (function() {
     // Wait for map to be ready
     google.maps.event.addListenerOnce(map, 'idle', function() {
-        // Create custom control container
-        const controlDiv = document.createElement('div');
-        controlDiv.id = 'custom-map-type-control';
-        controlDiv.style.cssText = 'margin: 10px; position: absolute; bottom: 0; left: 0; z-index: 1000;';
-        controlDiv.className = 'custom-map-type-container';
+        // Create unified control container
+        const controlsContainer = document.createElement('div');
+        controlsContainer.className = 'map-controls-container';
         
-        // Create control button (styled like Google Maps control)
-        const controlButton = document.createElement('button');
-        controlButton.type = 'button';
-        controlButton.style.cssText = `
-            background-color: white;
-            border: none;
-            border-radius: 2px;
-            box-shadow: 0 1px 4px rgba(0,0,0,0.3);
-            cursor: pointer;
-            padding: 0;
-            width: 40px;
-            height: 40px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 18px;
-            color: #5B5B5B;
-            transition: background-color 0.1s;
-            font-family: Roboto, Arial, sans-serif;
-        `;
-        controlButton.innerHTML = '🗺️';
-        controlButton.title = 'Map type';
+        // ===== MAP TYPE CONTROL =====
+        const mapTypeControl = document.createElement('div');
+        mapTypeControl.className = 'map-type-control';
+        mapTypeControl.style.position = 'relative';
         
-        // Hover effect for button
-        controlButton.onmouseenter = function() {
-            this.style.backgroundColor = '#f5f5f5';
-        };
-        controlButton.onmouseleave = function() {
-            this.style.backgroundColor = 'white';
-        };
+        // Create map type button
+        const mapTypeButton = document.createElement('button');
+        mapTypeButton.type = 'button';
+        mapTypeButton.className = 'map-control-button';
+        mapTypeButton.innerHTML = '🗺️';
+        mapTypeButton.title = 'Map type';
         
         // Create dropdown menu
-        const dropdownMenu = document.createElement('div');
-        dropdownMenu.id = 'custom-map-type-menu';
-        dropdownMenu.className = 'custom-map-type-menu';
-        dropdownMenu.style.cssText = `
-            position: absolute;
-            left: 0;
-            background-color: white;
-            border-radius: 2px;
-            box-shadow: 0 2px 6px rgba(0,0,0,0.3);
-            min-width: 140px;
-            display: none;
-            flex-direction: column;
-            overflow: hidden;
-            z-index: 1001;
-            font-family: Roboto, Arial, sans-serif;
-        `;
+        const mapTypeMenu = document.createElement('div');
+        mapTypeMenu.className = 'custom-map-type-menu';
         
         // Map type options
         const mapTypes = [
@@ -85,7 +50,7 @@ google.maps.event.addListener(map, 'click', function (event) {
         ];
         
         // Create menu items
-        mapTypes.forEach(function(mapType) {
+        mapTypes.forEach((mapType) => {
             const menuItem = document.createElement('button');
             menuItem.type = 'button';
             menuItem.style.cssText = `
@@ -106,57 +71,32 @@ google.maps.event.addListener(map, 'click', function (event) {
             `;
             menuItem.innerHTML = `<span>${mapType.icon}</span> <span>${mapType.label}</span>`;
             
-            // Hover effect
-            menuItem.onmouseenter = function() {
-                this.style.backgroundColor = '#f5f5f5';
-            };
-            menuItem.onmouseleave = function() {
-                this.style.backgroundColor = 'white';
-            };
+            menuItem.onmouseenter = () => menuItem.style.backgroundColor = '#f5f5f5';
+            menuItem.onmouseleave = () => menuItem.style.backgroundColor = 'white';
             
-            // Click handler
-            menuItem.onclick = function() {
+            menuItem.onclick = () => {
                 try {
                     map.setMapTypeId(mapType.id);
                     updateActiveMapType(mapType.id);
-                    dropdownMenu.style.display = 'none';
+                    closeMapTypeMenu();
                 } catch(e) {
                     console.warn('Map type not available:', mapType.id);
                 }
             };
             
-            dropdownMenu.appendChild(menuItem);
+            mapTypeMenu.appendChild(menuItem);
         });
         
         // Remove border from last item
-        const lastItem = dropdownMenu.lastElementChild;
+        const lastItem = mapTypeMenu.lastElementChild;
         if (lastItem) {
             lastItem.style.borderBottom = 'none';
         }
         
-        // Toggle dropdown on button click
-        controlButton.onclick = function(e) {
-            e.stopPropagation();
-            const isVisible = dropdownMenu.style.display === 'flex';
-            dropdownMenu.style.display = isVisible ? 'none' : 'flex';
-            
-            // Update active state
-            if (!isVisible) {
-                updateActiveMapType(map.getMapTypeId());
-            }
-        };
-        
-        // Close dropdown when clicking outside
-        document.addEventListener('click', function(e) {
-            if (!controlDiv.contains(e.target)) {
-                dropdownMenu.style.display = 'none';
-            }
-        });
-        
         // Update active map type indicator
-        function updateActiveMapType(activeId) {
-            const items = dropdownMenu.querySelectorAll('button');
-            items.forEach(function(item, index) {
+        const updateActiveMapType = (activeId) => {
+            const items = mapTypeMenu.querySelectorAll('button');
+            items.forEach((item, index) => {
                 if (mapTypes[index].id === activeId) {
                     item.style.backgroundColor = '#e8f0fe';
                     item.style.color = '#1a73e8';
@@ -165,16 +105,180 @@ google.maps.event.addListener(map, 'click', function (event) {
                     item.style.color = '#5B5B5B';
                 }
             });
-        }
+        };
         
-        // Assemble control
-        controlDiv.appendChild(controlButton);
-        controlDiv.appendChild(dropdownMenu);
+        // Toggle map type menu
+        const toggleMapTypeMenu = (e) => {
+            e.stopPropagation();
+            const isVisible = mapTypeMenu.style.display === 'flex';
+            if (isVisible) {
+                closeMapTypeMenu();
+            } else {
+                closeSearchBar(); // Close search if open
+                mapTypeMenu.style.display = 'flex';
+                updateActiveMapType(map.getMapTypeId());
+            }
+        };
+        
+        const closeMapTypeMenu = () => {
+            mapTypeMenu.style.display = 'none';
+        };
+        
+        mapTypeButton.onclick = toggleMapTypeMenu;
+        
+        mapTypeControl.appendChild(mapTypeButton);
+        mapTypeControl.appendChild(mapTypeMenu);
+        
+        // ===== SEARCH CONTROL =====
+        const searchControl = document.createElement('div');
+        searchControl.className = 'search-control-container';
+        
+        // Create search button
+        const searchButton = document.createElement('button');
+        searchButton.type = 'button';
+        searchButton.className = 'map-control-button';
+        searchButton.innerHTML = '🔍';
+        searchButton.title = 'Search location';
+        
+        // Create search input container
+        const searchInputContainer = document.createElement('div');
+        searchInputContainer.className = 'search-input-container';
+        
+        // Create search input
+        const searchInput = document.createElement('input');
+        searchInput.type = 'text';
+        searchInput.className = 'search-input-field';
+        searchInput.placeholder = 'Search for a location...';
+        
+        searchInputContainer.appendChild(searchInput);
+        
+        // Initialize Places Autocomplete
+        let autocomplete = null;
+        let autocompleteInitialized = false;
+        
+        const initAutocomplete = () => {
+            if (autocompleteInitialized) return;
+            
+            if (typeof google === 'undefined' || !google.maps || !google.maps.places || !google.maps.places.Autocomplete) {
+                console.warn('Places library not loaded');
+                return;
+            }
+            
+            try {
+                autocomplete = new google.maps.places.Autocomplete(searchInput, {
+                    types: ['geocode'],
+                    fields: ['geometry', 'name', 'formatted_address']
+                });
+                
+                // Bind autocomplete to map bounds
+                try {
+                    autocomplete.bindTo('bounds', map);
+                } catch(e) {
+                    // bindTo may not be available in all API versions
+                }
+                
+                // Handle place selection
+                autocomplete.addListener('place_changed', () => {
+                    const place = autocomplete.getPlace();
+                    if (!place.geometry) {
+                        console.warn('No geometry available for place');
+                        return;
+                    }
+                    
+                    const location = place.geometry.location;
+                    const lat = location.lat();
+                    const lng = location.lng();
+                    
+                    // Pan and zoom to location
+                    map.panTo(location);
+                    map.setZoom(12);
+                    
+                    // Update coordinates and marker
+                    displayCoordinates(new google.maps.LatLng(lat, lng));
+                    
+                    // Close search bar
+                    closeSearchBar();
+                });
+                
+                // Style autocomplete dropdown based on screen size
+                const styleAutocomplete = () => {
+                    const pacContainer = document.querySelector('.pac-container');
+                    if (pacContainer) {
+                        const isMobile = window.innerWidth <= 768;
+                        const inputRect = searchInput.getBoundingClientRect();
+                        
+                        if (isMobile) {
+                            // Mobile: dropdown appears below
+                            pacContainer.style.top = (inputRect.bottom + window.scrollY + 5) + 'px';
+                            pacContainer.style.bottom = 'auto';
+                        } else {
+                            // Desktop: dropdown appears above (dropup)
+                            pacContainer.style.bottom = (window.innerHeight - inputRect.top + 5) + 'px';
+                            pacContainer.style.top = 'auto';
+                        }
+                        pacContainer.style.left = inputRect.left + 'px';
+                        pacContainer.style.width = inputRect.width + 'px';
+                    }
+                };
+                
+                searchInput.addEventListener('focus', styleAutocomplete);
+                searchInput.addEventListener('input', styleAutocomplete);
+                window.addEventListener('resize', styleAutocomplete);
+                
+                autocompleteInitialized = true;
+            } catch (e) {
+                console.error('Error initializing Places Autocomplete:', e);
+            }
+        };
+        
+        // Toggle search bar
+        const toggleSearchBar = (e) => {
+            e.stopPropagation();
+            const isExpanded = searchInputContainer.classList.contains('expanded');
+            if (isExpanded) {
+                closeSearchBar();
+            } else {
+                closeMapTypeMenu(); // Close map menu if open
+                searchInputContainer.classList.add('expanded');
+                initAutocomplete();
+                setTimeout(() => searchInput.focus(), 100);
+            }
+        };
+        
+        const closeSearchBar = () => {
+            searchInputContainer.classList.remove('expanded');
+            searchInput.value = '';
+            searchInput.blur();
+        };
+        
+        searchButton.onclick = toggleSearchBar;
+        
+        // Close search on Escape key
+        searchInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                closeSearchBar();
+            }
+        });
+        
+        searchControl.appendChild(searchButton);
+        searchControl.appendChild(searchInputContainer);
+        
+        // Assemble controls
+        controlsContainer.appendChild(mapTypeControl);
+        controlsContainer.appendChild(searchControl);
+        
+        // Close menus when clicking outside
+        document.addEventListener('click', (e) => {
+            if (!controlsContainer.contains(e.target) && !document.querySelector('.pac-container')?.contains(e.target)) {
+                closeMapTypeMenu();
+                closeSearchBar();
+            }
+        });
         
         // Add to map
-        map.controls[google.maps.ControlPosition.BOTTOM_LEFT].push(controlDiv);
+        map.controls[google.maps.ControlPosition.BOTTOM_LEFT].push(controlsContainer);
         
-        // Initialize active state
+        // Initialize active map type
         updateActiveMapType(map.getMapTypeId());
     });
 })();

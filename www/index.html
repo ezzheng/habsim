@@ -63,29 +63,152 @@
             background-color: #f5f5f5 !important;
         }
         
-        /* Map type control: bottom left on desktop, top left on mobile */
-        .custom-map-type-container {
-            bottom: 0 !important;
-            left: 0 !important;
-            top: auto !important;
+        /* Unified control container for Map and Search buttons */
+        .map-controls-container {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            margin: 10px;
+            position: absolute;
+            z-index: 1000;
         }
         
-        /* Dropdown menu: goes up on desktop (bottom left), down on mobile (top left) */
-        .custom-map-type-menu {
-            bottom: 45px !important;
-            top: auto !important;
+        /* Desktop: bottom-left positioning */
+        .map-controls-container {
+            bottom: 0;
+            left: 0;
+            top: auto;
         }
         
+        /* Mobile: top-left positioning */
         @media (max-width: 768px) {
-            .custom-map-type-container {
-                bottom: auto !important;
-                top: 0 !important;
-                left: 0 !important;
+            .map-controls-container {
+                bottom: auto;
+                top: 0;
+                left: 0;
             }
-            
+        }
+        
+        /* Map type control button */
+        .map-control-button {
+            background-color: white;
+            border: none;
+            border-radius: 2px;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+            cursor: pointer;
+            padding: 0;
+            width: 40px;
+            height: 40px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+            color: #5B5B5B;
+            transition: background-color 0.1s;
+            font-family: Roboto, Arial, sans-serif;
+        }
+        
+        .map-control-button:hover {
+            background-color: #f5f5f5;
+        }
+        
+        .map-control-button:active {
+            background-color: #e0e0e0;
+        }
+        
+        .map-control-button:focus {
+            outline: none;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+        }
+        
+        /* Map type dropdown menu */
+        .custom-map-type-menu {
+            position: absolute;
+            left: 0;
+            background-color: white;
+            border-radius: 2px;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+            min-width: 140px;
+            display: none;
+            flex-direction: column;
+            overflow: hidden;
+            z-index: 1001;
+            font-family: Roboto, Arial, sans-serif;
+        }
+        
+        /* Desktop: dropdown goes up from bottom */
+        .custom-map-type-menu {
+            bottom: 45px;
+            top: auto;
+        }
+        
+        /* Mobile: dropdown goes down from top */
+        @media (max-width: 768px) {
             .custom-map-type-menu {
-                bottom: auto !important;
-                top: 45px !important;
+                bottom: auto;
+                top: 45px;
+            }
+        }
+        
+        /* Search control container */
+        .search-control-container {
+            position: relative;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        /* Search input container - hidden by default, expands smoothly */
+        .search-input-container {
+            position: relative;
+            width: 0;
+            opacity: 0;
+            overflow: hidden;
+            transition: width 0.3s ease, opacity 0.3s ease;
+        }
+        
+        .search-input-container.expanded {
+            width: 280px;
+            opacity: 1;
+        }
+        
+        .search-input-field {
+            width: 100%;
+            padding: 8px 12px;
+            border: none;
+            border-radius: 2px;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+            font-size: 14px;
+            font-family: Roboto, Arial, sans-serif;
+            color: #5B5B5B;
+            background-color: white;
+            outline: none;
+            box-sizing: border-box;
+        }
+        
+        .search-input-field:focus {
+            box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+        }
+        
+        /* Autocomplete dropdown styling */
+        .pac-container {
+            z-index: 1002 !important;
+            border-radius: 2px !important;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.3) !important;
+            font-family: Roboto, Arial, sans-serif !important;
+        }
+        
+        /* Desktop: autocomplete drops upward */
+        @media (min-width: 769px) {
+            .pac-container {
+                margin-bottom: 5px !important;
+            }
+        }
+        
+        /* Mobile: autocomplete drops downward */
+        @media (max-width: 768px) {
+            .pac-container {
+                margin-top: 5px !important;
             }
         }
         
@@ -1113,7 +1236,7 @@
         </div>
     </div>
 </main>
-<script type="text/javascript" src="https://maps.googleapis.com/maps/api/js?key=AIzaSyC62-iKLT_54_N0cPnbQlrzIsEKQxiAJgA&v=quarterly&libraries=visualization"></script>
+<script type="text/javascript" src="https://maps.googleapis.com/maps/api/js?key=AIzaSyC62-iKLT_54_N0cPnbQlrzIsEKQxiAJgA&v=quarterly&libraries=visualization,places"></script>
 <script type="text/javascript" src = "style.js"></script>
 <script type="text/javascript" src = "paths.js"></script>
 <script type="text/javascript" src = "util.js"></script>
