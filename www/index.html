@@ -220,6 +220,22 @@
             box-shadow: 0 2px 6px rgba(0,0,0,0.3) !important;
             font-family: Roboto, Arial, sans-serif !important;
             position: fixed !important;
+            pointer-events: auto !important; /* Ensure clicks are captured */
+        }
+        
+        /* Ensure all autocomplete items can receive clicks */
+        .pac-container .pac-item {
+            display: block !important;
+            visibility: visible !important;
+            opacity: 1 !important;
+            pointer-events: auto !important; /* Enable clicks on suggestion items */
+            cursor: pointer !important;
+        }
+        
+        /* Ensure "Powered by Google" badge also captures clicks */
+        .pac-container .pac-logo,
+        .pac-container [class*="pac-logo"] {
+            pointer-events: auto !important;
         }
         
         /* Hide autocomplete when search is not expanded */
@@ -228,13 +244,7 @@
             display: none !important;
             visibility: hidden !important;
             opacity: 0 !important;
-        }
-        
-        /* Ensure pac-items are visible when container is visible */
-        .pac-container .pac-item {
-            display: block !important;
-            visibility: visible !important;
-            opacity: 1 !important;
+            pointer-events: none !important;
         }
         
         /* Desktop: autocomplete drops upward */

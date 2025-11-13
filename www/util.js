@@ -196,6 +196,11 @@ google.maps.event.addListener(map, 'click', function (event) {
                     const lat = location.lat();
                     const lng = location.lng();
                     
+                    // Re-enable map clicks after selection
+                    if (map) {
+                        map.setOptions({ clickableIcons: true });
+                    }
+                    
                     // Pan and zoom to location
                     map.panTo(location);
                     map.setZoom(12);
@@ -221,12 +226,13 @@ google.maps.event.addListener(map, 'click', function (event) {
                             const isMobile = window.innerWidth <= 768;
                             const inputRect = searchInput.getBoundingClientRect();
                             
-                            // Ensure high z-index and visibility
+                            // Ensure high z-index, visibility, and pointer events
                             pacContainer.style.zIndex = '10000';
                             pacContainer.style.position = 'fixed';
                             pacContainer.style.display = 'block';
                             pacContainer.style.visibility = 'visible';
                             pacContainer.style.opacity = '1';
+                            pacContainer.style.pointerEvents = 'auto'; // Enable clicks on container
                             
                             if (isMobile) {
                                 // Mobile: dropdown appears below input
@@ -244,6 +250,27 @@ google.maps.event.addListener(map, 'click', function (event) {
                             }
                             pacContainer.style.left = inputRect.left + 'px';
                             pacContainer.style.width = inputRect.width + 'px';
+                            
+                            // Ensure all suggestion items can receive clicks
+                            const pacItems = pacContainer.querySelectorAll('.pac-item');
+                            pacItems.forEach(item => {
+                                item.style.pointerEvents = 'auto';
+                                item.style.cursor = 'pointer';
+                            });
+                            
+                            // Temporarily disable map clicks when autocomplete is visible
+                            // This prevents clicks from going through to the map
+                            if (map) {
+                                map.setOptions({ clickableIcons: false });
+                                // Re-enable after a delay if autocomplete closes
+                                setTimeout(() => {
+                                    const pacStillVisible = document.querySelector('.pac-container') && 
+                                                           document.querySelector('.pac-container').style.display !== 'none';
+                                    if (!pacStillVisible && searchInputContainer.classList.contains('expanded')) {
+                                        map.setOptions({ clickableIcons: true });
+                                    }
+                                }, 100);
+                            }
                         }
                     });
                 };
@@ -287,6 +314,11 @@ google.maps.event.addListener(map, 'click', function (event) {
         };
         
         const closeSearchBar = () => {
+            // Re-enable map clicks when closing search
+            if (map) {
+                map.setOptions({ clickableIcons: true });
+            }
+            
             // Immediately hide autocomplete dropdown container
             const pacContainer = document.querySelector('.pac-container');
             if (pacContainer) {
