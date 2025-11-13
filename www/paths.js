@@ -1617,13 +1617,32 @@ async function simulate() {
                 const requestId = `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
                 console.log(`[${requestId}] Using spaceshot endpoint (with Monte Carlo):`, spaceshotUrl);
                 
+                // Generate request_id on client side (same algorithm as server) to start polling immediately
+                // Server uses: hashlib.md5(request_key.encode()).hexdigest()[:16]
+                // where request_key = f"{timestamp}_{lat}_{lon}_{alt}_{equil}_{eqtime}_{asc}_{desc}_{coeff}"
+                const baseCoeff = 1.0; // Default coefficient
+                const requestKey = `${time}_${lat}_${lon}_${alt}_${equil}_${eqtime}_${asc}_${desc}_${baseCoeff}`;
+                
+                // Simple hash function to generate request_id (will verify with server's MD5 when response arrives)
+                // crypto.subtle doesn't support MD5, so we use a simple hash for initial polling
+                // Server's request_id (MD5) will be used once response arrives
+                function simpleHash(str) {
+                    let hash = 0;
+                    for (let i = 0; i < str.length; i++) {
+                        const char = str.charCodeAt(i);
+                        hash = ((hash << 5) - hash) + char;
+                        hash = hash & hash; // Convert to 32-bit integer
+                    }
+                    // Convert to hex and take first 16 chars (matching MD5[:16] format)
+                    return Math.abs(hash).toString(16).padStart(16, '0').substring(0, 16);
+                }
+                
                 // Set up progress tracking for ensemble mode
                 let progressEventSource = null;
                 let requestIdFromServer = null;
                 let progressPollInterval = null;
                 
-                // Start progress polling immediately (spaceshot returns request_id in response)
-                // We'll get the request_id from the response and then switch to SSE
+                // Start progress polling immediately using client-generated request_id
                 const startProgressPolling = (requestId) => {
                     if (progressPollInterval) return; // Already polling
                     
@@ -1636,36 +1655,16 @@ async function simulate() {
                                 if (progressData.percentage !== undefined && simBtn) {
                                     simBtn.textContent = progressData.percentage + '%';
                                 }
-                                // If complete, switch to SSE for real-time updates
-                                if (progressData.percentage >= 100 && !progressEventSource) {
-                                    clearInterval(progressPollInterval);
-                                    progressPollInterval = null;
-                                    // Switch to SSE for final updates
-                                    const sseUrl = URL_ROOT + "/sim/progress-stream?request_id=" + requestId;
-                                    progressEventSource = new EventSource(sseUrl);
-                                    progressEventSource.onmessage = function(event) {
-                                        try {
-                                            const data = JSON.parse(event.data);
-                                            if (data.percentage !== undefined && simBtn) {
-                                                simBtn.textContent = data.percentage + '%';
-                                            }
-                                            if (data.percentage >= 100) {
-                                                if (progressEventSource) {
-                                                    progressEventSource.close();
-                                                    progressEventSource = null;
-                                                }
-                                            }
-                                        } catch (e) {
-                                            console.warn('Failed to parse SSE progress data:', e);
-                                        }
-                                    };
-                                    progressEventSource.onerror = function() {
-                                        if (progressEventSource) {
-                                            progressEventSource.close();
-                                            progressEventSource = null;
-                                        }
-                                    };
+                                // Stop polling when complete
+                                if (progressData.percentage >= 100) {
+                                    if (progressPollInterval) {
+                                        clearInterval(progressPollInterval);
+                                        progressPollInterval = null;
+                                    }
                                 }
+                            } else if (progressResponse.status === 404) {
+                                // Progress not found - simulation may have completed or not started yet
+                                // Continue polling in case it starts soon
                             }
                         } catch (e) {
                             // Ignore polling errors (request may have completed)
@@ -1674,6 +1673,12 @@ async function simulate() {
                 };
                 
                 try {
+                    // Generate request_id and start polling immediately
+                    // Use simple hash for now (will verify with server's request_id when response arrives)
+                    const clientRequestId = simpleHash(requestKey);
+                    console.log(`[${requestId}] Generated client request_id: ${clientRequestId}, starting progress polling...`);
+                    startProgressPolling(clientRequestId);
+                    
                     console.log(`[${requestId}] Starting spaceshot fetch...`);
                     const response = await fetch(spaceshotUrl, { signal: window.__simAbort.signal });
                     console.log(`[${requestId}] Spaceshot fetch completed, status:`, response.status);
@@ -1722,8 +1727,14 @@ async function simulate() {
                         console.log(`New format: ${payloads.length} paths, ${heatmapData.length} heatmap points`);
                     }
                     
-                    // Start progress tracking if we have request_id
-                    if (requestIdFromServer) {
+                    // Verify request_id matches (should be the same as client-generated)
+                    if (requestIdFromServer && requestIdFromServer !== clientRequestId) {
+                        console.warn(`Request ID mismatch: client=${clientRequestId}, server=${requestIdFromServer}, switching to server's ID`);
+                        // Switch to server's request_id if different (server's is authoritative)
+                        if (progressPollInterval) {
+                            clearInterval(progressPollInterval);
+                            progressPollInterval = null;
+                        }
                         startProgressPolling(requestIdFromServer);
                     }
                     

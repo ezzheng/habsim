@@ -33,13 +33,20 @@ CORS(app)
 Compress(app)  # Automatically compress responses (10x size reduction)
 
 # Suppress access logging for /sim/status endpoint to reduce Railway log noise
-# Configure Werkzeug logger to filter out /sim/status requests
-werkzeug_logger = logging.getLogger('werkzeug')
+# Filter both Werkzeug (dev server) and Gunicorn (production) access logs
 class StatusLogFilter(logging.Filter):
     def filter(self, record):
-        # Filter out /sim/status access logs
-        return '/sim/status' not in record.getMessage()
+        # Filter out /sim/status access logs from any logger
+        msg = record.getMessage()
+        return '/sim/status' not in msg
+
+# Apply filter to Werkzeug logger (dev server)
+werkzeug_logger = logging.getLogger('werkzeug')
 werkzeug_logger.addFilter(StatusLogFilter())
+
+# Apply filter to Gunicorn access logger (production)
+gunicorn_access_logger = logging.getLogger('gunicorn.access')
+gunicorn_access_logger.addFilter(StatusLogFilter())
 
 # Password for authentication
 LOGIN_PASSWORD = os.environ.get('HABSIM_PASSWORD')
