@@ -2,186 +2,442 @@
 High Altitude Balloon Simulator
 
 ## Overview
-This is an offshoot of the prediction server developed for the Stanford Space Initiative's Balloons team. It restores core functionality and introduces a simple UI that suits the current needs of the balloons team.
+HABSIM is a web-based trajectory prediction system for high-altitude balloons. It uses GEFS (Global Ensemble Forecast System) weather data to simulate balloon flights through three phases: ascent, coast/float, and descent. The system supports single model predictions, ensemble runs across 21 weather models, and Monte Carlo uncertainty analysis.
 
-## How It Works
+## Architecture
 
-1. **User Interface**: Web UI (`www/`) allows users to set launch parameters and visualize predictions
-2. **API Server**: Flask application (`app.py`, deployed on Railway) receives requests and coordinates simulations
-3. **Wind Data**: GEFS (Global Ensemble Forecast System) weather files from AWS S3 are cached locally (`gefs.py`)
-4. **Simulation**: Physics engine (`simulate.py`) calculates balloon trajectory using wind data
-5. **Results**: JSON trajectory data is returned to browser and rendered on Google Maps
+### Request Flow
 
-## Files
+#### 1. `/sim/singlezpb` - Single Model Simulation
 
-### Core Application
-- **`app.py`** - Flask WSGI application serving REST API + static assets
-  - Routes: `/sim/singlezpb`, `/sim/spaceshot`, `/sim/elev`, `/sim/models`, `/sim/progress`, `/sim/cache-status`
-  - Startup helpers: `_start_cache_trim_thread()` (ensures background trim thread is running) and `_prewarm_cache()` (builds simulator for model 0, memory-maps `worldelev.npy`)
-  - `ThreadPoolExecutor(max_workers=32)` drives ensemble + Monte Carlo runs (441 simulations)
-  - Dynamic cache expansion: ensemble requests lift simulator cap to 30; trims back to 10 after the run finishes
-  - Idle watchdog: workers that stay idle for 2 minutes trigger a deep cleanup (drops simulators, keeps `worldelev.npy` mapped, runs multi-pass GC + `malloc_trim`)
-  - `Cache-Control` headers + `flask-compress` for smaller responses; `/sim/cache-status` surfaces cache/memory state for debugging
+**Client Request** (`www/paths.js`):
+- User clicks "Simulate" button
+- Frontend calls `/sim/singlezpb` with launch parameters (timestamp, lat, lon, alt, equil, eqtime, asc, desc, model)
+- Used for single model runs or FLOAT mode
 
-### Simulation Engine
-- **`simulate.py`** - Simulation orchestrator
-  - Multi-simulator LRU cache: 10 simulators in normal mode, 30 during ensemble (per worker, optimized for 32GB RAM)
-  - Ensemble window auto-expires after 60s (capped at 5 minutes). When idle >2 minutes, a deep cleanup clears simulators, resets cache limits, and trims RSS via `malloc_trim(0)`
-  - **Normal mode**: Uses memory-mapped wind files for memory efficiency (~150MB per simulator)
-  - **Ensemble mode**: Preloads arrays into RAM for CPU-bound performance (~460MB per simulator, 5-10s simulations vs 50-80s with memory-mapping)
-  - Model prefetching: Background thread prefetches all 21 models when ensemble mode starts
-  - `_periodic_cache_trim()` runs every ~20s, enforces limits, and calls the idle cleaner when appropriate
-  - Delayed cleanup queue: 2-second delay after eviction to prevent race conditions
-  - Prediction cache: 200 entries, 1hr TTL; refreshed whenever GEFS cycle changes
-  - Defensive checks: Validates simulator wind_file is not None to prevent race condition crashes
-  - Coordinates `WindFile`, `ElevationFile`, and `Simulator`, returning `[timestamp, lat, lon, alt]` paths
+**Server Processing** (`app.py`):
+1. **Route Handler** (`singlezpbh()`):
+   - Parses request arguments using `get_arg()` helper
+   - Converts timestamp to UTC datetime
+   - Calls `singlezpb()` function
 
-- **`windfile.py`** - GEFS data parser with 4D interpolation
-  - Loads NumPy-compressed `.npz` files (wind vectors at pressure levels)
-  - 4D linear interpolation (4-dimensional): (latitude, longitude, altitude, time) → (u, v) wind components
-  - **Normal mode**: Uses `mmap_mode='r'` (memory-mapped read-only mode) for memory-efficient access (~150MB per simulator)
-  - **Ensemble mode**: Pre-loads full arrays into RAM (~460MB per simulator) for faster CPU-bound simulation (eliminates disk I/O, 5-10s vs 50-80s)
+2. **Simulation Function** (`singlezpb()` in `app.py`):
+   - **Phase 1 - Ascent**: Calls `simulate.simulate()` with positive ascent rate
+     - Calculates duration: `(equil - alt) / asc / 3600` hours
+     - Uses `elevation=False` (no ground checks during ascent)
+   - **Phase 2 - Coast**: Calls `simulate.simulate()` with zero vertical rate
+     - Balloon floats at burst altitude for `eqtime` hours
+   - **Phase 3 - Descent**: Calls `simulate.simulate()` with negative descent rate
+     - Calculates duration: `alt / desc / 3600` hours
+     - Uses `elevation=True` (stops when balloon hits ground)
 
-- **`habsim/classes.py`** - Core physics classes
-  - `Balloon`: State container (lat, lon, alt, time, ascent_rate, burst_alt)
-  - `Simulator`: Numerical integrator using Runge-Kutta 2nd order (RK2 / Midpoint method) with wind advection
-  - `ElevationFile`: Wrapper for `worldelev.npy` array with lat/lon → elevation lookup (uses memory-mapping `mmap_mode='r'` to avoid loading 430MB into RAM)
+3. **Core Simulation** (`simulate.simulate()` in `simulate.py`):
+   - Checks prediction cache first (LRU cache, 200 entries, 1hr TTL)
+   - Marks model as in-use to prevent cleanup races
+   - Gets simulator via `_get_simulator(model)`:
+     - Checks if simulator exists in cache (`_simulator_cache`)
+     - If cache miss: loads GEFS file via `gefs.load_gefs()`, creates `WindFile`, creates `Simulator`
+     - Validates simulator wind_file is not None (race condition protection)
+   - Creates `Balloon` object with initial state
+   - Calls `simulator.simulate()` to compute trajectory
+   - Converts trajectory to path array: `[timestamp, lat, lon, alt, u_wind, v_wind, 0, 0]`
+   - Caches successful result
+   - Returns path array
+
+4. **Physics Engine** (`Simulator.simulate()` in `habsim/classes.py`):
+   - Uses Runge-Kutta 2nd order (RK2) integration
+   - For each time step:
+     - Calls `Simulator.step()`:
+       - Gets wind vector via `wind_file.get(lat, lon, alt, time)`:
+         - `WindFile.get()` calls `get_indices()` to convert coordinates to array indices
+         - Calls `interpolate()` for 4D linear interpolation (lat, lon, altitude, time)
+         - Returns (u, v) wind components
+       - Computes horizontal movement from wind + air velocity
+       - Updates balloon position using RK2 integration
+       - Checks ground elevation if descending (`elevation=True`)
+       - Stops if balloon altitude ≤ ground elevation
+     - Appends new record to trajectory
+   - Returns `Trajectory` object with all time steps
+
+5. **Response**:
+   - Returns JSON: `[rise, coast, fall]` - three arrays for each flight phase
+   - Each array contains `[timestamp, lat, lon, alt, u_wind, v_wind, 0, 0]` tuples
+
+**Client Rendering** (`www/paths.js`):
+- Receives trajectory data
+- Draws `google.maps.Polyline` on map
+- Adds waypoint markers with altitude/time info
+
+---
+
+#### 2. `/sim/spaceshot` - Ensemble + Monte Carlo Simulation
+
+**Client Request** (`www/paths.js`):
+- User enables "Ensemble" toggle and clicks "Simulate"
+- Frontend calls `/sim/spaceshot` with launch parameters + `num_perturbations=20`
+- Used for ensemble runs (21 models) with Monte Carlo uncertainty analysis
+
+**Server Processing** (`app.py`):
+1. **Route Handler** (`spaceshot()`):
+   - Parses arguments using `get_arg()` helper
+   - Generates request ID using `generate_request_id()` (MD5 hash)
+   - Activates ensemble mode via `activate_ensemble_mode()`:
+     - Calls `simulate.set_ensemble_mode()` which expands cache limit from 10 → 30 simulators
+     - Starts background prefetch thread to pre-load all 21 models
+   - Gets model IDs via `get_model_ids()` (typically 0-20)
+   - Initializes progress tracking dictionary
+   - Generates Monte Carlo perturbations:
+     - Creates 20 parameter variations using perturbation helpers:
+       - `perturb_lat()`: ±0.001° ≈ ±111m
+       - `perturb_lon()`: ±0.001° ≈ ±111m
+       - `perturb_alt()`: ±50m
+       - `perturb_equil()`: ±200m
+       - `perturb_eqtime()`: ±10%
+       - `perturb_rate()`: ±0.1 m/s
+       - `perturb_coefficient()`: 0.9-1.0 (weighted)
+   - Waits for prefetch via `wait_for_prefetch()` (waits for first 5 models to load)
+
+2. **Parallel Execution**:
+   - Creates `ThreadPoolExecutor` with `max_workers=min(32, os.cpu_count())`
+   - Submits 21 ensemble simulations (one per model):
+     - Each calls `run_ensemble_simulation(model)`:
+       - Calls `singlezpb()` with base parameters
+       - Extracts landing position via `extract_landing_position()`
+       - Returns full trajectory path
+   - Submits 420 Monte Carlo simulations (20 perturbations × 21 models):
+     - Each calls `run_montecarlo_simulation(pert, model)`:
+       - Calls `singlezpb()` with perturbed parameters
+       - Extracts only landing position (lat, lon)
+       - Returns landing dict with `perturbation_id`, `model_id`, `weight=1.0`
+   - Total: 441 simulations running in parallel
+
+3. **Progress Tracking**:
+   - Batches progress updates (every 10 completions) to reduce lock contention
+   - Updates `_progress_tracking[request_id]` with:
+     - `completed`: total simulations done
+     - `ensemble_completed`: ensemble paths done
+     - `montecarlo_completed`: Monte Carlo simulations done
+   - Client polls `/sim/progress?request_id=...` or uses SSE `/sim/progress-stream`
+
+4. **Result Collection**:
+   - Ensemble paths: stored in `paths` array (21 trajectories for line plotting)
+   - Landing positions: stored in `landing_positions` array (441 total: 21 ensemble + 420 Monte Carlo)
+   - Ensemble landings have `perturbation_id=-1` and `weight=2.0`
+   - Monte Carlo landings have `perturbation_id=0-19` and `weight=1.0`
+
+5. **Cleanup**:
+   - Decrements ensemble counter
+   - Trims cache back to normal (10 simulators) via `simulate._trim_cache_to_normal()`
+   - Schedules progress tracking cleanup after 30 seconds
+
+6. **Response**:
+   - Returns JSON: `{paths: [...], heatmap_data: [...], request_id: "..."}`
+   - `paths`: 21 ensemble trajectories (for line plotting)
+   - `heatmap_data`: 441 landing positions (for probability density heatmap)
+
+**Client Rendering** (`www/paths.js`):
+- Receives ensemble paths and heatmap data
+- Draws 21 colored `google.maps.Polyline` objects (one per model)
+- Creates custom heatmap overlay using `CustomHeatmapOverlay`:
+  - Performs kernel density estimation on 420 Monte Carlo landing positions
+  - Renders probability contours (30/50/70/90% cumulative mass)
+  - Color gradient: Green (low) → Yellow → Orange → Red (high density)
+
+---
+
+#### 3. Multi Mode - Sequential Single Simulations
+
+**Client Request** (`www/paths.js`):
+- User enables "Multi" toggle and clicks "Simulate"
+- Frontend makes sequential calls to `/sim/singlezpb` with different hour offsets
+- Used for visualizing trajectory changes over time (e.g., launch at different hours)
+
+**Client Processing** (`www/paths.js`):
+1. **Multi Simulation Loop**:
+   - Calculates hour offsets (e.g., -6, -3, 0, +3, +6 hours from base time)
+   - For each offset:
+     - Calls `/sim/singlezpb` with `timestamp = base_time + offset * 3600`
+     - Uses `model=0` (control run only)
+     - Waits for response
+   - Each call follows the same flow as singlezpb (see above)
+
+2. **Rendering**:
+   - For each successful response:
+     - Calls `addMultiEndPin()` to place end marker on map
+     - Stores trajectory data but doesn't draw it yet
+     - End markers are clickable - clicking draws the full trajectory
+   - Draws connector line between all end positions
+
+**Server Processing**:
+- Each request is handled independently as a normal `/sim/singlezpb` call
+- No special server-side coordination needed
+- Cache benefits: subsequent calls with same parameters use cached results
+
+---
+
+## File Structure and Responsibilities
+
+### Core Application Files
+
+**`app.py`** - Flask WSGI application
+- **Purpose**: REST API server, request routing, ensemble coordination
+- **Key Functions**:
+  - `singlezpb()`: Three-phase simulation (ascent, coast, descent)
+  - `spaceshot()`: Ensemble + Monte Carlo coordinator
+  - `activate_ensemble_mode()`: Expands cache, starts prefetch
+  - `wait_for_prefetch()`: Waits for models to load
+  - `perturb_*()`: Monte Carlo parameter perturbation helpers
+  - `extract_landing_position()`: Extracts final (lat, lon) from trajectory
+  - `update_progress()`: Atomically updates progress tracking
+- **Endpoints**:
+  - `/sim/singlezpb`: Single model simulation
+  - `/sim/spaceshot`: Ensemble + Monte Carlo simulation
+  - `/sim/progress`: Polling progress endpoint
+  - `/sim/progress-stream`: SSE progress stream
+  - `/sim/elev`: Elevation lookup
+  - `/sim/wind`, `/sim/windensemble`: Wind data lookup
+  - `/sim/models`, `/sim/status`, `/sim/cache-status`: Status endpoints
+
+**`simulate.py`** - Simulation orchestrator
+- **Purpose**: Simulator cache management, trajectory calculation coordination
+- **Key Functions**:
+  - `simulate()`: Main simulation function (checks cache, gets simulator, runs physics)
+  - `_get_simulator()`: Gets or creates simulator for a model (with caching)
+  - `set_ensemble_mode()`: Activates ensemble mode (expands cache, starts prefetch)
+  - `_trim_cache_to_normal()`: Trims cache back to normal size
+  - `_periodic_cache_trim()`: Background thread for cache management
+  - `_idle_memory_cleanup()`: Deep cleanup when worker is idle
+  - `refresh()`: Checks for GEFS model updates (every 5 minutes)
+- **Cache Management**:
+  - `_simulator_cache`: LRU cache of Simulator objects (10 normal, 30 ensemble)
+  - `_prediction_cache`: LRU cache of trajectory results (200 entries, 1hr TTL)
+  - `_in_use_models`: Set of models currently in use (prevents cleanup races)
+  - `_cleanup_queue`: Delayed cleanup queue (2-second delay after eviction)
+
+**`windfile.py`** - GEFS wind data access
+- **Purpose**: Loads and interpolates 4D wind data (lat, lon, alt, time)
+- **Key Functions**:
+  - `WindFile.__init__()`: Loads NPZ file, extracts to memory-mapped .npy
+  - `WindFile.get()`: Gets wind vector at arbitrary coordinates
+  - `WindFile.get_indices()`: Converts physical coordinates to array indices
+  - `WindFile.interpolate()`: 4D linear interpolation
+  - `_load_memmap_data()`: Extracts NPZ to memory-mapped .npy (one-time cost)
+- **Access Modes**:
+  - Normal mode: Memory-mapped (`mmap_mode='r'`) - ~150MB per simulator
+  - Ensemble mode: Preloaded arrays - ~460MB per simulator (faster, CPU-bound)
+
+**`gefs.py`** - GEFS file management
+- **Purpose**: Downloads and caches GEFS weather files from AWS S3
+- **Key Functions**:
+  - `load_gefs()`: Ensures file is cached, returns path
+  - `_ensure_cached()`: Downloads from S3 if not cached, handles locking/retries
+  - `open_gefs()`: Opens text files (e.g., `whichgefs` timestamp)
+  - `_cleanup_old_cache_files()`: LRU eviction when cache exceeds limits
+- **Caching**:
+  - Disk cache: `/app/data/gefs` (or `/tmp/habsim-gefs/` fallback)
+  - Max 30 weather files (~9.2GB) + `worldelev.npy` (451MB, never evicted)
+  - Per-file locking prevents duplicate downloads across workers
+  - Connection pooling (64 connections) for high concurrency
+
+**`habsim/classes.py`** - Core physics classes
+- **Purpose**: Balloon state, physics engine, trajectory container
+- **Key Classes**:
+  - `Balloon`: State container (location, altitude, time, wind_vector, ground_elev)
+  - `Simulator`: Physics engine using Runge-Kutta 2nd order integration
+    - `Simulator.step()`: Single time step (RK2 integration)
+    - `Simulator.simulate()`: Full trajectory simulation
+  - `Location`: Geographic coordinates (lat, lon)
   - `Trajectory`: Time-series container for path points
+  - `ElevationFile`: Ground elevation data access (memory-mapped)
 
-### Data Pipeline
-- **`gefs.py`** - GEFS file downloader with LRU cache and AWS S3 integration
-  - **Storage Backend**: AWS S3 via boto3 SDK (`boto3.client('s3')`)
-  - **Authentication**: IAM credentials (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`) with region (`AWS_REGION`)
-  - **Bucket**: Configurable via `S3_BUCKET_NAME` env var (default: `habsim-storage`)
-  - **Client Configuration**: Dual S3 clients - main client (64 connections, 3 retries) for large files, status client (4 connections, 2 retries) for `whichgefs` checks
-  - **Operations**: `get_object()` for downloads (streaming), `upload_file()` for uploads (auto-multipart), `delete_object()` for cleanup, `list_objects_v2()` for listing
-  - **Error Handling**: `ClientError` exceptions with `NoSuchKey` detection for missing files
-  - **LRU Eviction**: Max 30 weather files (~9.2GB), `worldelev.npy` (451MB) always kept
-  - **Caching**: Files cached on disk with access-time tracking, automatic cleanup before new downloads
-  - **Download Features**: Per-file locking (fcntl), extended timeouts (30 min for large files), progress logging, stall detection (120s), NPZ validation
-  - **Pre-warming**: Pre-downloads `worldelev.npy` at startup to avoid on-demand failures
+**`elev.py`** - Elevation data access
+- **Purpose**: Bilinear interpolation for ground elevation lookup
+- **Key Functions**:
+  - `getElevation()`: Returns elevation at (lat, lon) using bilinear interpolation
+  - `_get_elev_data()`: Thread-safe singleton loader (memory-mapped)
 
-- **`elev.py`** - Elevation data loader
-  - Loads preprocessed `worldelev.npy` (global ~0.017° resolution array, ~60 arc-seconds)
-  - Fast bilinear interpolation (2D interpolation method) for lat/lon → meters above sea level
-  - Results rounded to nearest hundredth (2 decimal places)
+### Frontend Files
 
-### Automation & Scripts (`scripts/`)
-- **`scripts/auto_downloader.py`** - Automated GEFS downloader daemon
-  - Downloads 21 GEFS models every 6 hours and uploads to AWS S3
-  - Configurable via `downloader.DOWNLOAD_CONTROL` and `downloader.NUM_PERTURBED_MEMBERS` (currently 21 models: 0-20)
-  - Runs via GitHub Actions (scheduled every 6 hours) or as a background daemon
-  - Test mode: `python3 scripts/auto_downloader.py --test`
-  - Cleans up old model files from S3 automatically
+**`www/index.html`** - Single-page application
+- Google Maps integration
+- Parameter input forms
+- Ensemble/Multi mode toggles
 
-- **`downloader.py`** - GEFS data pipeline script
-  - Fetches GRIB2 files (Gridded Binary format) from NOAA NOMADS, converts to `.npz` format
-  - Configuration: `DOWNLOAD_CONTROL=True` (download control model), `NUM_PERTURBED_MEMBERS=20` (21 models total: 0-20)
-  - Used by auto-downloader and can be run manually: `python3 downloader.py YYYYMMDDHH`
+**`www/paths.js`** - Map rendering and API client
+- `simulate()`: Main simulation function (routes to singlezpb or spaceshot)
+- `addMultiEndPin()`: Multi mode end marker placement
+- `CustomHeatmapOverlay`: Monte Carlo heatmap visualization
+- Progress polling and SSE handling
 
-- **`scripts/save_elevation.py`** - One-time elevation preprocessing utility
-  - Converts GMTED2010 GeoTIFF (Geographic Tagged Image File Format) → NumPy array format
+**`www/util.js`** - Map utilities
+- Google Maps initialization
+- Coordinate formatting
+- Elevation API calls
 
-### Frontend (`www/`)
-- **`index.html`** - Single-page application with embedded CSS/JS
-  - CSS Grid layout for mobile (2x3 grid), Flexbox for desktop
-  - Google Maps API v3 integration
-  - Real-time parameter inputs with validation
-  - Ensemble toggle vs. single simulation (model 0)
-  - Vercel Speed Insights integration for performance monitoring
+**`www/style.js`** - Mode switching
+- Standard/ZPB/Float balloon type switching
+- Server status polling
 
-- **`paths.js`** - Map rendering and API client
-  - Fetches trajectories via `fetch()` (JavaScript HTTP client) from `/sim/singlezpb` or `/sim/spaceshot`
-  - Uses `/sim/spaceshot` endpoint for ensemble runs (parallel execution + Monte Carlo)
-  - Falls back to sequential `/sim/singlezpb` calls for single model or FLOAT mode
-  - Fetches model configuration from `/sim/models` endpoint on page load
-  - Dynamically uses server-configured model IDs for ensemble runs
-  - Draws `google.maps.Polyline` objects with color-coded paths (21 ensemble paths)
-  - **Monte Carlo Heatmap**: Custom canvas overlay showing probability density from 420 landing positions
-    - Custom kernel density estimation with configurable smoothing (`'epanechnikov'` default, shape-preserving)
-    - Color gradient: Green (low) → Yellow → Orange → Red (high density, inner)
-    - Probability contours at cumulative mass 30/50/70/90% (higher % encloses larger area)
-    - Waypoints/labels remain hoverable (heatmap below interactive pane; contour polygons non-clickable)
-    - Clears automatically when paths are cleared (map click or new simulation)
-  - Waypoint circles with click handlers showing altitude/time info windows
-  - Debounced elevation fetching (150ms) to prevent rapid-fire requests
+---
 
-- **`style.js`** - Mode switching logic (Standard/ZPB/Float balloon types)
-  - Server status polling (every 5 seconds) for live updates
-  - Fetches model configuration on page load
+## Data Flow Diagrams
 
-- **`util.js`** - Map utilities and coordinate helpers
-  - Google Maps initialization, lat/lon formatting, elevation API calls
+### Single Model Simulation Flow
 
-### Deployment Configuration
-- **`gunicorn_config.py`** - Production WSGI server config for Gunicorn (Python WSGI HTTP server)
-  - Optimized for Railway (32GB RAM, 32 vCPU)
-  - `workers=4`, `threads=8` (32 concurrent capacity via `gthread` worker class)
-  - `preload_app=True` for shared code between workers (reduces memory duplication)
-  - **Strategy**: Fewer workers + more threads = same CPU capacity with less RAM (threads share memory)
-  - `max_requests=1000` for automatic worker recycling to prevent memory leaks
-  - `timeout=900` (15 minutes) for long-running simulations (ensemble ~30-60s, Monte Carlo ~5-15min)
+```
+Client Request
+    ↓
+app.py: singlezpbh() [route handler]
+    ↓
+app.py: singlezpb() [three-phase simulation]
+    ↓
+simulate.py: simulate() [orchestrator]
+    ├─ Check prediction cache
+    ├─ simulate.py: _get_simulator()
+    │   ├─ Check simulator cache
+    │   ├─ gefs.py: load_gefs() [download if needed]
+    │   ├─ windfile.py: WindFile() [load wind data]
+    │   └─ habsim/classes.py: Simulator() [create physics engine]
+    ├─ habsim/classes.py: Balloon() [create state]
+    └─ habsim/classes.py: Simulator.simulate()
+        └─ habsim/classes.py: Simulator.step() [RK2 integration]
+            ├─ windfile.py: WindFile.get() [wind interpolation]
+            └─ habsim/classes.py: ElevationFile.elev() [ground check]
+    ↓
+Response: [rise, coast, fall] arrays
+```
 
-- **`Procfile`** - Railway deployment configuration
-  - Specifies start command: `gunicorn app:app -c gunicorn_config.py`
+### Ensemble Simulation Flow
 
-- **`requirements.txt`** - Python package dependencies
-  - `flask==3.0.2`, `flask-cors==4.0.0`, `flask-compress==1.15` (Gzip compression)
-  - `numpy==1.26.4` (numerical computing), `requests==2.32.3` (HTTP library), `gunicorn==22.0.0`
-  - `boto3==1.35.0` (AWS S3 SDK for cloud storage operations)
+```
+Client Request
+    ↓
+app.py: spaceshot() [route handler]
+    ├─ activate_ensemble_mode() [expand cache, start prefetch]
+    ├─ Generate 20 Monte Carlo perturbations
+    └─ ThreadPoolExecutor (32 workers)
+        ├─ 21 ensemble futures → singlezpb() → extract landing
+        └─ 420 Monte Carlo futures → singlezpb(perturbed) → extract landing
+    ↓
+Response: {paths: [...], heatmap_data: [...], request_id: "..."}
+```
 
-- **`vercel.json`** - Vercel deployment configuration
-  - Routes `/sim/*` → Python build (`app.py`), `/*` → static files (`www/`)
-  - Enables serverless deployment on Vercel platform (frontend only)
+### Multi Mode Flow
 
-### Documentation
-- **`OPTIMIZATIONS.md`** - Performance tuning reference
-  - Caching strategies (dynamic simulator cache, file cache, prediction cache)
-  - Memory management and auto-trimming behavior
-  - Performance profiles for single vs ensemble runs
-  - Railway configuration details
+```
+Client Request (sequential)
+    ↓
+For each hour offset:
+    app.py: singlezpbh() [same as single model]
+    ↓
+    [Same flow as single model simulation]
+    ↓
+    Response: [rise, coast, fall]
+    ↓
+    paths.js: addMultiEndPin() [place marker, store trajectory]
+    ↓
+Draw connector line between all endpoints
+```
 
-## Data Storage
+---
 
-### AWS S3 Storage (Cloud)
-- **Location**: AWS S3 bucket (`habsim-storage`, configurable via `S3_BUCKET_NAME`)
-- **Region**: `us-west-1` (configurable via `AWS_REGION`)
-- **Files**: 21 model `.npz` files per forecast cycle + `whichgefs` timestamp file
-- **Purpose**: Long-term storage, source of truth for weather datasets
-- **SDK**: boto3 (`boto3.client('s3')`) with adaptive retries and connection pooling
-- **Authentication**: IAM credentials via environment variables (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`)
-- **Access Pattern**: First request per worker per model hits S3 via `get_object()`; subsequent accesses use local disk cache
-- **Upload**: GitHub Actions auto-downloader uses `upload_file()` (auto-multipart for large files) every 6 hours
-- **Cleanup**: Old model files deleted via `delete_object()` when new cycle uploads complete
+## Key Design Decisions
 
-### Railway Instance (Local Disk Cache)
-- **Location**: `/app/data/gefs` on Railway (persistent volume if mounted, otherwise ephemeral storage)
-- **Files**: Up to 30 `.npz` files (~9.2GB) cached on disk (increased for 32GB RAM system)
-- **Purpose**: Fast local access, eliminates download delays after first download
-- **Eviction**: LRU when cache exceeds 30 files or 25GB total size (`worldelev.npy` is always exempt)
-- **Download Strategy**: Files download on-demand with per-file locking, extended timeouts, and stall detection
-- **Model Change Cleanup**: Automatically deletes old model files when GEFS updates every 6 hours
-- **Idle effect**: Idle worker cleanup does not delete disk cache; simulators are rebuilt from these on next request
-- **Persistent Volume**: When mounted to `/app/data`, files persist across restarts and are shared across all workers. 
-Benefits:
-  - Lower S3 egress (one shared download per forecast cycle)
-  - Faster warmups after deploys/restarts
-  - Consistent performance across workers
-  - To enable: mount Railway persistent volume at `/app/data`
+### Caching Strategy
+- **Three-layer caching**:
+  1. Simulator cache (RAM): 10 normal, 30 ensemble - fast access to physics engines
+  2. File cache (disk): 30 weather files - eliminates S3 downloads after first use
+  3. Prediction cache (RAM): 200 entries - avoids recomputing identical trajectories
 
-## Architecture Changes From Prev. HABSIM
+### Ensemble Mode
+- **Dynamic cache expansion**: Normal mode (10 simulators) → Ensemble mode (30 simulators)
+- **Preloading**: Ensemble mode preloads wind arrays into RAM for CPU-bound performance (5-10s vs 50-80s with memory-mapping)
+- **Auto-trimming**: Cache automatically trims back to 10 simulators 60 seconds after ensemble completes
+- **Background prefetching**: Pre-loads all 21 models when ensemble mode starts
 
-**Old Version (Client Library):** Python package making HTTP requests to `habsim.org` API. Installed via pip, called functions like `util.predict()`.
+### Thread Safety
+- **Per-file locks**: Prevents zipfile contention when multiple threads load same NPZ file
+- **In-use tracking**: `_in_use_models` set prevents cleanup of simulators currently in use
+- **Delayed cleanup**: 2-second delay after eviction prevents race conditions
+- **Atomic operations**: Progress updates use locks to ensure consistency
 
-**Current Version (Self-Contained Server):** Self-hosted web application (built with Flask framework, deployed on Railway hosting platform) hosting the UI, REST API endpoints, and running simulations locally with GEFS data from AWS S3.
+### Memory Management
+- **Idle cleanup**: Workers idle >120s trigger deep cleanup (drops simulators, keeps elevation mapped)
+- **Shared elevation**: All simulators in ensemble mode share same `ElevationFile` instance
+- **Shared filter cache**: WindFile interpolation filters shared across instances in ensemble mode
+- **Garbage collection**: Multi-pass GC + `malloc_trim(0)` after cache trims
 
-**Benefits:** Independence from external services, non-technical users visit URL directly, full control over performance/caching.
+---
 
-**Downsides:**
-- **Resource Costs:** Pay for compute/storage (Railway instance vs. shared infrastructure)
-- **Scaling Responsibility:** Multiple concurrent users require careful memory/worker configuration; no automatic horizontal scaling
-- **Maintenance Burden:** Responsible for uptime, deployments, bug fixes, infrastructure monitoring
-- **No Programmatic API:** Old version allowed `from habsim import util; util.predict(...)` - current requires manual HTTP requests or web UI
-- **Single Point of Failure:** If Railway instance fails, all users lose access (vs. centralized server with redundancy)
+## Deployment
 
-**Note:** The `habsim/` folder is both the Python package (`classes.py`) AND a virtual environment (`lib/`, `bin/`). Legacy client code moved to `deprecated/`.
+### Railway Configuration
+- **Gunicorn**: 4 workers, 8 threads each (32 concurrent capacity)
+- **Memory**: 32GB RAM, 32 vCPU
+- **Start command**: `gunicorn --config gunicorn_config.py app:app`
+
+### Environment Variables
+- `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`: S3 credentials
+- `AWS_REGION`: S3 region (default: us-west-1)
+- `S3_BUCKET_NAME`: S3 bucket (default: habsim-storage)
+- `HABSIM_PASSWORD`: Login password (optional)
+- `RAILWAY_ENVIRONMENT`: Detected automatically for Railway-specific initialization
+
+### Persistent Volume
+- Mount at `/app/data` to enable persistent file cache
+- Benefits: Lower S3 egress, faster warmups, shared cache across workers
+
+---
+
+## Performance Characteristics
+
+### Single Model Run
+- **Speed**: ~5-10 seconds
+- **Memory**: ~1.5GB per worker (worst case: 4 workers × 1.5GB = 6GB)
+- **Why fast**: Model 0 pre-warmed, files on disk
+
+### Ensemble Run (First Time)
+- **Speed**: ~5-15 minutes
+  - 21 ensemble paths: ~5-10 seconds each (with preloading)
+  - 420 Monte Carlo: ~4-14 minutes total
+- **Memory**: ~13.8GB per worker (worst case: 4 workers × 13.8GB = 55GB)
+- **Why slower**: Files download from S3, simulators built in parallel
+
+### Ensemble Run (Subsequent)
+- **Speed**: ~5-15 minutes (same computation, but files cached)
+- **Memory**: ~13.8GB per worker (simulators cached in RAM)
+- **Why faster**: Files on disk, simulators in RAM cache
+
+### After Ensemble Completes
+- **Auto-trim**: Cache trims to 10 simulators within 60-90 seconds
+- **Memory freed**: ~49GB RAM (from 55GB → 6GB worst case)
+- **Idle cleanup**: Workers idle >120s trigger deep cleanup
+
+---
+
+## Development
+
+### Running Locally
+```bash
+# Install dependencies
+pip install -r requirements.txt
+
+# Set environment variables
+export AWS_ACCESS_KEY_ID=...
+export AWS_SECRET_ACCESS_KEY=...
+export AWS_REGION=us-west-1
+export S3_BUCKET_NAME=habsim-storage
+
+# Run development server
+python app.py
+```
+
+### Testing
+- Single model: Visit `http://localhost:5000`, disable ensemble, click "Simulate"
+- Ensemble: Enable ensemble toggle, click "Simulate"
+- Multi mode: Enable multi toggle, click "Simulate"
+
+---
+
+## License
+See LICENSE file for details.

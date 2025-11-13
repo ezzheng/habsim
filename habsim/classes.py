@@ -142,6 +142,17 @@ class Simulator:
     def __init__(self, wind_file, elev_file):
         self.elev_file = ElevationFile(elev_file)
         self.wind_file = wind_file
+        # Cache for elevation lookups (rounded to 4 decimal places ~11m precision)
+        self._elev_cache = {}
+    
+    def _cached_elev(self, lat_rounded, lon_rounded):
+        """Cached elevation lookup with rounded coordinates."""
+        cache_key = (lat_rounded, lon_rounded)
+        if cache_key not in self._elev_cache:
+            if len(self._elev_cache) >= 1000:  # Limit cache size
+                self._elev_cache.clear()  # Simple eviction
+            self._elev_cache[cache_key] = self.elev_file.elev(lat_rounded, lon_rounded)
+        return self._elev_cache[cache_key]
 
     def step(self, balloon, step_size: float, coefficient):
         """Runge-Kutta 2nd order integrator for balloon trajectory."""
@@ -194,9 +205,16 @@ class Simulator:
             raise RuntimeError("Simulator wind_file is None - simulator was cleaned up during use")
         wind_vector = self.wind_file.get(*newLoc, newAlt, newTime)
         
+        # Only compute elevation if near ground or first step (skip when high altitude)
+        if newAlt < (balloon.ground_elev or 0) + 1000 or not balloon.ground_elev:
+            # Use cached elevation lookup with rounded coordinates
+            ground_elev = self._cached_elev(round(newLat, 4), round(newLon, 4))
+        else:
+            ground_elev = balloon.ground_elev  # Reuse existing elevation
+        
         balloon.update(
             location=newLoc,
-            ground_elev=self.elev_file.elev(*newLoc),
+            ground_elev=ground_elev,
             wind_vector=wind_vector,
             time=newTime,
             alt=newAlt,

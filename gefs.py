@@ -122,7 +122,7 @@ def listdir_gefs():
             return []
         return [obj['Key'] for obj in response['Contents']]
     except ClientError as e:
-        logging.error(f"Failed to list S3 bucket {_BUCKET}: {e}")
+        print(f"ERROR: Failed to list S3 bucket {_BUCKET}: {e}", flush=True)
         return []
 
 def open_gefs(file_name):
@@ -157,7 +157,7 @@ def open_gefs(file_name):
                 content = response['Body'].read().decode("utf-8")
             except ClientError as e:
                 if e.response['Error']['Code'] == 'NoSuchKey':
-                    logging.warning(f"File not found in S3: {file_name}")
+                    print(f"WARNING: File not found in S3: {file_name}", flush=True)
                     return io.StringIO("")
                 raise
             
@@ -185,9 +185,7 @@ def load_gefs(file_name):
         result = str(_ensure_cached(file_name))
         load_time = time.time() - load_start
         if load_time > 5.0:
-            logging.warning(f"[PERF] load_gefs() slow: {file_name}, time={load_time:.2f}s")
-        elif load_time > 0.1:
-            logging.debug(f"[PERF] load_gefs(): {file_name}, time={load_time:.3f}s")
+            print(f"WARNING: [PERF] load_gefs() slow: {file_name}, time={load_time:.2f}s", flush=True)
         return result
 
     try:
@@ -301,11 +299,10 @@ def _cleanup_old_cache_files():
                     pass  # File might have been removed by another thread
             
             if removed_count > 0:
-                logging.info(f"Cache cleanup: removed {removed_count} files ({removed_size/(1024**3):.2f}GB), "
+                print(f"INFO: Cache cleanup: removed {removed_count} files ({removed_size/(1024**3):.2f}GB), "
                            f"cache now {(total_size_gb - removed_size/(1024**3)):.2f}GB")
     except Exception as e:
-        import logging
-        logging.debug(f"Cache cleanup error (non-critical): {e}")
+        pass
 
 
 def _ensure_cached(file_name: str) -> Path:
@@ -328,14 +325,12 @@ def _ensure_cached(file_name: str) -> Path:
                 expected_size = 451008128  # Expected size for worldelev.npy
                 if file_size == expected_size:
                     cache_path.touch()  # Update access time
-                    logging.debug(f"File cache HIT: {file_name} (no S3 egress)")
                     return cache_path
                 else:
                     # File exists but is wrong size - delete it and re-download
-                    logging.warning(f"{file_name} exists but is corrupted (expected {expected_size} bytes, got {file_size}). Re-downloading...")
+                    print(f"WARNING: {file_name} corrupted, re-downloading", flush=True)
                     cache_path.unlink()
             except Exception as e:
-                logging.warning(f"Error checking {file_name}: {e}. Re-downloading...")
                 try:
                     cache_path.unlink()
                 except:
@@ -348,14 +343,13 @@ def _ensure_cached(file_name: str) -> Path:
                 with np.load(cache_path) as _:
                     pass
         except Exception as e:
-            logging.warning(f"Cached file appears corrupted ({file_name}): {e}. Re-downloading...")
+            print(f"WARNING: {file_name} corrupted, re-downloading", flush=True)
             try:
                 cache_path.unlink()
             except Exception:
                 pass
         else:
             cache_path.touch()
-            logging.debug(f"[CACHE] HIT: {file_name} (no S3 egress)")
             return cache_path
 
     cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -363,7 +357,6 @@ def _ensure_cached(file_name: str) -> Path:
     with _CACHE_LOCK:
         if cache_path.exists():
             cache_path.touch()
-            logging.debug(f"[CACHE] HIT (double-check): {file_name}")
             return cache_path
 
         # Clean up old files before downloading new one
@@ -371,7 +364,7 @@ def _ensure_cached(file_name: str) -> Path:
         _cleanup_old_cache_files()
         cleanup_time = time.time() - cleanup_start
         if cleanup_time > 1.0:
-            logging.warning(f"[PERF] _cleanup_old_cache_files() slow: time={cleanup_time:.2f}s")
+            pass
     
     # CRITICAL: Mark file as downloading ONLY after cache miss confirmed
     # This prevents false positives where cache hits would leave files in the set
@@ -395,10 +388,8 @@ def _ensure_cached(file_name: str) -> Path:
             import fcntl
             try:
                 fcntl.flock(lock_fd.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-                logging.debug(f"Acquired download lock for {file_name}")
             except BlockingIOError:
                 # Another process is downloading - wait and check if it completed
-                logging.info(f"Another process is downloading {file_name}, waiting for completion...")
                 
                 # Wait up to 5 minutes for the download to complete
                 for i in range(300):  # 300 * 1s = 5 minutes
@@ -410,15 +401,12 @@ def _ensure_cached(file_name: str) -> Path:
                         # Remove from downloading set before returning
                         with _downloading_lock:
                             _downloading_files.discard(file_name)
-                        logging.info(f"File {file_name} was downloaded by another process (cache HIT)")
                         return cache_path
                     
                     # Log progress every 30 seconds
                     if i % 30 == 0 and i > 0:
-                        logging.info(f"Still waiting for {file_name} download ({i}s elapsed)...")
-                
+                        pass
                 # After 5 minutes, acquire lock (blocking) to download ourselves
-                logging.warning(f"Timeout waiting for {file_name} download, acquiring lock...")
                 fcntl.flock(lock_fd.fileno(), fcntl.LOCK_EX)
             
             # Double-check file wasn't created while waiting for lock
@@ -429,10 +417,8 @@ def _ensure_cached(file_name: str) -> Path:
                 # Remove from downloading set before returning
                 with _downloading_lock:
                     _downloading_files.discard(file_name)
-                logging.debug(f"File {file_name} exists after acquiring lock (cache HIT)")
                 return cache_path
         except Exception as e:
-            logging.warning(f"File locking error for {file_name} (non-critical): {e}")
             if lock_fd:
                 try:
                     lock_fd.close()
@@ -443,7 +429,6 @@ def _ensure_cached(file_name: str) -> Path:
     _download_semaphore.acquire()
     try:
         download_start = time.time()
-        logging.info(f"[CACHE] MISS: {file_name} - downloading from S3 (will use egress)")
         
         is_large_file = file_name == 'worldelev.npy' or file_name.endswith(('.npz', '.npy'))
         max_retries = 5 if file_name.endswith('.npz') else (3 if is_large_file else 1)
@@ -462,14 +447,11 @@ def _ensure_cached(file_name: str) -> Path:
                     file_age = time.time() - tmp_path.stat().st_mtime
                     if file_age > 300:  # 5 minutes
                         tmp_path.unlink()
-                        logging.debug(f"Cleaned up stale incomplete download: {file_name} (age: {file_age:.0f}s)")
                     elif attempt == 1:
                         # On first retry, clean up our own temp file from previous attempt
                         tmp_path.unlink()
-                        logging.debug(f"Cleaned up incomplete download from previous attempt: {file_name}")
                 except Exception as e:
                     # File might have been deleted by another worker or doesn't exist
-                    logging.debug(f"Could not clean up temp file {file_name}.tmp: {e}")
                     pass
             
             try:
@@ -483,10 +465,9 @@ def _ensure_cached(file_name: str) -> Path:
                     if error_code in ('404', 'NoSuchKey'):
                         # File not found - fatal error, don't retry
                         error_msg = f"File not found in S3: {file_name}"
-                        logging.error(error_msg)
+                        print(f"ERROR: {error_msg}", flush=True)
                         raise FileNotFoundError(f"{error_msg}. The model file may not have been uploaded yet, or the model timestamp may be incorrect. Check S3 storage or verify the model timestamp in 'whichgefs'.")
                     # Other S3 errors (403, 500, etc.) - retryable
-                    logging.warning(f"S3 head_object failed for {file_name}: {e} (retryable, attempt {attempt + 1}/{max_retries})")
                     raise IOError(f"S3 metadata error: {e}")
                 
                 # Download file with streaming
@@ -540,9 +521,6 @@ def _ensure_cached(file_name: str) -> Path:
                                     mb_written = bytes_written / (1024 * 1024)
                                     if expected_size:
                                         mb_total = expected_size / (1024 * 1024)
-                                        logging.info(f"Downloading {file_name}: {mb_written:.1f}MB / {mb_total:.1f}MB ({100 * bytes_written / expected_size:.1f}%)")
-                                    else:
-                                        logging.info(f"Downloading {file_name}: {mb_written:.1f}MB")
                             
                             # Flush and sync to disk before closing (ensures data is persisted)
                             fh.flush()
@@ -563,18 +541,15 @@ def _ensure_cached(file_name: str) -> Path:
                     error_code = s3_error.response.get('Error', {}).get('Code', '')
                     if error_code in ('403', '429', '500', '502', '503', '504'):
                         # Throttling or server errors - definitely retryable
-                        logging.warning(f"S3 download error for {file_name}: {error_code} (retryable, attempt {attempt + 1}/{max_retries})")
                         raise IOError(f"S3 error ({error_code}): {s3_error}")
                     else:
                         # Other S3 errors - log and retry
-                        logging.warning(f"S3 download error for {file_name}: {s3_error} (retryable, attempt {attempt + 1}/{max_retries})")
                         raise IOError(f"S3 error: {s3_error}")
                 except IOError:
                     # Re-raise IOErrors (stall detection, write errors) - already retryable
                     raise
                 except Exception as unexpected_error:
                     # Unexpected errors - log and treat as retryable
-                    logging.warning(f"Unexpected error downloading {file_name}: {unexpected_error} (retryable, attempt {attempt + 1}/{max_retries})")
                     raise IOError(f"Unexpected download error: {unexpected_error}")
                 finally:
                     # Ensure S3 response body is closed to free resources
@@ -607,7 +582,6 @@ def _ensure_cached(file_name: str) -> Path:
                 
                 # Log successful download with size (for egress tracking)
                 size_mb = actual_size / (1024 * 1024)
-                logging.info(f"Downloaded {file_name} from S3: {size_mb:.2f} MB (egress used)")
                 
                 # Validate NPZ file structure before committing
                 if file_name.endswith('.npz'):
@@ -653,7 +627,7 @@ def _ensure_cached(file_name: str) -> Path:
                     error_str = str(e).lower()
                     if 'fatal' in error_str:
                         # Fatal error - don't retry
-                        logging.error(f"Download failed with fatal error for {file_name}: {e}")
+                        print(f"ERROR: Download failed with fatal error for {file_name}: {e}", flush=True)
                         if lock_fd:
                             try:
                                 import fcntl
@@ -664,7 +638,6 @@ def _ensure_cached(file_name: str) -> Path:
                         raise
                 else:
                     # Retryable error - log and retry
-                    logging.warning(f"Download attempt {attempt + 1}/{max_retries} failed for {file_name}: {e}. Retrying in {wait_time}s...")
                     time.sleep(wait_time)
             except Exception as e:
                 # Unexpected errors - treat as retryable but log as warning
@@ -678,11 +651,10 @@ def _ensure_cached(file_name: str) -> Path:
                 if attempt < max_retries - 1:
                     # Retry unexpected errors
                     wait_time = 2 ** (attempt + 1)
-                    logging.warning(f"Unexpected error on attempt {attempt + 1}/{max_retries} for {file_name}: {e}. Retrying in {wait_time}s...")
                     time.sleep(wait_time)
                 else:
                     # Last attempt failed - release lock and clean up
-                    logging.error(f"Download failed after {max_retries} attempts for {file_name}: {last_error}")
+                    print(f"ERROR: Download failed after {max_retries} attempts for {file_name}: {last_error}", flush=True)
                     if lock_fd:
                         try:
                             import fcntl
@@ -702,7 +674,6 @@ def _ensure_cached(file_name: str) -> Path:
             # Another worker completed the download - remove from downloading set and return
             with _downloading_lock:
                 _downloading_files.discard(file_name)
-            logging.info(f"File {file_name} was downloaded by another worker (cache HIT after download)")
             return cache_path
         
         if not tmp_path.exists():
@@ -711,7 +682,6 @@ def _ensure_cached(file_name: str) -> Path:
                 # Another worker completed it - return the final file
                 with _downloading_lock:
                     _downloading_files.discard(file_name)
-                logging.info(f"File {file_name} was downloaded by another worker (temp file was cleaned up)")
                 return cache_path
             # Temp file missing and final file doesn't exist - this is an error
             raise IOError(f"Download logic error: loop completed but temp file not found for {file_name} (and final file doesn't exist)")
@@ -729,7 +699,6 @@ def _ensure_cached(file_name: str) -> Path:
                     # Another worker completed it - return the final file
                     with _downloading_lock:
                         _downloading_files.discard(file_name)
-                    logging.info(f"File {file_name} was downloaded by another worker (temp file deleted during rename)")
                     return cache_path
                 # Temp file deleted and final file doesn't exist - error
                 raise IOError(f"Download failed: temp file {tmp_path} was deleted before rename (race condition or cleanup issue)")
@@ -751,16 +720,15 @@ def _ensure_cached(file_name: str) -> Path:
                 raise IOError(f"Downloaded file {file_name} size mismatch after rename (expected {tmp_size} bytes, got {cache_path.stat().st_size} bytes)")
             
             download_time = time.time() - download_start
-            logging.info(f"Cached {file_name} to disk in {download_time:.1f}s: {cache_path} (future reads will use zero egress)")
         except FileNotFoundError as e:
             # Temp file was deleted between check and rename (race condition)
             error_msg = f"Download failed: temp file {tmp_path} not found during rename for {file_name}. This may indicate a race condition or premature cleanup."
-            logging.error(error_msg)
+            print(f"ERROR: {error_msg}", flush=True)
             raise IOError(error_msg) from e
         except OSError as e:
             # File system error during rename
             error_msg = f"Download failed: error renaming temp file for {file_name}: {e}"
-            logging.error(error_msg)
+            print(f"ERROR: {error_msg}", flush=True)
             raise IOError(error_msg) from e
             
             # Release the file lock after successful download and rename
@@ -769,18 +737,16 @@ def _ensure_cached(file_name: str) -> Path:
                     import fcntl
                     fcntl.flock(lock_fd.fileno(), fcntl.LOCK_UN)
                     lock_fd.close()
-                    logging.debug(f"Released download lock for {file_name}")
                     
                     # Clean up lock file on successful download to prevent accumulation
                     # Lock files are small but can accumulate over time
                     if lock_file and lock_file.exists():
                         try:
                             lock_file.unlink()
-                            logging.debug(f"Removed lock file: {lock_file.name}")
                         except:
                             pass  # Non-critical if cleanup fails
-                except Exception as lock_error:
-                    logging.warning(f"Error releasing lock for {file_name}: {lock_error}")
+                except Exception:
+                    pass
 
         # Final check that file exists
         if not cache_path.exists():
@@ -817,7 +783,7 @@ def upload_gefs(file_path: Path, file_name: str) -> bool:
         )
         return True
     except Exception as e:
-        logging.error(f"Failed to upload {file_name} to S3: {e}")
+        print(f"ERROR: Failed to upload {file_name} to S3: {e}", flush=True)
         return False
 
 
@@ -834,5 +800,5 @@ def delete_gefs(file_name: str) -> bool:
         _S3_CLIENT.delete_object(Bucket=_BUCKET, Key=file_name)
         return True
     except Exception as e:
-        logging.warning(f"Failed to delete {file_name} from S3: {e}")
+        print(f"WARNING: Failed to delete {file_name} from S3: {e}", flush=True)
         return False

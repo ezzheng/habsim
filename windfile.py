@@ -24,6 +24,8 @@ _MEMMAP_LOCKS_LOCK = threading.Lock()
 # Per-file locks for entire file loading (prevents zipfile contention)
 _FILE_LOAD_LOCKS: dict[Path, threading.Lock] = {}
 _FILE_LOAD_LOCKS_LOCK = threading.Lock()
+# Shared filter cache for ensemble mode (all WindFiles share same cache when preloaded)
+_shared_filter_cache = {}
 
 def _normalize_path(path: Union[BytesIO, str]) -> Union[BytesIO, Path]:
     if isinstance(path, (str, Path)):
@@ -108,6 +110,18 @@ class WindFile:
 
         self.resolution_lat_multiplier = (self.data.shape[-5] - 1) / 180
         self.resolution_lon_multiplier = (self.data.shape[-4] - 1) / 360
+        
+        # Cache for interpolation filter arrays (reduces allocations)
+        # In ensemble mode (preload=True), use shared global cache since all models have similar patterns
+        if preload:
+            global _shared_filter_cache
+            if not _shared_filter_cache:
+                _shared_filter_cache = {}
+            self._filter_cache = _shared_filter_cache
+            self._filter_cache_max_size = 2000  # Larger cache for ensemble mode
+        else:
+            self._filter_cache = {}
+            self._filter_cache_max_size = 1000  # Limit cache size
 
         level_array = np.asarray(self.levels, dtype=np.float32)
         level_indices = np.arange(level_array.size, dtype=np.float32)
@@ -189,18 +203,16 @@ class WindFile:
                     if file_size > 0:
                         memmap_data = np.load(memmap_path, mmap_mode='r')
                         if memmap_data is not None:
-                            logging.debug(f"[MMAP] Using cached extraction: {memmap_path.name}")
                             return memmap_data
                 except (EOFError, OSError, ValueError) as e:
                     # Corrupted extraction file - delete and re-extract
-                    logging.warning(f"[MMAP] Cached extraction corrupted: {memmap_path.name}, re-extracting: {e}")
+                    print(f"WARNING: Cached extraction corrupted: {memmap_path.name}, re-extracting", flush=True)
                     try:
                         memmap_path.unlink()
                     except:
                         pass
                 except Exception as e:
                     # Other errors - log and re-extract
-                    logging.warning(f"[MMAP] Error loading cached extraction: {memmap_path.name}, re-extracting: {e}")
                     try:
                         memmap_path.unlink()
                     except:
@@ -241,7 +253,6 @@ class WindFile:
                 temp_path.rename(memmap_path)
                 
                 extract_time = time.time() - extract_start
-                logging.info(f"[PERF] Extracted NPZ to .npy: {memmap_path.name}, time={extract_time:.1f}s (one-time cost)")
             except Exception as e:
                 # Clean up temp file on error
                 try:
@@ -259,7 +270,7 @@ class WindFile:
                 return memmap_data
             except (EOFError, OSError, ValueError) as e:
                 # File is corrupted - delete and raise error (will be retried by caller)
-                logging.error(f"[MMAP] Extracted file is corrupted: {memmap_path.name}, error: {e}")
+                print(f"ERROR: Extracted file corrupted: {memmap_path.name}", flush=True)
                 try:
                     memmap_path.unlink()
                 except:
@@ -310,7 +321,7 @@ class WindFile:
         return float(np.interp(pressure, self._interp_levels, self._interp_indices))
 
     def interpolate(self, lat, lon, level, time):
-        """Optimized 4D interpolation"""
+        """Optimized 4D interpolation with filter caching."""
         if self.data is None:
             raise RuntimeError("WindFile data is None - file may not have loaded correctly or was cleaned up")
         
@@ -320,10 +331,24 @@ class WindFile:
         level_frac = level - level_i
         time_frac = time - time_i
         
-        pressure_filter = np.array([1-level_frac, level_frac], dtype=np.float32).reshape(1, 1, 2, 1, 1)
-        time_filter = np.array([1-time_frac, time_frac], dtype=np.float32).reshape(1, 1, 1, 2, 1) 
-        lat_filter = np.array([1-lat_frac, lat_frac], dtype=np.float32).reshape(2, 1, 1, 1, 1)
-        lon_filter = np.array([1-lon_frac, lon_frac], dtype=np.float32).reshape(1, 2, 1, 1, 1)
+        # Round fractional parts to reduce cache size (0.001 precision ~100m for lat/lon)
+        frac_key = (round(lat_frac, 3), round(lon_frac, 3), round(level_frac, 3), round(time_frac, 3))
+        
+        # Get or create filter arrays from cache
+        if frac_key not in self._filter_cache:
+            # Limit cache size to prevent memory growth
+            if len(self._filter_cache) >= self._filter_cache_max_size:
+                # Clear cache if too large (simple FIFO eviction)
+                self._filter_cache.clear()
+            
+            self._filter_cache[frac_key] = (
+                np.array([1-level_frac, level_frac], dtype=np.float32).reshape(1, 1, 2, 1, 1),
+                np.array([1-time_frac, time_frac], dtype=np.float32).reshape(1, 1, 1, 2, 1),
+                np.array([1-lat_frac, lat_frac], dtype=np.float32).reshape(2, 1, 1, 1, 1),
+                np.array([1-lon_frac, lon_frac], dtype=np.float32).reshape(1, 2, 1, 1, 1)
+            )
+        
+        pressure_filter, time_filter, lat_filter, lon_filter = self._filter_cache[frac_key]
 
         cube = self.data[lat_i:lat_i+2, lon_i:lon_i+2, level_i:level_i+2, time_i:time_i+2, :]
         return np.sum(cube * lat_filter * lon_filter * pressure_filter * time_filter, axis=(0,1,2,3))

@@ -41,12 +41,9 @@ MAX_CONCURRENT_ENSEMBLE_CALLS = 4  # Change this value to adjust the limit
 _ENSEMBLE_COUNTER_FILE = '/tmp/ensemble_active_count'
 _ENSEMBLE_COUNTER_LOCK_FILE = '/tmp/ensemble_active_count.lock'
 
-# Log password status at startup (without revealing the actual password)
-if LOGIN_PASSWORD:
-    # Use a simple print since app.logger might not be ready yet
-    print(f"[AUTH] HABSIM_PASSWORD is set (length: {len(LOGIN_PASSWORD)})")
-else:
-    print("[AUTH] WARNING: HABSIM_PASSWORD environment variable is NOT set - login will fail!")
+# Log password status at startup
+if not LOGIN_PASSWORD:
+    print("WARNING: HABSIM_PASSWORD not set - login will fail", flush=True)
 
 # Cache decorator for GET requests
 def cache_for(seconds=300):
@@ -72,12 +69,17 @@ import downloader
 # Helper Functions
 # ============================================================================
 
-def log(msg, level='info', worker_pid=None):
-    """Unified logging: print to stdout (Railway) and app.logger."""
+def _log(msg, level='info', worker_pid=None):
+    """Print to stdout (Railway logs) with optional worker PID prefix."""
     if worker_pid is not None:
         msg = f"[WORKER {worker_pid}] {msg}"
-    print(msg, flush=True)
-    getattr(app.logger, level)(msg)
+    prefix = {
+        'info': 'INFO',
+        'warning': 'WARNING',
+        'error': 'ERROR',
+        'debug': 'DEBUG'
+    }.get(level, 'INFO')
+    print(f"{prefix}: {msg}", flush=True)
 
 def get_arg(args, key, type_func=float, default=None, required=True):
     """Parse and validate request argument with type conversion."""
@@ -102,12 +104,11 @@ def generate_request_id(args, base_coeff):
 
 def activate_ensemble_mode(worker_pid):
     """Activate and verify ensemble mode. Returns (cache_limit, ensemble_until)."""
-    log("/sim/spaceshot called - activating ensemble mode", 'info', worker_pid)
     simulate.set_ensemble_mode(duration_seconds=600)
     with simulate._cache_lock:
         cache_limit = simulate._current_max_cache
         ensemble_until = simulate._ensemble_mode_until
-    log(f"Ensemble mode enabled: cache_limit={cache_limit}, expires_at={ensemble_until:.1f}", 'info', worker_pid)
+        _log(f"Ensemble mode activated: cache_limit={cache_limit}", 'info', worker_pid)
     return cache_limit, ensemble_until
 
 def verify_ensemble_mode(worker_pid):
@@ -116,33 +117,43 @@ def verify_ensemble_mode(worker_pid):
         cache_limit = simulate._current_max_cache
         ensemble_active = simulate._is_ensemble_mode()
     if cache_limit < simulate.MAX_SIMULATOR_CACHE_ENSEMBLE:
-        log(f"WARNING: cache_limit={cache_limit} < {simulate.MAX_SIMULATOR_CACHE_ENSEMBLE}! Ensemble mode may not be active!", 'warning', worker_pid)
-    else:
-        log(f"Verified: cache_limit={cache_limit}, ensemble_active={ensemble_active} - ready to start simulations", 'info', worker_pid)
+        _log(f"Ensemble mode not active: cache_limit={cache_limit} < {simulate.MAX_SIMULATOR_CACHE_ENSEMBLE}", 'warning', worker_pid)
+
+def _prefetch_model(model_id, worker_pid):
+    """Prefetch a single model (downloads file and builds simulator)."""
+    try:
+        simulate._get_simulator(model_id)
+    except Exception as e:
+        _log(f"Prefetch failed for model {model_id}: {e}", 'warning', worker_pid)
 
 def wait_for_prefetch(model_ids, worker_pid, timeout=60, max_models=5):
-    """Wait for prefetch to complete first few models. Returns wait time."""
+    """Start background prefetching and wait for first few models. Returns wait time."""
     models_to_wait = min(max_models, len(model_ids))
-    log(f"Waiting for prefetch to complete first {models_to_wait} models...", 'info', worker_pid)
     
-    start_time = time.time()
-    max_wait_per_model = timeout / models_to_wait
-    
-    for i in range(models_to_wait):
-        model_id = model_ids[i]
-        wait_start = time.time()
-        while True:
-            with simulate._cache_lock:
-                if model_id in simulate._simulator_cache:
-                    log(f"Model {model_id} prefetched ({time.time() - wait_start:.1f}s)", 'info', worker_pid)
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    with ThreadPoolExecutor(max_workers=min(10, len(model_ids))) as executor:
+        prefetch_futures = {
+            executor.submit(_prefetch_model, model_id, worker_pid): model_id
+            for model_id in model_ids
+        }
+        
+        completed_count = 0
+        start_time = time.time()
+        max_wait_per_model = timeout / models_to_wait
+        
+        for future in as_completed(prefetch_futures):
+            model_id = prefetch_futures[future]
+            try:
+                future.result()
+                completed_count += 1
+                if completed_count >= models_to_wait:
                     break
-            if time.time() - wait_start > max_wait_per_model:
-                log(f"Prefetch timeout for model {model_id} ({time.time() - wait_start:.1f}s), starting anyway", 'info', worker_pid)
-                break
-            time.sleep(0.1)
+            except Exception:
+                pass
     
     wait_time = time.time() - start_time
-    log(f"Prefetch wait complete: {wait_time:.1f}s - starting simulations", 'info', worker_pid)
+    if wait_time > 0.1:
+        pass
     return wait_time
 
 def perturb_lat(base_lat):
@@ -232,8 +243,6 @@ def _record_worker_activity():
             if hasattr(simulate, '_last_activity_timestamp'):
                 idle_before = time.time() - simulate._last_activity_timestamp
             simulate.record_activity()
-            if idle_before > 30:
-                app.logger.info(f"Activity recorded from {path} (was idle for {idle_before:.1f}s)")
         except Exception:
             pass
 
@@ -244,9 +253,8 @@ def _start_cache_trim_thread():
     """Start cache trim thread early in each worker."""
     try:
         simulate._start_cache_trim_thread()
-        app.logger.info("Cache trim thread startup triggered")
     except Exception as e:
-        app.logger.warning(f"Failed to start cache trim thread (non-critical): {e}")
+        print(f"WARNING: Failed to start cache trim thread: {e}", flush=True)
 
 def _prewarm_cache():
     """Pre-load model 0 and worldelev.npy for fast single requests."""
@@ -255,36 +263,33 @@ def _prewarm_cache():
         for model_id in get_model_ids()[:1]:
             try:
                 simulate._get_simulator(model_id)
-                app.logger.info(f"Model {model_id} pre-warmed")
                 time.sleep(0.5)
-            except Exception as e:
-                app.logger.info(f"Failed to pre-warm model {model_id} (non-critical): {e}")
+            except Exception:
+                pass
         
         try:
             import gefs
             gefs.load_gefs('worldelev.npy')
-            app.logger.info("worldelev.npy pre-downloaded")
-        except Exception as e:
-            app.logger.warning(f"Failed to pre-download worldelev.npy (non-critical): {e}")
+        except Exception:
+            pass
         
         try:
             _ = elev.getElevation(0, 0)
-            app.logger.info("Elevation pre-warmed")
-        except Exception as e:
-            app.logger.info(f"Elevation pre-warm failed (non-critical): {e}")
-    except Exception as e:
-        app.logger.info(f"Cache pre-warming failed (non-critical): {e}")
+        except Exception:
+            pass
+    except Exception:
+        pass
 
 is_railway = os.environ.get('RAILWAY_ENVIRONMENT') is not None or os.environ.get('RAILWAY_SERVICE_NAME') is not None
 if is_railway:
     try:
         _start_cache_trim_thread()
     except Exception as e:
-        app.logger.warning(f"Failed to start cache trim thread (non-critical): {e}")
+        print(f"WARNING: Failed to start cache trim thread: {e}", flush=True)
     _cache_warmer_thread = threading.Thread(target=_prewarm_cache, daemon=True)
     _cache_warmer_thread.start()
 else:
-    app.logger.info("Skipping Railway-specific initialization")
+    print("INFO: Skipping Railway-specific initialization", flush=True)
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
@@ -294,16 +299,15 @@ def login():
         expected_password = (LOGIN_PASSWORD or '').strip()
         
         if not expected_password:
-            app.logger.error("HABSIM_PASSWORD environment variable is not set!")
+            print("ERROR: HABSIM_PASSWORD environment variable is not set!", flush=True)
             return redirect('/login?error=1')
         
         if password == expected_password:
             session['authenticated'] = True
             session.permanent = False
-            app.logger.info("Login successful")
             return redirect(request.args.get('next', '/'))
         else:
-            app.logger.warning("Login failed - password mismatch")
+            print("WARNING: Login failed: invalid password", flush=True)
             return redirect('/login?error=1')
     
     # GET request - serve login page
@@ -471,9 +475,6 @@ def status():
             return "Ready"
     except Exception as e:
         # Log but don't fail - status checks shouldn't block
-        app.logger.debug(f"Status check failed (non-critical): {e}")
-        # During ensemble mode, server might be busy but still functional
-        # Return "Ready" to avoid false negatives
         return "Ready"
 
 @app.route('/sim/models')
@@ -639,10 +640,10 @@ def singlezpb(timestamp, lat, lon, alt, equil, eqtime, asc, desc, model, coeffic
         return (rise, coast, fall)
     except FileNotFoundError as e:
         # File not found in S3 - model may not exist yet
-        app.logger.warning(f"Model file not found: {e}")
+        print(f"WARNING: Model file not found: {e}", flush=True)
         raise  # Re-raise to be handled by route handler
     except Exception as e:
-        app.logger.error(f"singlezpb failed for model {model}: {str(e)}", exc_info=True)
+        print(f"ERROR: singlezpb failed for model {model}: {e}", flush=True)
         if str(e) == "alt out of range":
             return "alt error"
         return "error"
@@ -651,7 +652,6 @@ def singlezpb(timestamp, lat, lon, alt, equil, eqtime, asc, desc, model, coeffic
 @app.route('/sim/singlezpb')
 @cache_for(600)
 def singlezpbh():
-    log("/sim/singlezpb called", 'info', os.getpid())
     args = request.args
     timestamp = datetime.utcfromtimestamp(get_arg(args, 'timestamp')).replace(tzinfo=timezone.utc)
     lat = get_arg(args, 'lat')
@@ -666,7 +666,7 @@ def singlezpbh():
         path = singlezpb(timestamp, lat, lon, alt, equil, eqtime, asc, desc, model)
         return jsonify(path)
     except FileNotFoundError as e:
-        app.logger.warning(f"Model file not found: {e}")
+        print(f"WARNING: Model file not found: {e}", flush=True)
         return make_response(jsonify({"error": "Model file not available. The requested model may not have been uploaded yet. Please check if the model timestamp is correct."}), 404)
 
 
@@ -701,7 +701,7 @@ def _increment_ensemble_counter():
             lock_file.close()
     except Exception as e:
         # If file locking fails, log warning but allow request (fail open for reliability)
-        app.logger.warning(f"Failed to check ensemble counter: {e}. Allowing request.")
+        print(f"WARNING: Failed to check ensemble counter: {e}. Allowing request.", flush=True)
         return True
 
 def _decrement_ensemble_counter():
@@ -727,7 +727,7 @@ def _decrement_ensemble_counter():
             fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
             lock_file.close()
     except Exception as e:
-        app.logger.warning(f"Failed to decrement ensemble counter: {e}")
+        print(f"WARNING: Failed to decrement ensemble counter: {e}", flush=True)
 
 @app.route('/sim/spaceshot')
 def spaceshot():
@@ -739,8 +739,6 @@ def spaceshot():
     worker_pid = os.getpid()
     simulate.record_activity()
     
-    log("===== SPACESHOT ENDPOINT CALLED =====", 'info', worker_pid)
-    log("Ensemble run with Monte Carlo started", 'info', worker_pid)
     
     ENSEMBLE_WEIGHT = 2.0
     start_time = time.time()
@@ -779,7 +777,7 @@ def spaceshot():
             'montecarlo_total': total_montecarlo
         }
     
-    log(f"Ensemble run: Processing {len(model_ids)} models + Monte Carlo ({num_perturbations} perturbations × {len(model_ids)} models), request_id={request_id}", 'info', worker_pid)
+    _log(f"Ensemble run: {len(model_ids)} models + {num_perturbations}×{len(model_ids)} Monte Carlo", 'info', worker_pid)
     
     # Generate Monte Carlo perturbations
     perturbations = []
@@ -810,10 +808,10 @@ def spaceshot():
             result = singlezpb(timestamp, base_lat, base_lon, base_alt, base_equil, base_eqtime, base_asc, base_desc, model)
             return None if result in ("error", "alt error") else result
         except FileNotFoundError as e:
-            app.logger.warning(f"Model {model} file not found: {e}")
+            print(f"WARNING: Model {model} file not found: {e}", flush=True)
             return None
         except Exception as e:
-            app.logger.exception(f"Model {model} failed: {e}")
+            print(f"ERROR: Model {model} failed: {e}", flush=True)
             return None
     
     def run_montecarlo_simulation(pert, model):
@@ -835,7 +833,7 @@ def spaceshot():
                 })
             return landing
         except Exception as e:
-            app.logger.warning(f"Monte Carlo simulation failed: pert={pert['perturbation_id']}, model={model}, error={e}")
+            print(f"WARNING: Monte Carlo simulation failed: pert={pert['perturbation_id']}, model={model}, error={e}", flush=True)
             return None
     
     try:
@@ -862,10 +860,15 @@ def spaceshot():
             ensemble_completed = 0
             montecarlo_completed = 0
             total_completed = 0
+            last_progress_update = 0
+            progress_update_interval = 10  # Batch progress updates every 10 completions
             
             for future in as_completed(all_futures):
                 total_completed += 1
-                update_progress(request_id, completed=total_completed)
+                # Batch progress updates to reduce lock contention (update every N completions)
+                if total_completed - last_progress_update >= progress_update_interval or total_completed == total_simulations:
+                    update_progress(request_id, completed=total_completed)
+                    last_progress_update = total_completed
                 
                 if future in ensemble_future_set:
                     model = ensemble_futures[future]
@@ -885,31 +888,35 @@ def spaceshot():
                             landing_positions.append(landing)
                         
                         ensemble_completed += 1
-                        update_progress(request_id, ensemble_completed=ensemble_completed)
-                        app.logger.info(f"Ensemble model {model} completed ({ensemble_completed}/{len(model_ids)})")
+                        # Batch ensemble progress updates (update every 5 or on completion)
+                        if ensemble_completed % 5 == 0 or ensemble_completed == len(model_ids):
+                            update_progress(request_id, ensemble_completed=ensemble_completed)
                     except Exception as e:
-                        app.logger.exception(f"Ensemble model {model} failed: {e}")
+                        print(f"ERROR: Ensemble model {model} failed: {e}", flush=True)
                         paths[model_ids.index(model)] = None
                         ensemble_completed += 1
-                        update_progress(request_id, ensemble_completed=ensemble_completed)
+                        # Batch ensemble progress updates
+                        if ensemble_completed % 5 == 0 or ensemble_completed == len(model_ids):
+                            update_progress(request_id, ensemble_completed=ensemble_completed)
                 else:
                     try:
                         result = future.result()
                         if result is not None:
                             landing_positions.append(result)
                         montecarlo_completed += 1
-                        update_progress(request_id, montecarlo_completed=montecarlo_completed)
-                        if montecarlo_completed % 50 == 0:
-                            app.logger.info(f"Monte Carlo progress: {montecarlo_completed}/{len(montecarlo_futures)}")
+                        # Batch Monte Carlo progress updates (update every 20 or on completion)
+                        if montecarlo_completed % 20 == 0 or montecarlo_completed == total_montecarlo:
+                            update_progress(request_id, montecarlo_completed=montecarlo_completed)
                     except Exception as e:
-                        app.logger.warning(f"Monte Carlo simulation failed: {e}")
+                        print(f"WARNING: Monte Carlo simulation failed: {e}", flush=True)
                         montecarlo_completed += 1
-                        update_progress(request_id, montecarlo_completed=montecarlo_completed)
+                        # Batch Monte Carlo progress updates
+                        if montecarlo_completed % 20 == 0 or montecarlo_completed == total_montecarlo:
+                            update_progress(request_id, montecarlo_completed=montecarlo_completed)
             
             # Ensure all ensemble models have results
             for i, path in enumerate(paths):
                 if path is None:
-                    app.logger.warning(f"Model {model_ids[i]} did not complete")
                     paths[i] = None
         
         # Log summary
@@ -917,16 +924,14 @@ def spaceshot():
         elapsed = time.time() - start_time
         ensemble_landings = sum(1 for p in landing_positions if p.get('perturbation_id') == -1)
         montecarlo_landings = len(landing_positions) - ensemble_landings
-        log(f"Ensemble + Monte Carlo complete: {ensemble_success}/{len(model_ids)} ensemble paths, {ensemble_landings} ensemble + {montecarlo_landings} Monte Carlo = {len(landing_positions)} total landing positions in {elapsed:.1f} seconds", 'info', worker_pid)
+        _log(f"Ensemble complete: {ensemble_success}/{len(model_ids)} paths, {len(landing_positions)} landings in {elapsed:.0f}s", 'info', worker_pid)
         
     except Exception as e:
-        log(f"Ensemble + Monte Carlo run FAILED: {e}", 'error', worker_pid)
-        app.logger.exception(f"Ensemble + Monte Carlo run failed: {e}")
+        print(f"ERROR: Ensemble run failed: {e}", flush=True)
         paths = [None] * len(model_ids)
         landing_positions = []
     finally:
         _decrement_ensemble_counter()
-        log("Spaceshot complete - trimming cache to normal", 'info', worker_pid)
         simulate._trim_cache_to_normal()
         
         # Mark progress as completed and schedule cleanup after 30 seconds
@@ -939,7 +944,6 @@ def spaceshot():
             with _progress_lock:
                 if request_id in _progress_tracking:
                     del _progress_tracking[request_id]
-                    app.logger.debug(f"Cleaned up progress tracking for {request_id}")
         
         cleanup_thread = threading.Thread(target=cleanup_progress, daemon=True)
         cleanup_thread.start()
@@ -1031,7 +1035,7 @@ def elevation():
         result = elev.getElevation(lat, lon)
         return str(result or 0)
     except Exception as e:
-        app.logger.exception(f"Elevation lookup failed: {e}")
+        print(f"WARNING: Elevation lookup failed: {e}", flush=True)
         return "0"
 
 
