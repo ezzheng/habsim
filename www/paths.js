@@ -1646,20 +1646,32 @@ async function simulate() {
                 const startProgressPolling = (requestId) => {
                     if (progressPollInterval) return; // Already polling
                     
-                    const progressUrl = URL_ROOT + "/sim/progress?request_id=" + requestId;
+                    // Get button reference (use closure to ensure it's accessible)
+                    const buttonRef = simBtn;
+                    if (!buttonRef) {
+                        console.warn('Simulate button not found, cannot update progress');
+                        return;
+                    }
+                    
+                    const progressUrl = URL_ROOT + "/progress?request_id=" + requestId;
+                    console.log(`[${requestId}] Starting progress polling: ${progressUrl}`);
                     progressPollInterval = setInterval(async () => {
                         try {
                             const progressResponse = await fetch(progressUrl, { signal: window.__simAbort.signal });
                             if (progressResponse.ok) {
                                 const progressData = await progressResponse.json();
-                                if (progressData.percentage !== undefined && simBtn) {
-                                    simBtn.textContent = progressData.percentage + '%';
-                                }
-                                // Stop polling when complete
-                                if (progressData.percentage >= 100) {
-                                    if (progressPollInterval) {
-                                        clearInterval(progressPollInterval);
-                                        progressPollInterval = null;
+                                if (progressData.percentage !== undefined) {
+                                    const percentage = progressData.percentage;
+                                    if (buttonRef) {
+                                        buttonRef.textContent = percentage + '%';
+                                        console.log(`[${requestId}] Progress update: ${percentage}%`);
+                                    }
+                                    // Stop polling when complete
+                                    if (percentage >= 100) {
+                                        if (progressPollInterval) {
+                                            clearInterval(progressPollInterval);
+                                            progressPollInterval = null;
+                                        }
                                     }
                                 }
                             } else if (progressResponse.status === 404) {
@@ -1668,6 +1680,7 @@ async function simulate() {
                             }
                         } catch (e) {
                             // Ignore polling errors (request may have completed)
+                            console.warn(`[${requestId}] Progress polling error:`, e);
                         }
                     }, 500); // Poll every 500ms
                 };
@@ -1901,7 +1914,11 @@ async function simulate() {
             simBtnFinal.disabled = false;
             simBtnFinal.classList.remove('loading');
             simBtnFinal.style.pointerEvents = 'auto';
-            if (window.__originalButtonText !== null && window.__originalButtonText !== undefined) {
+            // Only restore original text if button still shows percentage (not already restored)
+            // This prevents overwriting progress percentage during ensemble simulations
+            const currentText = simBtnFinal.textContent;
+            if (window.__originalButtonText !== null && window.__originalButtonText !== undefined && 
+                !currentText.match(/^\d+%$/)) {
                 simBtnFinal.textContent = window.__originalButtonText;
             } else {
                 simBtnFinal.textContent = 'Simulate';
