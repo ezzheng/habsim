@@ -325,25 +325,6 @@ def _ensure_cached(file_name: str) -> Path:
     """
     cache_path = _CACHE_DIR / file_name
     
-    if file_name == 'worldelev.npy':
-        if cache_path.exists():
-            # Verify file is not corrupted (check size)
-            try:
-                file_size = cache_path.stat().st_size
-                expected_size = 451008128  # Expected size for worldelev.npy
-                if file_size == expected_size:
-                    cache_path.touch()  # Update access time
-                    return cache_path
-                else:
-                    # File exists but is wrong size - delete it and re-download
-                    print(f"WARNING: {file_name} corrupted, re-downloading", flush=True)
-                    cache_path.unlink()
-            except Exception as e:
-                try:
-                    cache_path.unlink()
-                except:
-                    pass
-    
     if cache_path.exists():
         try:
             if file_name.endswith('.npz'):
