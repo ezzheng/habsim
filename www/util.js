@@ -63,10 +63,10 @@ initMap();
         }
         // Wait for map to be ready
         google.maps.event.addListenerOnce(map, 'idle', function() {
-        // Create custom control container - positioned at top right
+        // Create custom control container
         const controlDiv = document.createElement('div');
         controlDiv.id = 'custom-map-type-control';
-        controlDiv.style.cssText = 'margin: 10px; position: absolute; top: 0; right: 0; z-index: 1000;';
+        controlDiv.style.cssText = 'margin: 10px; position: absolute; bottom: 0; left: 0; z-index: 1000;';
         controlDiv.className = 'custom-map-type-container';
         
         // Create control button (styled like Google Maps control)
@@ -118,8 +118,9 @@ initMap();
             font-family: Roboto, Arial, sans-serif;
         `;
         
-        // Map type options - only Google Maps types (no OSM)
+        // Map type options
         const mapTypes = [
+            { id: 'OSM', label: 'Map', icon: '🗺️' },
             { id: 'roadmap', label: 'Roadmap', icon: '🛣️' },
             { id: 'satellite', label: 'Satellite', icon: '🛰️' },
             { id: 'hybrid', label: 'Hybrid', icon: '🌍' },
@@ -159,8 +160,21 @@ initMap();
             // Click handler
             menuItem.onclick = function() {
                 try {
-                    map.setMapTypeId(mapType.id);
-                    updateActiveMapType(mapType.id);
+                    // Ensure OSM map type is initialized before switching
+                    if (mapType.id === 'OSM' && !map.mapTypes.get('OSM')) {
+                        // OSM not initialized yet, wait a bit
+                        setTimeout(function() {
+                            if (map.mapTypes.get('OSM')) {
+                                map.setMapTypeId('OSM');
+                                updateActiveMapType('OSM');
+                            } else {
+                                console.warn('OSM map type not available');
+                            }
+                        }, 100);
+                    } else {
+                        map.setMapTypeId(mapType.id);
+                        updateActiveMapType(mapType.id);
+                    }
                     dropdownMenu.style.display = 'none';
                 } catch(e) {
                     console.warn('Map type not available:', mapType.id, e);
@@ -213,8 +227,8 @@ initMap();
         controlDiv.appendChild(controlButton);
         controlDiv.appendChild(dropdownMenu);
         
-        // Add to map at top right
-        map.controls[google.maps.ControlPosition.RIGHT_TOP].push(controlDiv);
+        // Add to map
+        map.controls[google.maps.ControlPosition.BOTTOM_LEFT].push(controlDiv);
         
         // Initialize active state
         updateActiveMapType(map.getMapTypeId());
@@ -232,11 +246,11 @@ initMap();
         }
         // Wait for map to be ready
         google.maps.event.addListenerOnce(map, 'idle', function() {
-        // Create search control container - aligned with map button
+        // Create search control container
         const searchDiv = document.createElement('div');
         searchDiv.id = 'custom-search-control';
         searchDiv.className = 'custom-search-container';
-        searchDiv.style.cssText = 'margin: 10px; position: absolute; bottom: 0; left: 48px; z-index: 1000; display: flex; align-items: center; gap: 10px;';
+        searchDiv.style.cssText = 'margin: 10px; position: absolute; bottom: 0; left: 48px; z-index: 1000; display: flex; align-items: center; gap: 8px;';
         
         // Create search button
         const searchButton = document.createElement('button');
@@ -357,13 +371,12 @@ initMap();
                 function styleDropdown() {
                     const pacContainer = document.querySelector('.pac-container');
                     if (pacContainer) {
-                        // Ensure dropdown is visible and properly styled with very high z-index
-                        pacContainer.style.zIndex = '99999';
+                        // Ensure dropdown is visible and properly styled
+                        pacContainer.style.zIndex = '1002';
                         pacContainer.style.display = 'block';
                         pacContainer.style.visibility = 'visible';
                         pacContainer.style.opacity = '1';
                         pacContainer.style.pointerEvents = 'auto';
-                        pacContainer.style.overflow = 'visible';
                         
                         // Hide "Powered by Google" text - target only the logo/attribution, not the dropdown
                         const pacLogo = pacContainer.querySelector('.pac-logo');
@@ -416,7 +429,15 @@ initMap();
                         const isMobile = window.innerWidth <= 768;
                         
                         if (isMobile) {
-                            // Mobile: dropdown appears above (dropup)
+                            // Mobile: dropdown appears below
+                            pacContainer.style.position = 'fixed';
+                            pacContainer.style.top = (inputRect.bottom + window.scrollY + 5) + 'px';
+                            pacContainer.style.left = inputRect.left + 'px';
+                            pacContainer.style.width = inputRect.width + 'px';
+                            pacContainer.style.maxWidth = inputRect.width + 'px';
+                            pacContainer.style.transform = 'none'; // Reset transform for mobile
+                        } else {
+                            // Desktop: dropdown appears above
                             pacContainer.style.position = 'fixed';
                             pacContainer.style.bottom = 'auto';
                             pacContainer.style.top = (inputRect.top + window.scrollY - 5) + 'px';
@@ -425,14 +446,6 @@ initMap();
                             pacContainer.style.maxWidth = inputRect.width + 'px';
                             // Transform to position above
                             pacContainer.style.transform = 'translateY(-100%)';
-                        } else {
-                            // Desktop: dropdown appears below
-                            pacContainer.style.position = 'fixed';
-                            pacContainer.style.top = (inputRect.bottom + window.scrollY + 5) + 'px';
-                            pacContainer.style.left = inputRect.left + 'px';
-                            pacContainer.style.width = inputRect.width + 'px';
-                            pacContainer.style.maxWidth = inputRect.width + 'px';
-                            pacContainer.style.transform = 'none'; // Reset transform for desktop
                         }
                     }
                 }
