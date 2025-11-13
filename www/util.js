@@ -1,23 +1,69 @@
-//Maps initialization
-var element = document.getElementById("map");
-var map = new google.maps.Map(element, {
-    center: new google.maps.LatLng(37.4, -121.5),
-    zoom: 9,
-    mapTypeId: "OSM",
-    zoomControl: false, // Disable default - we'll use custom
-    gestureHandling: 'greedy',
-    mapTypeControl: false, // Disable default control - we'll use custom
-    fullscreenControl: false, // Disable default - we'll use custom
-    streetViewControl: false
-});
+//Maps initialization - wait for Google Maps to load
+var map = null;
 var clickMarker = null;
 var heatmapLayer = null; // Global heatmap layer for Monte Carlo visualization
-google.maps.event.addListener(map, 'click', function (event) {
-    displayCoordinates(event.latLng);
-});
+
+function initMap() {
+    // Check if Google Maps is loaded
+    if (typeof google === 'undefined' || !google.maps || !google.maps.Map) {
+        // Google Maps not loaded yet, retry after a short delay
+        setTimeout(initMap, 100);
+        return;
+    }
+    
+    var element = document.getElementById("map");
+    if (!element) {
+        // Map element not found, retry
+        setTimeout(initMap, 100);
+        return;
+    }
+    
+    // Initialize map
+    map = new google.maps.Map(element, {
+        center: new google.maps.LatLng(37.4, -121.5),
+        zoom: 9,
+        mapTypeId: "OSM",
+        zoomControl: false, // Disable default - we'll use custom
+        gestureHandling: 'greedy',
+        mapTypeControl: false, // Disable default control - we'll use custom
+        fullscreenControl: false, // Disable default - we'll use custom
+        streetViewControl: false
+    });
+    
+    google.maps.event.addListener(map, 'click', function (event) {
+        displayCoordinates(event.latLng);
+    });
+    
+    // Define OSM map type
+    map.mapTypes.set("OSM", new google.maps.ImageMapType({
+        getTileUrl: function(coord, zoom) {
+            // "Wrap" x (longitude) at 180th meridian properly
+            // NB: Don't touch coord.x: because coord param is by reference, and changing its x property breaks something in Google's lib
+            var tilesPerGlobe = 1 << zoom;
+            var x = coord.x % tilesPerGlobe;
+            if (x < 0) {
+                x = tilesPerGlobe+x;
+            }
+            // Wrap y (latitude) in a like manner if you want to enable vertical infinite scrolling
+            return "https://tile.openstreetmap.org/" + zoom + "/" + x + "/" + coord.y + ".png";
+        },
+        tileSize: new google.maps.Size(256, 256),
+        name: "OpenStreetMap",
+        maxZoom: 18
+    }));
+    
+    // Continue with rest of initialization
+    initMapControls();
+    initFullscreenControl();
+}
+
+// Start initialization
+initMap();
 
 // Unified control container for Map and Search buttons
-(function() {
+function initMapControls() {
+    if (!map) return;
+    
     // Wait for map to be ready
     google.maps.event.addListenerOnce(map, 'idle', function() {
         // Create unified control container
@@ -408,10 +454,12 @@ google.maps.event.addListener(map, 'click', function (event) {
         // Initialize active map type
         updateActiveMapType(map.getMapTypeId());
     });
-})();
+}
 
 // Custom fullscreen control (desktop only)
-(function() {
+function initFullscreenControl() {
+    if (!map) return;
+    
     // Wait for map to be ready
     google.maps.event.addListenerOnce(map, 'idle', function() {
         // Create controls container
@@ -479,27 +527,8 @@ google.maps.event.addListener(map, 'click', function (event) {
         if (mapContainer) mapContainer.appendChild(controlsContainer);
         updateFullscreenIcon();
     });
-})();
+}
 
-
-//Define OSM map type pointing at the OpenStreetMap tile server
-map.mapTypes.set("OSM", new google.maps.ImageMapType({
-    getTileUrl: function(coord, zoom) {
-        // "Wrap" x (longitude) at 180th meridian properly
-        // NB: Don't touch coord.x: because coord param is by reference, and changing its x property breaks something in Google's lib
-        var tilesPerGlobe = 1 << zoom;
-        var x = coord.x % tilesPerGlobe;
-        if (x < 0) {
-            x = tilesPerGlobe+x;
-        }
-        // Wrap y (latitude) in a like manner if you want to enable vertical infinite scrolling
-
-        return "https://tile.openstreetmap.org/" + zoom + "/" + x + "/" + coord.y + ".png";
-    },
-    tileSize: new google.maps.Size(256, 256),
-    name: "OpenStreetMap",
-    maxZoom: 18
-}));
 
 // Functions for displaying things
 function displayCoordinates(pnt) {
