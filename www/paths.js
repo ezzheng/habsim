@@ -1395,7 +1395,6 @@ async function simulate() {
             try { window.__simAbort.abort(); } catch (e) {}
         }
         // Note: Ensemble mode on server will still expire after duration from when it was set
-        // This is expected behavior - server doesn't know about client-side cancellation
         console.log('Simulate called but already running - ignoring duplicate call');
         return;
     }
@@ -1617,34 +1616,38 @@ async function simulate() {
                 const requestId = `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
                 console.log(`[${requestId}] Using spaceshot endpoint (with Monte Carlo):`, spaceshotUrl);
                 
-                // Generate request_id on client side (same algorithm as server) to start polling immediately
+                // Generate request_id on client side using MD5 (matching server's algorithm)
                 // Server uses: hashlib.md5(request_key.encode()).hexdigest()[:16]
-                // where request_key = f"{timestamp}_{lat}_{lon}_{alt}_{equil}_{eqtime}_{asc}_{desc}_{coeff}"
+                // where request_key = f"{timestamp}_{lat}_{lon}_{alt}_${equil}_{eqtime}_{asc}_{desc}_{coeff}"
                 const baseCoeff = 1.0; // Default coefficient
                 const requestKey = `${time}_${lat}_${lon}_${alt}_${equil}_${eqtime}_${asc}_${desc}_${baseCoeff}`;
                 
-                // Simple hash function to generate request_id (will verify with server's MD5 when response arrives)
-                // crypto.subtle doesn't support MD5, so we use a simple hash for initial polling
-                // Server's request_id (MD5) will be used once response arrives
-                function simpleHash(str) {
+                // Generate MD5 hash using crypto-js library (matches server's hashlib.md5)
+                let clientRequestId;
+                if (typeof CryptoJS !== 'undefined' && CryptoJS.MD5) {
+                    clientRequestId = CryptoJS.MD5(requestKey).toString().substring(0, 16);
+                } else {
+                    // Fallback: simple hash if crypto-js not loaded (shouldn't happen)
+                    console.warn('CryptoJS not available, using fallback hash');
                     let hash = 0;
-                    for (let i = 0; i < str.length; i++) {
-                        const char = str.charCodeAt(i);
-                        hash = ((hash << 5) - hash) + char;
-                        hash = hash & hash; // Convert to 32-bit integer
+                    for (let i = 0; i < requestKey.length; i++) {
+                        hash = ((hash << 5) - hash) + requestKey.charCodeAt(i);
+                        hash = hash & hash;
                     }
-                    // Convert to hex and take first 16 chars (matching MD5[:16] format)
-                    return Math.abs(hash).toString(16).padStart(16, '0').substring(0, 16);
+                    clientRequestId = Math.abs(hash).toString(16).padStart(16, '0').substring(0, 16);
                 }
                 
-                // Set up progress tracking for ensemble mode
+                // Set up progress tracking for ensemble mode using SSE
                 let progressEventSource = null;
                 let requestIdFromServer = null;
-                let progressPollInterval = null;
                 
-                // Start progress polling immediately using client-generated request_id
-                const startProgressPolling = (requestId) => {
-                    if (progressPollInterval) return; // Already polling
+                // Start SSE progress stream immediately using client-generated request_id
+                // Note: URL_ROOT already includes "/sim", so we use "/progress-stream" not "/sim/progress-stream"
+                const startProgressSSE = (requestId) => {
+                    if (progressEventSource) {
+                        progressEventSource.close();
+                        progressEventSource = null;
+                    }
                     
                     // Get button reference (use closure to ensure it's accessible)
                     const buttonRef = simBtn;
@@ -1653,44 +1656,52 @@ async function simulate() {
                         return;
                     }
                     
-                    const progressUrl = URL_ROOT + "/progress?request_id=" + requestId;
-                    console.log(`[${requestId}] Starting progress polling: ${progressUrl}`);
-                    progressPollInterval = setInterval(async () => {
-                        try {
-                            const progressResponse = await fetch(progressUrl, { signal: window.__simAbort.signal });
-                            if (progressResponse.ok) {
-                                const progressData = await progressResponse.json();
+                    const sseUrl = URL_ROOT + "/progress-stream?request_id=" + requestId;
+                    console.log(`[${requestId}] Starting SSE progress stream: ${sseUrl}`);
+                    
+                    try {
+                        progressEventSource = new EventSource(sseUrl);
+                        
+                        progressEventSource.onmessage = function(event) {
+                            try {
+                                const progressData = JSON.parse(event.data);
                                 if (progressData.percentage !== undefined) {
                                     const percentage = progressData.percentage;
                                     if (buttonRef) {
                                         buttonRef.textContent = percentage + '%';
-                                        console.log(`[${requestId}] Progress update: ${percentage}%`);
+                                        console.log(`[${requestId}] Progress update via SSE: ${percentage}%`);
                                     }
-                                    // Stop polling when complete
+                                    // Close SSE when complete
                                     if (percentage >= 100) {
-                                        if (progressPollInterval) {
-                                            clearInterval(progressPollInterval);
-                                            progressPollInterval = null;
+                                        if (progressEventSource) {
+                                            progressEventSource.close();
+                                            progressEventSource = null;
                                         }
                                     }
                                 }
-                            } else if (progressResponse.status === 404) {
-                                // Progress not found - simulation may have completed or not started yet
-                                // Continue polling in case it starts soon
+                            } catch (e) {
+                                console.warn(`[${requestId}] Failed to parse SSE progress data:`, e);
                             }
-                        } catch (e) {
-                            // Ignore polling errors (request may have completed)
-                            console.warn(`[${requestId}] Progress polling error:`, e);
-                        }
-                    }, 500); // Poll every 500ms
+                        };
+                        
+                        progressEventSource.onerror = function(event) {
+                            console.warn(`[${requestId}] SSE connection error:`, event);
+                            // SSE errors are common (connection closed, etc.) - don't treat as fatal
+                            // The connection will be cleaned up when simulation completes
+                        };
+                    } catch (e) {
+                        console.error(`[${requestId}] Failed to create SSE connection:`, e);
+                        progressEventSource = null;
+                    }
                 };
                 
+                // Set flag to indicate we're in progress mode (prevents finally block from overwriting)
+                window.__inProgressMode = true;
+                
                 try {
-                    // Generate request_id and start polling immediately
-                    // Use simple hash for now (will verify with server's request_id when response arrives)
-                    const clientRequestId = simpleHash(requestKey);
-                    console.log(`[${requestId}] Generated client request_id: ${clientRequestId}, starting progress polling...`);
-                    startProgressPolling(clientRequestId);
+                    // Generate request_id and start SSE immediately
+                    console.log(`[${requestId}] Generated client request_id: ${clientRequestId}, starting SSE progress stream...`);
+                    startProgressSSE(clientRequestId);
                     
                     console.log(`[${requestId}] Starting spaceshot fetch...`);
                     const response = await fetch(spaceshotUrl, { signal: window.__simAbort.signal });
