@@ -152,12 +152,18 @@ google.maps.event.addListener(map, 'click', function (event) {
         
         searchInputContainer.appendChild(searchInput);
         
-        // Initialize Places Autocomplete
+        // Initialize Places Autocomplete - only when input is visible
         let autocomplete = null;
         let autocompleteInitialized = false;
         
         const initAutocomplete = () => {
+            // Only initialize if not already done and input is visible
             if (autocompleteInitialized) return;
+            
+            // Check if input is actually visible (expanded)
+            if (!searchInputContainer.classList.contains('expanded')) {
+                return;
+            }
             
             if (typeof google === 'undefined' || !google.maps || !google.maps.places || !google.maps.places.Autocomplete) {
                 console.warn('Places library not loaded');
@@ -165,12 +171,13 @@ google.maps.event.addListener(map, 'click', function (event) {
             }
             
             try {
+                // Create autocomplete instance
                 autocomplete = new google.maps.places.Autocomplete(searchInput, {
                     types: ['geocode'],
                     fields: ['geometry', 'name', 'formatted_address']
                 });
                 
-                // Bind autocomplete to map bounds
+                // Bind autocomplete to map bounds for better suggestions
                 try {
                     autocomplete.bindTo('bounds', map);
                 } catch(e) {
@@ -200,29 +207,46 @@ google.maps.event.addListener(map, 'click', function (event) {
                     closeSearchBar();
                 });
                 
-                // Style autocomplete dropdown based on screen size
+                // Style and position autocomplete dropdown based on screen size
                 const styleAutocomplete = () => {
-                    const pacContainer = document.querySelector('.pac-container');
-                    if (pacContainer) {
-                        const isMobile = window.innerWidth <= 768;
-                        const inputRect = searchInput.getBoundingClientRect();
-                        
-                        if (isMobile) {
-                            // Mobile: dropdown appears below
-                            pacContainer.style.top = (inputRect.bottom + window.scrollY + 5) + 'px';
-                            pacContainer.style.bottom = 'auto';
-                        } else {
-                            // Desktop: dropdown appears above (dropup)
-                            pacContainer.style.bottom = (window.innerHeight - inputRect.top + 5) + 'px';
-                            pacContainer.style.top = 'auto';
+                    // Wait for pac-container to be created by Google
+                    requestAnimationFrame(() => {
+                        const pacContainer = document.querySelector('.pac-container');
+                        if (pacContainer && searchInput) {
+                            const isMobile = window.innerWidth <= 768;
+                            const inputRect = searchInput.getBoundingClientRect();
+                            
+                            // Ensure high z-index
+                            pacContainer.style.zIndex = '2147483647';
+                            pacContainer.style.position = 'fixed';
+                            pacContainer.style.display = 'block';
+                            pacContainer.style.visibility = 'visible';
+                            pacContainer.style.opacity = '1';
+                            
+                            if (isMobile) {
+                                // Mobile: dropdown appears below input
+                                pacContainer.style.top = (inputRect.bottom + window.scrollY + 5) + 'px';
+                                pacContainer.style.bottom = 'auto';
+                                pacContainer.style.transform = 'none';
+                            } else {
+                                // Desktop: dropdown appears above input (dropup)
+                                pacContainer.style.top = 'auto';
+                                pacContainer.style.bottom = (window.innerHeight - inputRect.top + window.scrollY + 5) + 'px';
+                                pacContainer.style.transform = 'translateY(100%)';
+                            }
+                            pacContainer.style.left = inputRect.left + 'px';
+                            pacContainer.style.width = inputRect.width + 'px';
                         }
-                        pacContainer.style.left = inputRect.left + 'px';
-                        pacContainer.style.width = inputRect.width + 'px';
-                    }
+                    });
                 };
                 
+                // Style on focus and input events
                 searchInput.addEventListener('focus', styleAutocomplete);
-                searchInput.addEventListener('input', styleAutocomplete);
+                searchInput.addEventListener('input', () => {
+                    styleAutocomplete();
+                    // Also check after a short delay to catch delayed rendering
+                    setTimeout(styleAutocomplete, 50);
+                });
                 window.addEventListener('resize', styleAutocomplete);
                 
                 autocompleteInitialized = true;
@@ -240,8 +264,17 @@ google.maps.event.addListener(map, 'click', function (event) {
             } else {
                 closeMapTypeMenu(); // Close map menu if open
                 searchInputContainer.classList.add('expanded');
-                initAutocomplete();
-                setTimeout(() => searchInput.focus(), 100);
+                
+                // Wait for expansion animation to complete, then initialize autocomplete
+                // This ensures the input is visible before autocomplete attaches
+                setTimeout(() => {
+                    // Double-check input is visible before initializing
+                    if (searchInputContainer.classList.contains('expanded') && 
+                        searchInputContainer.offsetWidth > 0) {
+                        initAutocomplete();
+                        searchInput.focus();
+                    }
+                }, 350); // Wait for CSS transition (300ms) + small buffer
             }
         };
         
