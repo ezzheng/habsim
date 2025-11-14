@@ -134,6 +134,10 @@ def refresh():
     
     Uses file-based locking to prevent concurrent refreshes across workers.
     Preserves old timestamp if refresh fails to avoid leaving "Unavailable" state.
+    
+    Returns:
+        True if cycle was updated, False if no update (same cycle, files not ready, or error)
+        Also returns tuple (True/False, "pending_cycle") if new cycle detected but files not ready
     """
     import fcntl
     global _last_refresh_check
@@ -181,16 +185,45 @@ def refresh():
             if new_gefs == old_gefs:
                 return False
             
-            # Verify at least one model file exists before updating currgefs
-            # This prevents updating to a cycle that hasn't been uploaded yet
-            try:
-                test_file = f'{new_gefs}_00.npz'
-                from gefs import _STATUS_S3_CLIENT, _BUCKET
-                _STATUS_S3_CLIENT.head_object(Bucket=_BUCKET, Key=test_file)
-            except Exception:
-                # File not available yet - don't update currgefs
-                print(f"INFO: New GEFS cycle {new_gefs} detected but files not available yet, waiting...", flush=True)
-                return False
+            # Verify ALL 21 model files exist before updating currgefs
+            # Ensemble needs all 21 models (0-20), so we must verify all are available
+            # This prevents updating to a cycle that hasn't fully uploaded yet
+            from gefs import _STATUS_S3_CLIENT, _BUCKET
+            max_retries = 3
+            retry_delay = 2.0
+            for attempt in range(max_retries):
+                try:
+                    # Check all 21 models (0-20)
+                    test_files = [f'{new_gefs}_{str(i).zfill(2)}.npz' for i in range(21)]
+                    missing_files = []
+                    for test_file in test_files:
+                        try:
+                            _STATUS_S3_CLIENT.head_object(Bucket=_BUCKET, Key=test_file)
+                        except Exception:
+                            missing_files.append(test_file)
+                    
+                    if missing_files:
+                        if attempt < max_retries - 1:
+                            wait_time = retry_delay * (2 ** attempt)
+                            print(f"INFO: New GEFS cycle {new_gefs} detected but {len(missing_files)}/{21} files not available yet, retrying in {wait_time:.1f}s...", flush=True)
+                            time.sleep(wait_time)
+                            continue
+                        else:
+                            # Final attempt - still missing files
+                            # Return special status: new cycle detected but files not ready
+                            print(f"WARNING: New GEFS cycle {new_gefs} detected in whichgefs but {len(missing_files)}/{21} files not available after {max_retries} attempts. Using current cycle {old_gefs} until files are ready.", flush=True)
+                            return (False, new_gefs)  # Return tuple: (False, pending_cycle)
+                    
+                    # All files available - proceed with update
+                    break
+                except Exception as e:
+                    if attempt < max_retries - 1:
+                        wait_time = retry_delay * (2 ** attempt)
+                        print(f"INFO: Error checking GEFS files for cycle {new_gefs}, retrying in {wait_time:.1f}s: {e}", flush=True)
+                        time.sleep(wait_time)
+                    else:
+                        print(f"INFO: New GEFS cycle {new_gefs} detected but file check failed after {max_retries} attempts: {e}", flush=True)
+                        return False
             
             # Update timestamp atomically
             _write_currgefs(new_gefs)
@@ -233,17 +266,28 @@ def get_currgefs():
     """Get current GEFS timestamp (reads from shared file)."""
     return _read_currgefs()
 
+# Track cycle invalidation to force re-validation of cached simulators
+_cache_invalidation_cycle = None
+_cache_invalidation_lock = threading.Lock()
+
 def reset():
     """
     Clear simulator cache when GEFS model changes.
     
     CRITICAL: Only evicts simulators that are NOT currently in use (ref_count == 0).
-    This prevents breaking active simulations that are mid-execution. Uses reference
-    counting snapshot to avoid nested lock acquisition (deadlock prevention).
+    However, ALL cached simulators are marked as invalid (even with ref_count > 0)
+    to force re-validation on next access. This ensures cache consistency even when
+    reset() runs during active prefetch operations.
     
     Lock order: _simulator_ref_lock -> _cache_lock (consistent across all functions)
     """
-    global _simulator_cache, _simulator_access_times, elevation_cache, _current_max_cache
+    global _simulator_cache, _simulator_access_times, elevation_cache, _current_max_cache, _cache_invalidation_cycle
+    
+    # Mark all cached simulators as invalid by setting invalidation cycle
+    # This forces re-validation on next access, even if ref_count > 0
+    current_gefs = get_currgefs()
+    with _cache_invalidation_lock:
+        _cache_invalidation_cycle = current_gefs
     
     # DEADLOCK PREVENTION: Get snapshot of ref counts BEFORE acquiring cache lock
     # If we acquired cache_lock first, then tried to acquire ref_lock, we'd deadlock
@@ -738,24 +782,29 @@ def _validate_simulator_cycle(simulator, currgefs):
     Extracts GEFS timestamp from wind_file path (e.g., "2025110312_00.npz" -> "2025110312")
     and compares with current currgefs. Returns True if valid, False if stale.
     
+    CRITICAL: Rejects simulators when validation cannot be performed (no path or invalid format).
+    This prevents using stale simulators after cycle changes when timestamp extraction fails.
+    
     Args:
         simulator: Simulator instance to validate
         currgefs: Current GEFS timestamp to compare against
     
     Returns:
-        True if simulator matches current cycle, False otherwise
+        True if simulator matches current cycle, False otherwise (rejects if cannot validate)
     """
     try:
         wind_file_path = getattr(simulator.wind_file, '_source_path', None)
         if not wind_file_path:
-            # No source path (BytesIO or other) - assume valid
-            return True
+            # No source path - cannot validate, reject to force reload (safer than assuming valid)
+            # This prevents using stale simulators when path information is missing
+            return False
         
         # Extract timestamp from filename (format: YYYYMMDDHH_NN.npz)
         filename = os.path.basename(str(wind_file_path))
         if '_' not in filename:
-            # Can't extract timestamp - assume valid (safer than rejecting)
-            return True
+            # Can't extract timestamp - reject to force reload (safer than assuming valid)
+            # This prevents using stale simulators when filename format is unexpected
+            return False
         
         cached_gefs = filename.split('_')[0]
         return cached_gefs == currgefs
@@ -784,6 +833,9 @@ def _get_simulator(model):
     _start_cache_trim_thread()
     
     # Refresh GEFS data if needed (check every 5 minutes)
+    # NOTE: refresh() uses file-based locking to prevent concurrent refreshes, but this
+    # does NOT prevent cycle changes during simulator loading. Cycle validation is handled
+    # in the retry loop below to catch changes during file download.
     currgefs = get_currgefs()
     if not currgefs or currgefs == "Unavailable" or now - _last_refresh_check > 300:
         refresh()
@@ -820,14 +872,25 @@ def _get_simulator(model):
                     del _simulator_cache[model]
                     del _simulator_access_times[model]
                 else:
+                    # CRITICAL: Check if cache was invalidated by reset()
+                    # This ensures stale simulators are rejected even if ref_count > 0
+                    cache_invalid = False
+                    with _cache_invalidation_lock:
+                        if _cache_invalidation_cycle is not None:
+                            # Cache was invalidated - check if simulator matches invalidation cycle
+                            if not _validate_simulator_cycle(simulator, _cache_invalidation_cycle):
+                                cache_invalid = True
+                    
                     # CRITICAL: Validate cached simulator matches current GEFS cycle
                     # Prevents using stale simulators after cycle change during prefetch
-                    if _validate_simulator_cycle(simulator, currgefs):
+                    if not cache_invalid and _validate_simulator_cycle(simulator, currgefs):
                         # Valid simulator matching current cycle - update access time and return
                         _simulator_access_times[model] = now
                         return simulator
                     else:
-                        # Cached simulator is from different GEFS cycle - invalidate it
+                        # Cached simulator is from different GEFS cycle or was invalidated - remove it
+                        if cache_invalid:
+                            print(f"INFO: Cached simulator {model} invalidated by cycle change, forcing reload", flush=True)
                         del _simulator_cache[model]
                         del _simulator_access_times[model]
             else:
@@ -881,13 +944,51 @@ def _get_simulator(model):
     # Preloading is faster (CPU-bound) but uses more memory
     preload_arrays = _should_preload_arrays()
     
-    # Retry logic for FileNotFoundError (files may not be uploaded yet after cycle change)
-    max_retries = 3
+    # Retry logic for FileNotFoundError and cycle changes
+    # Files may not be uploaded yet after cycle change, or cycle may change during download
+    max_retries = 4
     retry_delay = 2.0  # Start with 2 seconds
+    simulator = None
+    
     for attempt in range(max_retries):
         try:
+            # CRITICAL: Re-validate currgefs at start of each attempt to catch cycle changes
+            # Cycle could change between attempts or during file download
+            current_gefs = get_currgefs()
+            if not current_gefs or current_gefs == "Unavailable":
+                raise RuntimeError(f"GEFS timestamp not available (currgefs='{current_gefs}')")
+            
+            # If cycle changed, update and invalidate cache
+            if current_gefs != currgefs:
+                print(f"INFO: GEFS cycle changed for model {model} (attempt {attempt + 1}): {currgefs} -> {current_gefs}", flush=True)
+                currgefs = current_gefs
+                # Remove stale cache entry if it exists (from old cycle)
+                with _cache_lock:
+                    if model in _simulator_cache:
+                        del _simulator_cache[model]
+                        if model in _simulator_access_times:
+                            del _simulator_access_times[model]
+            
+            # Load file and create simulator
             model_file = f'{currgefs}_{str(model).zfill(2)}.npz'
             wind_file_path = load_gefs(model_file)
+            
+            # CRITICAL: Re-validate cycle AFTER file download but BEFORE creating simulator
+            # This catches cycle changes during the download (which can take 10-30s for large files)
+            post_download_gefs = get_currgefs()
+            if post_download_gefs != currgefs:
+                # Cycle changed during download - retry with new cycle
+                started_gefs = currgefs  # Save for error message
+                print(f"WARNING: GEFS cycle changed during file download for model {model}: {started_gefs} -> {post_download_gefs}. Retrying...", flush=True)
+                currgefs = post_download_gefs
+                if attempt < max_retries - 1:
+                    wait_time = retry_delay * (2 ** attempt)
+                    time.sleep(wait_time)
+                    continue
+                else:
+                    raise RuntimeError(f"GEFS cycle changed during download for model {model}: started with {started_gefs}, ended with {post_download_gefs}")
+            
+            # Create simulator (cycle validated, file downloaded)
             wind_file = WindFile(wind_file_path, preload=preload_arrays)
             
             # Use shared ElevationFile instance when preloading (all simulators use same elevation data)
@@ -903,10 +1004,26 @@ def _get_simulator(model):
                 elev_file = _get_elevation_data()
             
             simulator = Simulator(wind_file, elev_file)
+            
+            # Final validation: ensure cycle hasn't changed during simulator creation
+            final_gefs = get_currgefs()
+            if final_gefs != currgefs:
+                # Cycle changed during simulator creation - retry
+                started_gefs = currgefs  # Save for error message
+                print(f"WARNING: GEFS cycle changed during simulator creation for model {model}: {started_gefs} -> {final_gefs}. Retrying...", flush=True)
+                currgefs = final_gefs
+                simulator = None
+                if attempt < max_retries - 1:
+                    wait_time = retry_delay * (2 ** attempt)
+                    time.sleep(wait_time)
+                    continue
+                else:
+                    raise RuntimeError(f"GEFS cycle changed during simulator creation for model {model}: started with {started_gefs}, ended with {final_gefs}")
+            
             break  # Success - exit retry loop
         except FileNotFoundError as e:
             if attempt < max_retries - 1:
-                # Exponential backoff: 2s, 4s, 8s
+                # Exponential backoff: 2s, 4s, 8s, 16s (30s total)
                 wait_time = retry_delay * (2 ** attempt)
                 print(f"WARNING: Model {model} file not found (attempt {attempt + 1}/{max_retries}), retrying in {wait_time:.1f}s...", flush=True)
                 time.sleep(wait_time)
@@ -918,6 +1035,10 @@ def _get_simulator(model):
             # Non-FileNotFoundError - don't retry, fail immediately
             print(f"ERROR: Failed to load simulator for model {model}: {e}", flush=True)
             raise
+    
+    # Ensure simulator was successfully created
+    if simulator is None:
+        raise RuntimeError(f"Failed to create simulator for model {model}: simulator is None after retry loop")
     
     # Cache it (re-acquire lock)
     with _cache_lock:

@@ -112,29 +112,73 @@ def generate_request_id(args, base_coeff):
 def _prefetch_model(model_id, worker_pid, expected_gefs=None):
     """Prefetch a single model (downloads file and builds simulator).
     
+    CRITICAL: Acquires ref count BEFORE loading to prevent cache eviction during prefetch.
+    This ensures reset() won't evict simulators that are being prefetched.
+    
     Args:
         model_id: Model ID to prefetch
         worker_pid: Worker process ID for logging
         expected_gefs: Expected GEFS timestamp (validates cycle hasn't changed)
                        If 'Unavailable', skips validation (allows initialization)
     """
-    try:
-        # Skip validation if expected_gefs is 'Unavailable' (initialization phase)
-        if expected_gefs and expected_gefs != 'Unavailable':
-            current_gefs = simulate.get_currgefs()
-            if current_gefs and current_gefs != expected_gefs:
-                raise RuntimeError(f"GEFS cycle changed: expected {expected_gefs}, got {current_gefs}")
-        
-        # Load simulator (refresh() is now locked, so cycle won't change during load)
-        simulate._get_simulator(model_id)
-        
-        # Validate cycle after load (catches any edge cases)
-        if expected_gefs and expected_gefs != 'Unavailable':
-            current_gefs = simulate.get_currgefs()
-            if current_gefs and current_gefs != expected_gefs:
-                raise RuntimeError(f"GEFS cycle changed during load: expected {expected_gefs}, got {current_gefs}")
-    except Exception as e:
-        print(f"WARNING: [WORKER {worker_pid}] Prefetch failed for model {model_id}: {e}", flush=True)
+    max_retries = 3
+    retry_delay = 0.5
+    
+    for attempt in range(max_retries):
+        try:
+            # Skip validation if expected_gefs is 'Unavailable' (initialization phase)
+            if expected_gefs and expected_gefs != 'Unavailable':
+                current_gefs = simulate.get_currgefs()
+                if current_gefs and current_gefs != expected_gefs:
+                    # Cycle changed - update expected_gefs and retry the entire function
+                    if attempt < max_retries - 1:
+                        print(f"INFO: [WORKER {worker_pid}] Prefetch cycle change detected for model {model_id} (attempt {attempt + 1}): {expected_gefs} -> {current_gefs}, retrying with new cycle", flush=True)
+                        expected_gefs = current_gefs
+                        time.sleep(retry_delay * (attempt + 1))  # Exponential backoff
+                        continue  # Retry with new cycle
+                    else:
+                        # Final attempt - cycle changed but we're out of retries
+                        raise RuntimeError(f"GEFS cycle changed during prefetch for model {model_id}: started with {expected_gefs}, got {current_gefs} after {max_retries} attempts")
+            
+            # Load simulator (ref count already acquired in wait_for_prefetch)
+            # Cycle may change during load, but validation will catch it
+            simulate._get_simulator(model_id)
+            
+            # Validate cycle after load (catches cycle changes during file download)
+            if expected_gefs and expected_gefs != 'Unavailable':
+                current_gefs = simulate.get_currgefs()
+                if current_gefs and current_gefs != expected_gefs:
+                    # Cycle changed during load - retry if we have attempts left
+                    if attempt < max_retries - 1:
+                        print(f"WARNING: [WORKER {worker_pid}] GEFS cycle changed during load for model {model_id} (attempt {attempt + 1}): {expected_gefs} -> {current_gefs}, retrying...", flush=True)
+                        expected_gefs = current_gefs
+                        time.sleep(retry_delay * (attempt + 1))  # Exponential backoff
+                        continue  # Retry with new cycle
+                    else:
+                        # Final attempt - cycle changed during load
+                        raise RuntimeError(f"GEFS cycle changed during load for model {model_id}: expected {expected_gefs}, got {current_gefs} after {max_retries} attempts")
+            
+            # Success - exit retry loop
+            return
+            
+        except RuntimeError as e:
+            # RuntimeError with "GEFS cycle changed" - re-raise (handled by retry logic above)
+            if "GEFS cycle changed" in str(e):
+                if attempt < max_retries - 1:
+                    # Extract new cycle from error message if possible, or re-read
+                    current_gefs = simulate.get_currgefs()
+                    if current_gefs and current_gefs != expected_gefs:
+                        expected_gefs = current_gefs
+                        time.sleep(retry_delay * (attempt + 1))
+                        continue
+                raise  # Re-raise if out of retries or can't extract new cycle
+            else:
+                # Other RuntimeError - don't retry, fail immediately
+                raise
+        except Exception as e:
+            # Other exceptions - don't retry, fail immediately
+            print(f"WARNING: [WORKER {worker_pid}] Prefetch failed for model {model_id} (attempt {attempt + 1}): {e}", flush=True)
+            raise  # Re-raise to be caught by wait_for_prefetch error handling
 
 def wait_for_prefetch(model_ids, worker_pid, timeout=120, min_models=12):
     """Progressive prefetch: wait for first N models, continue prefetching rest in background.
@@ -143,6 +187,9 @@ def wait_for_prefetch(model_ids, worker_pid, timeout=120, min_models=12):
     - Waits for first 12 models to complete (fast simulation start)
     - Continues prefetching remaining models in background
     - When simulations need models 13-21, they're likely ready (avoiding 100+ second delays)
+    
+    CRITICAL: Acquires ref counts for all models BEFORE starting prefetch to prevent
+    cache eviction by reset() during active prefetch operations.
     
     Args:
         model_ids: List of model IDs to prefetch
@@ -156,12 +203,72 @@ def wait_for_prefetch(model_ids, worker_pid, timeout=120, min_models=12):
     from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
     start_time = time.time()
     
-    # Capture current GEFS cycle to detect changes during prefetch
-    # If cycle changes mid-prefetch, abort to prevent loading stale data
+    # CRITICAL: Refresh GEFS cycle and check if it actually updated
+    # This ensures we have the latest cycle before starting prefetch
+    refresh_result = simulate.refresh()
+    
+    # Handle refresh() return value - may be bool or tuple (False, pending_cycle)
+    refresh_updated = False
+    pending_cycle = None
+    if isinstance(refresh_result, tuple):
+        refresh_updated, pending_cycle = refresh_result
+    else:
+        refresh_updated = refresh_result
+    
+    # Handle "Unavailable" case - wait briefly for refresh to complete
     initial_gefs = simulate.get_currgefs()
+    if not initial_gefs or initial_gefs == "Unavailable":
+        print(f"INFO: [WORKER {worker_pid}] GEFS cycle unavailable, waiting for refresh...", flush=True)
+        time.sleep(1.0)  # Wait 1 second for refresh to complete
+        refresh_result = simulate.refresh()
+        if isinstance(refresh_result, tuple):
+            refresh_updated, pending_cycle = refresh_result
+        else:
+            refresh_updated = refresh_result
+        initial_gefs = simulate.get_currgefs()
+        if not initial_gefs or initial_gefs == "Unavailable":
+            print(f"WARNING: [WORKER {worker_pid}] GEFS cycle still unavailable after refresh, proceeding with prefetch", flush=True)
+            initial_gefs = "Unavailable"  # Allow prefetch to proceed (validation will be skipped)
+    
+    # CRITICAL: Handle case where new cycle detected but files not ready
+    # If pending_cycle is set, whichgefs has new cycle but files aren't ready yet
+    # We should use the current cycle (from currgefs.txt) consistently
+    if pending_cycle:
+        print(f"INFO: [WORKER {worker_pid}] New GEFS cycle {pending_cycle} detected but files not ready. Using current cycle {initial_gefs} until files are available.", flush=True)
+        # Use current cycle from currgefs.txt (old cycle) - files exist for this cycle
+        # Don't update initial_gefs to pending_cycle - files don't exist yet
+    
+    # CRITICAL: Determine final cycle to use and acquire ref counts atomically
+    # This eliminates the race condition where ref counts are acquired for one cycle
+    # but initial_gefs is read as a different cycle
+    # Strategy: Read cycle, acquire ref counts, then re-read cycle to ensure consistency
+    final_gefs = simulate.get_currgefs()
+    if not final_gefs or final_gefs == "Unavailable":
+        final_gefs = initial_gefs if initial_gefs and initial_gefs != "Unavailable" else "Unavailable"
+    
+    # CRITICAL: Acquire ref counts for all models in tight loop to minimize race window
+    # This ensures ref counts are acquired as quickly as possible
+    for model_id in model_ids:
+        simulate._acquire_simulator_ref(model_id)
+    
+    # CRITICAL: Re-read currgefs AFTER acquiring ref counts to catch any cycle changes
+    # that occurred during ref count acquisition. This ensures we use the absolute latest cycle.
+    post_ref_gefs = simulate.get_currgefs()
+    if post_ref_gefs and post_ref_gefs != "Unavailable" and post_ref_gefs != final_gefs:
+        # Cycle changed during ref count acquisition - use new cycle
+        print(f"INFO: [WORKER {worker_pid}] GEFS cycle changed during ref count acquisition: {final_gefs} -> {post_ref_gefs}, using new cycle", flush=True)
+        final_gefs = post_ref_gefs
+    
+    # Use final_gefs as initial_gefs for prefetch
+    initial_gefs = final_gefs
+    
+    # Log if refresh detected a cycle change (helps with debugging)
+    if refresh_updated:
+        print(f"INFO: [WORKER {worker_pid}] GEFS cycle refresh detected change, starting prefetch with cycle: {initial_gefs}", flush=True)
     
     # Submit all models for prefetch in parallel
     # This ensures models 13-21 are actively downloading while simulations run
+    # Ref counts already acquired above, so reset() won't evict during prefetch
     executor = ThreadPoolExecutor(max_workers=min(10, len(model_ids)))
     try:
         prefetch_futures = {
@@ -222,6 +329,11 @@ def wait_for_prefetch(model_ids, worker_pid, timeout=120, min_models=12):
         # Shutdown executor without waiting (remaining prefetches continue as daemon threads)
         # This prevents executor from blocking on exit while allowing background work to finish
         executor.shutdown(wait=False)
+        
+        # Note: Ref counts are NOT released here - they're released when ensemble completes
+        # This protects simulators from eviction during the entire ensemble run
+        # Ref counts will be released in spaceshot() finally block after simulations complete
+        # Failed prefetches will have their ref counts released in spaceshot() finally block
     
     # All models completed (shouldn't reach here due to early return, but handle gracefully)
     elapsed = time.time() - start_time
@@ -1259,6 +1371,12 @@ def spaceshot():
         # If counter check failed (returned early), counter was never incremented, so don't decrement
         if counter_incremented:
             _decrement_ensemble_counter()
+        
+        # Release ref counts acquired during prefetch
+        # These were acquired in wait_for_prefetch() to protect simulators from eviction
+        # Now that ensemble is complete, we can release them
+        for model_id in model_ids:
+            simulate._release_simulator_ref(model_id)
         
         # Trim cache back to normal size after ensemble completes
         # Cache automatically expanded during ensemble, now shrink it back
