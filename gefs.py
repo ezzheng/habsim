@@ -114,7 +114,8 @@ _MAX_CACHED_FILES = 30  # Allow 30 weather files (~9.2GB) - increased for 32GB R
 
 # Cache for whichgefs to reduce connection pool pressure (updates every 6 hours, but status checks every 5 seconds)
 # Uses ETag from head_object to detect changes without downloading body
-_whichgefs_cache = {"value": None, "timestamp": 0, "ttl": 60, "etag": None}  # Cache for 60 seconds, includes ETag
+# CRITICAL: Always check ETag even if cache is fresh to detect cycle changes immediately
+_whichgefs_cache = {"value": None, "timestamp": 0, "ttl": 15, "etag": None}  # Cache for 15 seconds, always ETag-checked
 _whichgefs_lock = threading.Lock()
 
 # Track files currently being downloaded to prevent premature deletion during cleanup
@@ -183,52 +184,41 @@ def open_gefs(file_name):
     """Open GEFS file from S3. Uses head_object for whichgefs to reduce bandwidth/cost."""
     if file_name == 'whichgefs':
         now = time.time()
-        # Fast path: return cached value if still valid
-        if (_whichgefs_cache["value"] is not None and 
-            now - _whichgefs_cache["timestamp"] < _whichgefs_cache["ttl"]):
-            return io.StringIO(_whichgefs_cache["value"])
         
         # Try to acquire lock (non-blocking first, then blocking with timeout)
         if not _whichgefs_lock.acquire(blocking=False):
-            # Another thread is fetching - return cached value if available
-            if _whichgefs_cache["value"] is not None:
-                return io.StringIO(_whichgefs_cache["value"])
-            # Wait for lock with timeout
+            # Another thread is fetching - wait briefly and check if it completed
             if _whichgefs_lock.acquire(blocking=True, timeout=1.0):
                 try:
-                    # Double-check cache after acquiring lock
+                    # Check if cache was updated by other thread (it will have checked ETag)
                     if (_whichgefs_cache["value"] is not None and 
                         now - _whichgefs_cache["timestamp"] < _whichgefs_cache["ttl"]):
                         return io.StringIO(_whichgefs_cache["value"])
                 finally:
                     _whichgefs_lock.release()
-            # If still no cache, return empty (file may not exist)
+            # If still no cache, return cached value if available (fallback)
             if _whichgefs_cache["value"] is not None:
                 return io.StringIO(_whichgefs_cache["value"])
             return io.StringIO("")
         
         try:
-            # Double-check cache after acquiring lock (another thread may have updated it)
-            if (_whichgefs_cache["value"] is not None and 
-                now - _whichgefs_cache["timestamp"] < _whichgefs_cache["ttl"]):
-                return io.StringIO(_whichgefs_cache["value"])
-            
+            # CRITICAL: Always check ETag to detect cycle changes immediately
+            # Even if cache is fresh, we must verify file hasn't changed
             try:
-                # Use head_object to check if file exists and get ETag (reduces bandwidth/cost)
-                # head_object returns metadata (ETag, Last-Modified) without body transfer
+                # Use head_object to check ETag (reduces bandwidth/cost)
                 response = _STATUS_S3_CLIENT.head_object(Bucket=_BUCKET, Key=file_name)
-                
-                # Get ETag to check if file changed
                 etag = response.get('ETag', '').strip('"')
                 
-                # If we have cached value and ETag matches, return cached value (file hasn't changed)
+                # If cache is fresh AND ETag matches, return cached value
                 if (_whichgefs_cache["value"] is not None and 
-                    _whichgefs_cache["etag"] == etag):
+                    _whichgefs_cache["etag"] is not None and
+                    _whichgefs_cache["etag"] == etag and
+                    now - _whichgefs_cache["timestamp"] < _whichgefs_cache["ttl"]):
                     # File hasn't changed - return cached value
                     _whichgefs_cache["timestamp"] = now  # Update timestamp
                     return io.StringIO(_whichgefs_cache["value"])
                 
-                # File changed or not cached - fetch new content
+                # ETag mismatch or cache expired - fetch new content
                 # whichgefs is tiny (~10 bytes), so this is still efficient
                 content_response = _STATUS_S3_CLIENT.get_object(Bucket=_BUCKET, Key=file_name)
                 content = content_response['Body'].read().decode("utf-8")
