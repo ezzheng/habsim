@@ -407,12 +407,6 @@ python app.py
 gunicorn --config gunicorn_config.py app:app
 ```
 
-### Testing
-
-- **Single model**: Visit `http://localhost:5000`, disable ensemble, click "Simulate"
-- **Ensemble**: Enable ensemble toggle, click "Simulate"
-- **Multi mode**: Enable multi toggle, click "Simulate"
-
 ### Project Structure
 
 ```
@@ -435,8 +429,6 @@ habsim/
 │   └── style.js           # Mode switching
 └── requirements.txt       # Python dependencies
 ```
-<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>
-codebase_search
 
 ### Key Design Decisions
 
