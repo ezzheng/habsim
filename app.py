@@ -138,7 +138,7 @@ def _prefetch_model(model_id, worker_pid):
     except Exception as e:
         print(f"WARNING: [WORKER {worker_pid}] Prefetch failed for model {model_id}: {e}", flush=True)
 
-def wait_for_prefetch(model_ids, worker_pid, timeout=60, max_models=5):
+def wait_for_prefetch(model_ids, worker_pid, timeout=60, max_models=12):
     """Start background prefetching and wait for first few models. Returns wait time."""
     models_to_wait = min(max_models, len(model_ids))
     
@@ -915,15 +915,30 @@ def spaceshot():
     
     for i in range(num_perturbations):
         pert_alt = perturb_alt(base_alt)
+        pert_equil = perturb_equil(base_equil, pert_alt)
+        pert_asc = perturb_rate(base_asc)
+        pert_desc = perturb_rate(base_desc)
+        pert_eqtime = perturb_eqtime(base_eqtime)
+        
+        # Validate perturbations make sense
+        if pert_equil < pert_alt:
+            pert_equil = pert_alt  # Ensure burst >= launch altitude
+        if pert_asc <= 0:
+            pert_asc = 0.1  # Ensure positive ascent rate
+        if pert_desc <= 0:
+            pert_desc = 0.1  # Ensure positive descent rate
+        if pert_eqtime < 0:
+            pert_eqtime = 0  # Ensure non-negative equilibrium time
+        
         perturbations.append({
             'perturbation_id': i,
             'lat': perturb_lat(base_lat),
             'lon': perturb_lon(base_lon),
             'alt': pert_alt,
-            'equil': perturb_equil(base_equil, pert_alt),
-            'eqtime': perturb_eqtime(base_eqtime),
-            'asc': perturb_rate(base_asc),
-            'desc': perturb_rate(base_desc),
+            'equil': pert_equil,
+            'eqtime': pert_eqtime,
+            'asc': pert_asc,
+            'desc': pert_desc,
             'coeff': perturb_coefficient()
         })
     

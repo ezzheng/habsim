@@ -348,17 +348,17 @@ def _should_preload_arrays():
     Preloading is faster (CPU-bound) but uses more memory.
     Returns True if cache has many models (ensemble workload), False otherwise."""
     with _cache_lock:
-        # If we have 15+ models cached, we're likely doing ensemble work
+        # If we have 10+ models cached, we're likely doing ensemble work
         # Preload arrays for better performance in this case
         ensemble_models = len([m for m in _simulator_cache.keys() if isinstance(m, int) and m < 21])
-        return ensemble_models >= 15
+        return ensemble_models >= 10
 
 def _get_target_cache_size():
     """Auto-size cache based on current usage patterns.
     Returns target cache size (normal or ensemble) based on how many models are cached.
     NOTE: Must be called while holding _cache_lock."""
     ensemble_models = len([m for m in _simulator_cache.keys() if isinstance(m, int) and m < 21])
-    if ensemble_models >= 15:
+    if ensemble_models >= 10:
         return MAX_SIMULATOR_CACHE_ENSEMBLE
     return MAX_SIMULATOR_CACHE_NORMAL
 
