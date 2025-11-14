@@ -130,14 +130,25 @@ def _write_currgefs(value):
         pass
 
 def refresh():
-    """Refresh GEFS timestamp from S3 and update shared file.
+    """Refresh GEFS cycle from S3 and update shared file atomically.
+    
+    Cycle Change Protocol:
+    1. Verify all 21 model files exist in S3 (retries for eventual consistency)
+    2. Set cache invalidation cycle (signals other workers that cache is invalid)
+    3. Wait 5 seconds (grace period for S3 propagation)
+    4. Update currgefs (other workers can now see new cycle)
+    5. Clear caches and schedule old file cleanup
+    
+    This order ensures other workers see invalidation_cycle before currgefs, allowing
+    them to detect and wait for cycle transitions properly.
     
     Uses file-based locking to prevent concurrent refreshes across workers.
     Preserves old timestamp if refresh fails to avoid leaving "Unavailable" state.
     
     Returns:
-        True if cycle was updated, False if no update (same cycle, files not ready, or error)
-        Also returns tuple (True/False, "pending_cycle") if new cycle detected but files not ready
+        True if cycle was updated
+        False if no update (same cycle, files not ready, or error)
+        Tuple (False, "pending_cycle") if new cycle detected but files not ready
     """
     import fcntl
     global _last_refresh_check
@@ -185,12 +196,11 @@ def refresh():
             if new_gefs == old_gefs:
                 return False
             
-            # Verify ALL 21 model files exist before updating currgefs
+            # Verify all 21 model files exist before updating currgefs
             # Ensemble needs all 21 models (0-20), so we must verify all are available
             # This prevents updating to a cycle that hasn't fully uploaded yet
-            # FIX: Problem 2 - Use _check_cycle_files_available with retry_for_consistency=True
-            # to handle S3 eventual consistency
-            max_retries = 5  # Increased retries for S3 eventual consistency
+            # Uses retry_for_consistency to handle S3 eventual consistency
+            max_retries = 5
             retry_delay = 2.0
             for attempt in range(max_retries):
                 try:
@@ -220,20 +230,19 @@ def refresh():
                         print(f"INFO: New GEFS cycle {new_gefs} detected but file check failed after {max_retries} attempts: {e}", flush=True)
                         return False
             
-            # FIX: Problem 1 - Set cache invalidation cycle BEFORE updating currgefs
-            # This makes the operation atomic: other workers will see invalidation cycle
-            # set before they see the new currgefs, preventing race conditions
+            # Set cache invalidation cycle BEFORE updating currgefs
+            # This makes the operation atomic: other workers see invalidation_cycle before currgefs,
+            # allowing them to detect and wait for cycle transitions properly
             with _cache_invalidation_lock:
                 old_invalidation_cycle = _cache_invalidation_cycle
                 _cache_invalidation_cycle = new_gefs
                 if old_invalidation_cycle != new_gefs:
                     print(f"INFO: Cache invalidation cycle set to {new_gefs} (was {old_invalidation_cycle}). All cached simulators will be re-validated.", flush=True)
             
-            # FIX: Problem 1 - Move grace period BEFORE updating currgefs to prevent race conditions
-            # Wait briefly to allow S3 to fully propagate files before other workers can see the new cycle
-            # This reduces the chance of 404 errors when prefetch starts immediately after cycle change
-            # Increased from 2s to 5s to better handle S3 eventual consistency across regions
-            time.sleep(5.0)  # 5 second grace period for S3 eventual consistency
+            # Grace period: wait for S3 to fully propagate files before other workers see new cycle
+            # This reduces 404 errors when prefetch starts immediately after cycle change
+            # 5 seconds handles S3 eventual consistency across regions
+            time.sleep(5.0)
             
             # Update timestamp atomically (after grace period, files should be fully available)
             _write_currgefs(new_gefs)
