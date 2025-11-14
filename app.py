@@ -208,7 +208,7 @@ def _prefetch_model(model_id, worker_pid, expected_gefs=None):
             print(f"WARNING: [WORKER {worker_pid}] Prefetch failed for model {model_id} (attempt {attempt + 1}): {e}", flush=True)
             raise  # Re-raise to be caught by wait_for_prefetch error handling
 
-def _wait_for_cycle_stable(worker_pid, max_wait=6.0):
+def _wait_for_cycle_stable(worker_pid, max_wait=12.0):
     """Wait for currgefs to match the invalidation cycle after refresh().
     
     refresh() sets `_cache_invalidation_cycle` first, sleeps 3 seconds, then writes `currgefs`.
@@ -245,7 +245,7 @@ def _wait_for_cycle_stable(worker_pid, max_wait=6.0):
     # Timeout - return current cycle anyway
     current_gefs = simulate.get_currgefs()
     if current_gefs and current_gefs != "Unavailable":
-        print(f"WARNING: [WORKER {worker_pid}] Cycle stabilization timeout, using current cycle: {current_gefs}", flush=True)
+        print(f"INFO: [WORKER {worker_pid}] Cycle stabilization timeout after {max_wait:.1f}s, using current cycle: {current_gefs}", flush=True)
         return current_gefs
     return None
 
@@ -740,18 +740,28 @@ def _read_progress(request_id):
     return None
 
 def _write_progress(request_id, progress_data):
-    """Write progress to file (shared across workers)."""
+    """Write progress to file (shared across workers) with collision-safe temp files."""
+    temp_path = None
     try:
         # Ensure directory exists (may have been deleted or not created yet)
         _PROGRESS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
         
         progress_file = _get_progress_file(request_id)
-        temp_file = progress_file.with_suffix('.tmp')
-        with open(temp_file, 'w') as f:
-            json.dump(progress_data, f)
-        temp_file.replace(progress_file)
+        with tempfile.NamedTemporaryFile('w', dir=_PROGRESS_CACHE_DIR, delete=False, suffix='.tmp') as tmp:
+            json.dump(progress_data, tmp)
+            tmp.flush()
+            os.fsync(tmp.fileno())
+            temp_path = Path(tmp.name)
+        
+        if temp_path:
+            temp_path.replace(progress_file)
     except Exception as e:
         print(f"Error writing progress file for {request_id}: {e}", flush=True)
+        if temp_path and temp_path.exists():
+            try:
+                temp_path.unlink()
+            except Exception:
+                pass
 
 def _delete_progress(request_id):
     """Delete progress file."""
@@ -759,6 +769,8 @@ def _delete_progress(request_id):
         progress_file = _get_progress_file(request_id)
         if progress_file.exists():
             progress_file.unlink()
+    except FileNotFoundError:
+        pass
     except Exception as e:
         print(f"Error deleting progress file for {request_id}: {e}", flush=True)
 
