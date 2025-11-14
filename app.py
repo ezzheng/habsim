@@ -719,6 +719,9 @@ _progress_lock = threading.Lock()
 _PROGRESS_CACHE_DIR = Path("/app/data/progress") if Path("/app/data").exists() else Path(tempfile.gettempdir()) / "habsim-progress"
 _PROGRESS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
+_inflight_ensembles = {}
+_inflight_lock = threading.Lock()
+
 def _get_progress_file(request_id):
     """Get file path for progress tracking."""
     return _PROGRESS_CACHE_DIR / f"{request_id}.json"
@@ -773,6 +776,49 @@ def _delete_progress(request_id):
         pass
     except Exception as e:
         print(f"Error deleting progress file for {request_id}: {e}", flush=True)
+
+
+def _acquire_inflight_request(request_id):
+    """Register an in-flight ensemble request. Returns (entry, is_owner)."""
+    with _inflight_lock:
+        entry = _inflight_ensembles.get(request_id)
+        if entry:
+            entry['waiters'] += 1
+            return entry, False
+        entry = {
+            'event': threading.Event(),
+            'waiters': 1,
+            'result': None,
+            'error': None,
+            'status': 200
+        }
+        _inflight_ensembles[request_id] = entry
+        return entry, True
+
+
+def _complete_inflight_request(request_id, payload, status=200, is_error=False):
+    """Store ensemble result/error and release waiters."""
+    with _inflight_lock:
+        entry = _inflight_ensembles.get(request_id)
+        if not entry:
+            return
+        if is_error:
+            entry['error'] = payload
+        else:
+            entry['result'] = payload
+        entry['status'] = status
+        entry['event'].set()
+
+
+def _release_inflight_request(request_id):
+    """Decrement waiter count and cleanup inflight entry when unused."""
+    with _inflight_lock:
+        entry = _inflight_ensembles.get(request_id)
+        if not entry:
+            return
+        entry['waiters'] -= 1
+        if entry['waiters'] <= 0:
+            del _inflight_ensembles[request_id]
 
 def _start_cache_trim_thread():
     """Start cache trim thread early in each worker."""
@@ -1349,18 +1395,6 @@ def spaceshot():
     worker_pid = os.getpid()
     simulate.record_activity()
     
-    # CRITICAL: Check ensemble counter limit before processing
-    # This prevents too many simultaneous ensemble requests from overwhelming the system
-    counter_incremented = False
-    if not _increment_ensemble_counter():
-        return make_response(
-            jsonify({
-                "error": f"Too many concurrent ensemble requests. Maximum is {MAX_CONCURRENT_ENSEMBLE_CALLS}. Please try again later."
-            }), 
-            429  # Too Many Requests
-        )
-    counter_incremented = True  # Only set if increment succeeded
-    
     ENSEMBLE_WEIGHT = 2.0
     start_time = time.time()
     args = request.args
@@ -1400,246 +1434,301 @@ def spaceshot():
     
     request_id = generate_request_id(args, base_coeff)
     
-    # CRITICAL: Initialize progress tracking IMMEDIATELY before any other processing
-    # Frontend may connect via SSE before simulations start, so progress must exist
-    # or SSE will timeout waiting for progress to appear
-    model_ids = get_model_ids()
-    total_ensemble = len(model_ids)
-    total_montecarlo = num_perturbations * len(model_ids)
-    total_simulations = total_ensemble + total_montecarlo
-    
-    # Create progress structure with all counters initialized to 0
-    progress_data = {
-        'completed': 0,
-        'total': total_simulations,
-        'ensemble_completed': 0,
-        'ensemble_total': total_ensemble,
-        'montecarlo_completed': 0,
-        'montecarlo_total': total_montecarlo,
-        'status': 'loading'  # Initial status: loading models
-    }
-    # Store in both in-memory dict (fast) and file (shared across workers)
-    with _progress_lock:
-        _progress_tracking[request_id] = progress_data.copy()
-    _write_progress(request_id, progress_data)
-    
-    # Log ensemble start immediately
-    print(f"INFO: [WORKER {worker_pid}] Ensemble: request_id={request_id}, "
-          f"lat={base_lat}, lon={base_lon}, alt={base_alt}, burst={base_equil}, "
-          f"ascent={base_asc}m/s, descent={base_desc}m/s, "
-          f"models={len(model_ids)}, montecarlo={num_perturbations}×{len(model_ids)}={total_montecarlo}", flush=True)
-    
-    # Generate Monte Carlo perturbations
-    perturbations = _generate_perturbations(args, base_lat, base_lon, base_alt, base_equil, 
-                                            base_asc, base_desc, base_eqtime, base_coeff, 
-                                            num_perturbations)
-    
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-    paths = [None] * len(model_ids)  # Pre-allocate to preserve order for 21 ensemble paths
-    landing_positions = []  # Landing positions: 21 ensemble + 420 Monte Carlo = 441 total
-    
-    def run_ensemble_simulation(model):
-        """Run ensemble simulation for one model. Returns trajectory path or None."""
+    inflight_entry, inflight_owner = _acquire_inflight_request(request_id)
+    if not inflight_owner:
         try:
-            result = singlezpb(timestamp, base_lat, base_lon, base_alt, base_equil, base_eqtime, base_asc, base_desc, model)
-            return result
-        except FileNotFoundError as e:
-            print(f"WARNING: Model {model} file not found: {e}", flush=True)
-            return None
-        except Exception as e:
-            print(f"ERROR: Model {model} failed: {e}", flush=True)
-            return None
+            wait_success = inflight_entry['event'].wait(timeout=900)
+            if not wait_success:
+                return make_response(jsonify({"error": "Another simulation with the same parameters is still running. Please try again shortly."}), 503)
+            status = inflight_entry.get('status', 200)
+            if inflight_entry.get('error'):
+                return make_response(jsonify(inflight_entry['error']), status)
+            return make_response(jsonify(inflight_entry.get('result', {})), status)
+        finally:
+            _release_inflight_request(request_id)
     
-    def run_montecarlo_simulation(pert, model):
-        """Run Monte Carlo simulation and extract landing position. Returns dict or None."""
-        try:
-            result = singlezpb(timestamp, pert['lat'], pert['lon'], pert['alt'], 
-                             pert['equil'], pert['eqtime'], pert['asc'], pert['desc'], model,
-                             coefficient=pert.get('coeff', 1.0))
-            
-            landing = extract_landing_position(result)
-            if landing:
-                landing.update({
-                    'perturbation_id': pert['perturbation_id'],
-                    'model_id': model,
-                    'weight': 1.0
-                })
-            return landing
-        except FileNotFoundError as e:
-            print(f"WARNING: Monte Carlo simulation file not found: pert={pert['perturbation_id']}, model={model}: {e}", flush=True)
-            return None
-        except Exception as e:
-            print(f"WARNING: Monte Carlo simulation failed: pert={pert['perturbation_id']}, model={model}, error={e}", flush=True)
-            return None
+    response_payload = None
+    error_payload = None
+    error_status = None
+    inflight_completed = False
+    
+    def _finalize_success(payload, status_code=200):
+        nonlocal response_payload, inflight_completed
+        response_payload = payload
+        _complete_inflight_request(request_id, payload, status=status_code, is_error=False)
+        _release_inflight_request(request_id)
+        inflight_completed = True
+        return make_response(jsonify(payload), status_code)
+    
+    def _finalize_error(payload, status_code):
+        nonlocal error_payload, error_status, inflight_completed
+        error_payload = payload
+        error_status = status_code
+        _complete_inflight_request(request_id, payload, status=status_code, is_error=True)
+        _release_inflight_request(request_id)
+        inflight_completed = True
+        return make_response(jsonify(payload), status_code)
+    
+    counter_incremented = False
     
     try:
-        # Progressive prefetch: wait for first 12 models, continue rest in background
-        # This balances fast startup (simulations start after 12 models) with avoiding
-        # on-demand delays (models 13-21 continue prefetching, ready when needed)
-        # Update status to show we're loading
-        update_progress(request_id, status='loading')
-        wait_for_prefetch(model_ids, worker_pid)
-        
-        # Switch to simulating status once prefetch is done
-        update_progress(request_id, status='simulating')
-        
-        # Run ensemble and Monte Carlo simulations in parallel with 10-minute timeout
-        max_workers = min(32, os.cpu_count() or 4)
-        timeout_seconds = 600  # 10 minutes
-        
-        # Create model-to-index mapping for O(1) lookup (replaces O(n) model_ids.index())
-        # This is critical for performance: without it, finding model index in paths array
-        # would be O(n) for each completion, making total complexity O(n²) instead of O(n)
-        model_to_index = {model: idx for idx, model in enumerate(model_ids)}
-        
-        # Submit all simulations to thread pool (ensemble + Monte Carlo run in parallel)
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            # Ensemble futures: one per model (21 total)
-            # Use dict to track which model each future belongs to
-            ensemble_futures = {
-                executor.submit(run_ensemble_simulation, model): model
-                for model in model_ids
-            }
-            
-            # Monte Carlo futures: one per perturbation × model combination
-            # Total: num_perturbations × len(model_ids) (e.g., 20 × 21 = 420)
-            montecarlo_futures = [
-                executor.submit(run_montecarlo_simulation, pert, model)
-                for pert in perturbations
-                for model in model_ids
-            ]
-            
-            # Combine all futures for unified completion tracking
-            all_futures = list(ensemble_futures.keys()) + montecarlo_futures
-            # Use set for O(1) lookup to check if future is ensemble or Monte Carlo
-            ensemble_future_set = set(ensemble_futures.keys())
-            
-            # Progress tracking counters
-            ensemble_completed = 0
-            montecarlo_completed = 0
-            total_completed = 0
-            last_progress_update = 0
-            # Batch progress updates to reduce lock contention
-            # Updating on every completion would cause excessive locking overhead
-            progress_update_interval = 10
-            
-            try:
-                # Process completions as they arrive (non-blocking)
-                # as_completed() yields futures in order of completion, not submission order
-                for future in as_completed(all_futures, timeout=timeout_seconds):
-                    total_completed += 1
-                    # Batch progress updates to reduce lock contention
-                    # Updating on every completion would serialize all threads on the lock
-                    if total_completed - last_progress_update >= progress_update_interval or total_completed == total_simulations:
-                        update_progress(request_id, completed=total_completed)
-                        last_progress_update = total_completed
-                    
-                    # Check if this is an ensemble or Monte Carlo future
-                    if future in ensemble_future_set:
-                        # Ensemble simulation completed
-                        model = ensemble_futures[future]
-                        try:
-                            # Use O(1) lookup to find correct index in paths array
-                            idx = model_to_index[model]
-                            result = future.result()
-                            paths[idx] = result  # Store in correct position to preserve order
-                            
-                            # Extract landing position for heatmap (ensemble points weighted 2×)
-                            landing = extract_landing_position(result)
-                            if landing:
-                                landing.update({
-                                    'perturbation_id': -1,  # -1 indicates ensemble (not Monte Carlo)
-                                    'model_id': model,
-                                    'weight': ENSEMBLE_WEIGHT  # 2.0× weight for ensemble
-                                })
-                                landing_positions.append(landing)
-                            
-                            ensemble_completed += 1
-                            # Update ensemble-specific progress (batched internally)
-                            _update_ensemble_progress(request_id, ensemble_completed, len(model_ids))
-                        except Exception as e:
-                            print(f"ERROR: Ensemble model {model} failed: {e}", flush=True)
-                            # Store None to indicate failure (preserves array order)
-                            idx = model_to_index.get(model)
-                            if idx is not None:
-                                paths[idx] = None
-                            ensemble_completed += 1
-                            _update_ensemble_progress(request_id, ensemble_completed, len(model_ids))
-                    else:
-                        # Monte Carlo simulation completed
-                        try:
-                            result = future.result()
-                            if result is not None:
-                                # Monte Carlo results are landing positions only (not full paths)
-                                landing_positions.append(result)
-                            montecarlo_completed += 1
-                            # Update Monte Carlo-specific progress (batched internally)
-                            _update_montecarlo_progress(request_id, montecarlo_completed, total_montecarlo)
-                        except Exception as e:
-                            # Monte Carlo failures are non-fatal (just one perturbation)
-                            print(f"WARNING: Monte Carlo simulation failed: {e}", flush=True)
-                            montecarlo_completed += 1
-                            _update_montecarlo_progress(request_id, montecarlo_completed, total_montecarlo)
-            except TimeoutError:
-                # 10-minute timeout reached - cancel remaining work to prevent hanging
-                print(f"WARNING: [WORKER {worker_pid}] Ensemble timeout after {timeout_seconds}s", flush=True)
-                for f in all_futures:
-                    if not f.done():
-                        f.cancel()  # Cancel futures that haven't started yet
-        
-        # Log summary
-        ensemble_success = sum(1 for p in paths if p is not None)
-        elapsed = time.time() - start_time
-        ensemble_landings = sum(1 for p in landing_positions if p.get('perturbation_id') == -1)
-        montecarlo_landings = len(landing_positions) - ensemble_landings
-        print(f"INFO: [WORKER {worker_pid}] Ensemble complete: request_id={request_id}, "
-              f"result={ensemble_success}/{len(model_ids)} paths, {len(landing_positions)} landings, "
-              f"time={elapsed:.0f}s", flush=True)
-        
-    except Exception as e:
-        print(f"ERROR: Ensemble run failed: {e}", flush=True)
-        paths = [None] * len(model_ids)
-        landing_positions = []
-    finally:
-        # CRITICAL: Decrement counter only if we incremented it
-        # Counter tracks active ensemble calls across all workers
-        # If counter check failed (returned early), counter was never incremented, so don't decrement
-        if counter_incremented:
-            _decrement_ensemble_counter()
-        
-        # Release ref counts acquired during prefetch
-        # These were acquired in wait_for_prefetch() to protect simulators from eviction
-        # Now that ensemble is complete, we can release them
-        for model_id in model_ids:
-            simulate._release_simulator_ref(model_id)
-        
-        # Trim cache back to normal size after ensemble completes
-        # Cache automatically expanded during ensemble, now shrink it back
-        simulate._trim_cache_to_normal()
-        
-        # Mark progress as 100% complete (for SSE connections that are still open)
+        # CRITICAL: Check ensemble counter limit before processing
+        if not _increment_ensemble_counter():
+            return _finalize_error(
+                {
+                    "error": f"Too many concurrent ensemble requests. Maximum is {MAX_CONCURRENT_ENSEMBLE_CALLS}. Please try again later."
+                },
+                429
+            )
+        counter_incremented = True
+    
+        # CRITICAL: Initialize progress tracking IMMEDIATELY before any other processing
+        # Frontend may connect via SSE before simulations start, so progress must exist
+        # or SSE will timeout waiting for progress to appear
+        model_ids = get_model_ids()
+        total_ensemble = len(model_ids)
+        total_montecarlo = num_perturbations * len(model_ids)
+        total_simulations = total_ensemble + total_montecarlo
+    
+        # Create progress structure with all counters initialized to 0
+        progress_data = {
+            'completed': 0,
+            'total': total_simulations,
+            'ensemble_completed': 0,
+            'ensemble_total': total_ensemble,
+            'montecarlo_completed': 0,
+            'montecarlo_total': total_montecarlo,
+            'status': 'loading'  # Initial status: loading models
+        }
+        # Store in both in-memory dict (fast) and file (shared across workers)
         with _progress_lock:
-            if request_id in _progress_tracking:
-                _progress_tracking[request_id]['completed'] = _progress_tracking[request_id]['total']
-                _write_progress(request_id, _progress_tracking[request_id])
+            _progress_tracking[request_id] = progress_data.copy()
+        _write_progress(request_id, progress_data)
         
-        # Schedule cleanup after delay (allows SSE connections to read final progress)
-        # Progress files are cleaned up after 30s to prevent disk bloat
-        def cleanup_progress():
-            time.sleep(30)  # Wait for SSE connections to finish
+        # Log ensemble start immediately
+        print(f"INFO: [WORKER {worker_pid}] Ensemble: request_id={request_id}, "
+              f"lat={base_lat}, lon={base_lon}, alt={base_alt}, burst={base_equil}, "
+              f"ascent={base_asc}m/s, descent={base_desc}m/s, "
+              f"models={len(model_ids)}, montecarlo={num_perturbations}×{len(model_ids)}={total_montecarlo}", flush=True)
+        
+        # Generate Monte Carlo perturbations
+        perturbations = _generate_perturbations(args, base_lat, base_lon, base_alt, base_equil, 
+                                                base_asc, base_desc, base_eqtime, base_coeff, 
+                                                num_perturbations)
+        
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        paths = [None] * len(model_ids)  # Pre-allocate to preserve order for 21 ensemble paths
+        landing_positions = []  # Landing positions: 21 ensemble + 420 Monte Carlo = 441 total
+        
+        def run_ensemble_simulation(model):
+            """Run ensemble simulation for one model. Returns trajectory path or None."""
+            try:
+                result = singlezpb(timestamp, base_lat, base_lon, base_alt, base_equil, base_eqtime, base_asc, base_desc, model)
+                return result
+            except FileNotFoundError as e:
+                print(f"WARNING: Model {model} file not found: {e}", flush=True)
+                return None
+            except Exception as e:
+                print(f"ERROR: Model {model} failed: {e}", flush=True)
+                return None
+        
+        def run_montecarlo_simulation(pert, model):
+            """Run Monte Carlo simulation and extract landing position. Returns dict or None."""
+            try:
+                result = singlezpb(timestamp, pert['lat'], pert['lon'], pert['alt'], 
+                                 pert['equil'], pert['eqtime'], pert['asc'], pert['desc'], model,
+                                 coefficient=pert.get('coeff', 1.0))
+                
+                landing = extract_landing_position(result)
+                if landing:
+                    landing.update({
+                        'perturbation_id': pert['perturbation_id'],
+                        'model_id': model,
+                        'weight': 1.0
+                    })
+                return landing
+            except FileNotFoundError as e:
+                print(f"WARNING: Monte Carlo simulation file not found: pert={pert['perturbation_id']}, model={model}: {e}", flush=True)
+                return None
+            except Exception as e:
+                print(f"WARNING: Monte Carlo simulation failed: pert={pert['perturbation_id']}, model={model}, error={e}", flush=True)
+                return None
+    
+        try:
+            # Progressive prefetch: wait for first 12 models, continue rest in background
+            # This balances fast startup (simulations start after 12 models) with avoiding
+            # on-demand delays (models 13-21 continue prefetching, ready when needed)
+            # Update status to show we're loading
+            update_progress(request_id, status='loading')
+            wait_for_prefetch(model_ids, worker_pid)
+            
+            # Switch to simulating status once prefetch is done
+            update_progress(request_id, status='simulating')
+            
+            # Run ensemble and Monte Carlo simulations in parallel with 10-minute timeout
+            max_workers = min(32, os.cpu_count() or 4)
+            timeout_seconds = 600  # 10 minutes
+            
+            # Create model-to-index mapping for O(1) lookup (replaces O(n) model_ids.index())
+            # This is critical for performance: without it, finding model index in paths array
+            # would be O(n) for each completion, making total complexity O(n²) instead of O(n)
+            model_to_index = {model: idx for idx, model in enumerate(model_ids)}
+            
+            # Submit all simulations to thread pool (ensemble + Monte Carlo run in parallel)
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                # Ensemble futures: one per model (21 total)
+                # Use dict to track which model each future belongs to
+                ensemble_futures = {
+                    executor.submit(run_ensemble_simulation, model): model
+                    for model in model_ids
+                }
+                
+                # Monte Carlo futures: one per perturbation × model combination
+                # Total: num_perturbations × len(model_ids) (e.g., 20 × 21 = 420)
+                montecarlo_futures = [
+                    executor.submit(run_montecarlo_simulation, pert, model)
+                    for pert in perturbations
+                    for model in model_ids
+                ]
+                
+                # Combine all futures for unified completion tracking
+                all_futures = list(ensemble_futures.keys()) + montecarlo_futures
+                # Use set for O(1) lookup to check if future is ensemble or Monte Carlo
+                ensemble_future_set = set(ensemble_futures.keys())
+                
+                # Progress tracking counters
+                ensemble_completed = 0
+                montecarlo_completed = 0
+                total_completed = 0
+                last_progress_update = 0
+                # Batch progress updates to reduce lock contention
+                # Updating on every completion would cause excessive locking overhead
+                progress_update_interval = 10
+                
+                try:
+                    # Process completions as they arrive (non-blocking)
+                    # as_completed() yields futures in order of completion, not submission order
+                    for future in as_completed(all_futures, timeout=timeout_seconds):
+                        total_completed += 1
+                        # Batch progress updates to reduce lock contention
+                        # Updating on every completion would serialize all threads on the lock
+                        if total_completed - last_progress_update >= progress_update_interval or total_completed == total_simulations:
+                            update_progress(request_id, completed=total_completed)
+                            last_progress_update = total_completed
+                        
+                        # Check if this is an ensemble or Monte Carlo future
+                        if future in ensemble_future_set:
+                            # Ensemble simulation completed
+                            model = ensemble_futures[future]
+                            try:
+                                # Use O(1) lookup to find correct index in paths array
+                                idx = model_to_index[model]
+                                result = future.result()
+                                paths[idx] = result  # Store in correct position to preserve order
+                                
+                                # Extract landing position for heatmap (ensemble points weighted 2×)
+                                landing = extract_landing_position(result)
+                                if landing:
+                                    landing.update({
+                                        'perturbation_id': -1,  # -1 indicates ensemble (not Monte Carlo)
+                                        'model_id': model,
+                                        'weight': ENSEMBLE_WEIGHT  # 2.0× weight for ensemble
+                                    })
+                                    landing_positions.append(landing)
+                                
+                                ensemble_completed += 1
+                                # Update ensemble-specific progress (batched internally)
+                                _update_ensemble_progress(request_id, ensemble_completed, len(model_ids))
+                            except Exception as e:
+                                print(f"ERROR: Ensemble model {model} failed: {e}", flush=True)
+                                # Store None to indicate failure (preserves array order)
+                                idx = model_to_index.get(model)
+                                if idx is not None:
+                                    paths[idx] = None
+                                ensemble_completed += 1
+                                _update_ensemble_progress(request_id, ensemble_completed, len(model_ids))
+                        else:
+                            # Monte Carlo simulation completed
+                            try:
+                                result = future.result()
+                                if result is not None:
+                                    # Monte Carlo results are landing positions only (not full paths)
+                                    landing_positions.append(result)
+                                montecarlo_completed += 1
+                                # Update Monte Carlo-specific progress (batched internally)
+                                _update_montecarlo_progress(request_id, montecarlo_completed, total_montecarlo)
+                            except Exception as e:
+                                # Monte Carlo failures are non-fatal (just one perturbation)
+                                print(f"WARNING: Monte Carlo simulation failed: {e}", flush=True)
+                                montecarlo_completed += 1
+                                _update_montecarlo_progress(request_id, montecarlo_completed, total_montecarlo)
+                except TimeoutError:
+                    # 10-minute timeout reached - cancel remaining work to prevent hanging
+                    print(f"WARNING: [WORKER {worker_pid}] Ensemble timeout after {timeout_seconds}s", flush=True)
+                    for f in all_futures:
+                        if not f.done():
+                            f.cancel()  # Cancel futures that haven't started yet
+            
+            # Log summary
+            ensemble_success = sum(1 for p in paths if p is not None)
+            elapsed = time.time() - start_time
+            ensemble_landings = sum(1 for p in landing_positions if p.get('perturbation_id') == -1)
+            montecarlo_landings = len(landing_positions) - ensemble_landings
+            print(f"INFO: [WORKER {worker_pid}] Ensemble complete: request_id={request_id}, "
+                  f"result={ensemble_success}/{len(model_ids)} paths, {len(landing_positions)} landings, "
+                  f"time={elapsed:.0f}s", flush=True)
+        
+        except Exception as e:
+            print(f"ERROR: Ensemble run failed: {e}", flush=True)
+            paths = [None] * len(model_ids)
+            landing_positions = []
+        finally:
+            # CRITICAL: Decrement counter only if we incremented it
+            # Counter tracks active ensemble calls across all workers
+            # If counter check failed (returned early), counter was never incremented, so don't decrement
+            if counter_incremented:
+                _decrement_ensemble_counter()
+            
+            # Release ref counts acquired during prefetch
+            # These were acquired in wait_for_prefetch() to protect simulators from eviction
+            # Now that ensemble is complete, we can release them
+            for model_id in model_ids:
+                simulate._release_simulator_ref(model_id)
+            
+            # Trim cache back to normal size after ensemble completes
+            # Cache automatically expanded during ensemble, now shrink it back
+            simulate._trim_cache_to_normal()
+            
+            # Mark progress as 100% complete (for SSE connections that are still open)
             with _progress_lock:
                 if request_id in _progress_tracking:
-                    del _progress_tracking[request_id]
-            _delete_progress(request_id)  # Remove file-based progress cache
+                    _progress_tracking[request_id]['completed'] = _progress_tracking[request_id]['total']
+                    _write_progress(request_id, _progress_tracking[request_id])
+            
+            # Schedule cleanup after delay (allows SSE connections to read final progress)
+            # Progress files are cleaned up after 30s to prevent disk bloat
+            def cleanup_progress():
+                time.sleep(30)  # Wait for SSE connections to finish
+                with _progress_lock:
+                    if request_id in _progress_tracking:
+                        del _progress_tracking[request_id]
+                _delete_progress(request_id)  # Remove file-based progress cache
+            
+            cleanup_thread = threading.Thread(target=cleanup_progress, daemon=True)
+            cleanup_thread.start()
         
-        cleanup_thread = threading.Thread(target=cleanup_progress, daemon=True)
-        cleanup_thread.start()
-    
-    return jsonify({
-        'paths': paths,
-        'heatmap_data': landing_positions,
-        'request_id': request_id
-    })
+        result_payload = {
+            'paths': paths,
+            'heatmap_data': landing_positions,
+            'request_id': request_id
+        }
+        return _finalize_success(result_payload, 200)
+    finally:
+        if inflight_owner and not inflight_completed:
+            fallback_payload = error_payload or {"error": "Simulation ended before completion"}
+            fallback_status = error_status or 500
+            _complete_inflight_request(request_id, fallback_payload, status=fallback_status, is_error=True)
+            _release_inflight_request(request_id)
 
 @app.route('/sim/progress-stream')
 def progress_stream():

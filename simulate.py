@@ -216,8 +216,13 @@ def refresh():
             if not new_gefs:
                 return False
             
-            # Only proceed if timestamp actually changed
+            # Only proceed if timestamp actually changed. Even when unchanged,
+            # sync the invalidation cycle so this worker knows which cycle is active.
             if new_gefs == old_gefs:
+                with _cache_invalidation_lock:
+                    if _cache_invalidation_cycle != new_gefs:
+                        print(f"INFO: refresh() synchronized cache invalidation cycle to {new_gefs} (already current).", flush=True)
+                        _cache_invalidation_cycle = new_gefs
                 return False
             
             # Verify all 21 model files exist before updating currgefs
