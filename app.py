@@ -122,12 +122,22 @@ def _prefetch_model(model_id, worker_pid, expected_gefs=None):
         expected_gefs: Expected GEFS timestamp (validates cycle hasn't changed)
     """
     try:
-        # Check if GEFS cycle changed during prefetch (abort if so)
+        # CRITICAL: Check cycle BEFORE loading (prevents loading wrong files)
         if expected_gefs:
             current_gefs = simulate.get_currgefs()
             if current_gefs and current_gefs != expected_gefs:
-                raise RuntimeError(f"GEFS cycle changed during prefetch: expected {expected_gefs}, got {current_gefs}")
+                raise RuntimeError(f"GEFS cycle changed: expected {expected_gefs}, got {current_gefs}")
+        
+        # Load simulator (may trigger refresh() which could change cycle)
         simulate._get_simulator(model_id)
+        
+        # CRITICAL: Check cycle AFTER loading (catches changes during load)
+        # If cycle changed during _get_simulator(), cache validation will reject it
+        # but we also check here to fail fast
+        if expected_gefs:
+            current_gefs = simulate.get_currgefs()
+            if current_gefs and current_gefs != expected_gefs:
+                raise RuntimeError(f"GEFS cycle changed during load: expected {expected_gefs}, got {current_gefs}")
     except Exception as e:
         print(f"WARNING: [WORKER {worker_pid}] Prefetch failed for model {model_id}: {e}", flush=True)
 
@@ -168,6 +178,7 @@ def wait_for_prefetch(model_ids, worker_pid, timeout=120, min_models=12):
         failed_count = 0
         total_models = len(model_ids)
         models_to_wait = min(min_models, total_models)
+        max_failures_before_abort = 5  # Abort if too many fail (likely cycle change)
         
         # Wait for first N models to complete, then return (simulations can start)
         # Remaining models continue prefetching in background (executor not shut down)
@@ -181,12 +192,17 @@ def wait_for_prefetch(model_ids, worker_pid, timeout=120, min_models=12):
                     failed_count += 1
                     print(f"WARNING: [WORKER {worker_pid}] Prefetch failed for model {model_id}: {e}", flush=True)
                 
+                # Early exit if too many failures (likely cycle change - abort prefetch)
+                if failed_count >= max_failures_before_abort:
+                    elapsed = time.time() - start_time
+                    print(f"WARNING: [WORKER {worker_pid}] Prefetch aborting: {failed_count} failures in {elapsed:.1f}s "
+                          f"(likely GEFS cycle change)", flush=True)
+                    return elapsed
+                
                 # Return after first N models complete (allow simulations to start)
-                # Leave executor running so remaining prefetches continue in background
                 if completed_count >= models_to_wait:
                     elapsed = time.time() - start_time
                     remaining = total_models - completed_count - failed_count
-                    # Don't shutdown executor - let remaining prefetches continue
                     print(f"INFO: [WORKER {worker_pid}] Prefetch: {completed_count}/{total_models} ready in {elapsed:.1f}s, "
                           f"{remaining} continuing in background", flush=True)
                     return elapsed

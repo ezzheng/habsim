@@ -653,6 +653,37 @@ def _start_cache_trim_thread():
 # The thread will monitor idle time and trigger cleanup after 120 seconds of inactivity
 _start_cache_trim_thread()
 
+def _validate_simulator_cycle(simulator, currgefs):
+    """Validate that cached simulator matches current GEFS cycle.
+    
+    Extracts GEFS timestamp from wind_file path (e.g., "2025110312_00.npz" -> "2025110312")
+    and compares with current currgefs. Returns True if valid, False if stale.
+    
+    Args:
+        simulator: Simulator instance to validate
+        currgefs: Current GEFS timestamp to compare against
+    
+    Returns:
+        True if simulator matches current cycle, False otherwise
+    """
+    try:
+        wind_file_path = getattr(simulator.wind_file, '_source_path', None)
+        if not wind_file_path:
+            # No source path (BytesIO or other) - assume valid
+            return True
+        
+        # Extract timestamp from filename (format: YYYYMMDDHH_NN.npz)
+        filename = os.path.basename(str(wind_file_path))
+        if '_' not in filename:
+            # Can't extract timestamp - assume valid (safer than rejecting)
+            return True
+        
+        cached_gefs = filename.split('_')[0]
+        return cached_gefs == currgefs
+    except Exception:
+        # If validation fails, reject simulator (safe fallback)
+        return False
+
 def _get_simulator(model):
     """
     Get simulator for given model with dynamic multi-simulator LRU cache.
@@ -711,33 +742,12 @@ def _get_simulator(model):
                 else:
                     # CRITICAL: Validate cached simulator matches current GEFS cycle
                     # Prevents using stale simulators after cycle change during prefetch
-                    # Extract GEFS timestamp from wind_file path (e.g., "2025110312_00.npz" -> "2025110312")
-                    try:
-                        wind_file_path = getattr(simulator.wind_file, '_source_path', None)
-                        if wind_file_path:
-                            # Extract timestamp from filename (format: YYYYMMDDHH_NN.npz)
-                            import os
-                            filename = os.path.basename(str(wind_file_path))
-                            if '_' in filename:
-                                cached_gefs = filename.split('_')[0]
-                                if cached_gefs != currgefs:
-                                    # Cached simulator is from different GEFS cycle - invalidate it
-                                    del _simulator_cache[model]
-                                    del _simulator_access_times[model]
-                                else:
-                                    # Valid simulator matching current cycle - update access time and return
-                                    _simulator_access_times[model] = now
-                                    return simulator
-                            else:
-                                # Can't extract timestamp from filename - return simulator (safer to use than reject)
-                                _simulator_access_times[model] = now
-                                return simulator
-                        else:
-                            # No source path (BytesIO or other) - return simulator (assume valid)
-                            _simulator_access_times[model] = now
-                            return simulator
-                    except Exception:
-                        # If validation fails, remove from cache and recreate (safe fallback)
+                    if _validate_simulator_cycle(simulator, currgefs):
+                        # Valid simulator matching current cycle - update access time and return
+                        _simulator_access_times[model] = now
+                        return simulator
+                    else:
+                        # Cached simulator is from different GEFS cycle - invalidate it
                         del _simulator_cache[model]
                         del _simulator_access_times[model]
             else:

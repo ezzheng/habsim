@@ -12,7 +12,8 @@ A web-based trajectory prediction system for high-altitude balloons using GEFS (
 - [Architecture](#architecture)
 - [API Reference](#api-reference)
 - [Core Components](#core-components)
-- [Performance](#performance)
+- [Performance & Optimization](#performance--optimization)
+- [GEFS Cycle Management](#gefs-cycle-management)
 - [Deployment](#deployment)
 - [Development](#development)
 
@@ -41,7 +42,9 @@ GET /sim/spaceshot?timestamp=1763077920&lat=37.3553&lon=-121.8763&alt=24&equil=3
 - **Monte Carlo**: 420 parameter perturbations for probability density mapping
 - **Multi Mode**: Sequential simulations at different launch times
 - **Real-time Progress**: Server-Sent Events (SSE) for progress tracking
-- **Adaptive Caching**: Auto-expands cache for ensemble workloads
+- **Adaptive Caching**: Auto-expands cache for ensemble workloads (10 → 30 simulators)
+- **Progressive Prefetch**: Waits for first 12 models, continues rest in background
+- **GEFS Cycle Protection**: Dual validation prevents stale data during cycle changes
 - **Memory Management**: Intelligent cleanup and resource management
 
 ---
@@ -56,12 +59,14 @@ Client (www/)
 Flask App (app.py)
     ├─ Request routing & validation
     ├─ Ensemble coordination
-    └─ Progress tracking
+    ├─ Progressive prefetch (12 models wait, rest background)
+    └─ Progress tracking (SSE)
     ↓
 Simulation Orchestrator (simulate.py)
-    ├─ Adaptive cache management
-    ├─ Prediction caching
-    └─ Memory management
+    ├─ Adaptive cache management (10 → 30 simulators)
+    ├─ GEFS cycle validation
+    ├─ Prediction caching (200 entries, 1hr TTL)
+    └─ Memory management (reference counting, periodic trim)
     ↓
 ┌─────────────────────────────────────┐
 │  GEFS Manager (gefs.py)             │  S3 downloads, LRU cache
@@ -77,7 +82,7 @@ Simulation Orchestrator (simulate.py)
 - **Workers**: 4 Gunicorn workers × 8 threads = 32 concurrent capacity
 - **Resources**: 32GB RAM, 32 vCPU
 - **Storage**: Persistent volume at `/app/data` for file cache
-- **Data Source**: AWS S3 (GEFS weather files)
+- **Data Source**: AWS S3 (GEFS weather files, ~308MB each)
 
 ---
 
@@ -116,6 +121,11 @@ Ensemble + Monte Carlo simulation with progress tracking.
 }
 ```
 
+**Flow**:
+1. **Prefetch Phase**: Downloads first 12 models (progressive prefetch)
+2. **Simulation Phase**: Runs 21 ensemble + 420 Monte Carlo simulations in parallel
+3. **Progress**: Real-time updates via SSE stream
+
 #### `GET /sim/progress-stream?request_id=...`
 Server-Sent Events stream for real-time progress updates.
 
@@ -124,12 +134,16 @@ Server-Sent Events stream for real-time progress updates.
 data: {"completed": 100, "total": 441, "percentage": 23, "status": "simulating"}
 ```
 
+**Status Values**:
+- `"loading"`: Prefetch phase (downloading models)
+- `"simulating"`: Running simulations
+
 ### Utility Endpoints
 
 - `GET /sim/elev?lat=...&lon=...` - Elevation lookup
-- `GET /sim/models` - Available model IDs
-- `GET /sim/status` - Server status
-- `GET /sim/cache-status` - Cache diagnostics
+- `GET /sim/models` - Available model IDs (0-20)
+- `GET /sim/status` - Server status (memory, cache, active requests)
+- `GET /sim/cache-status` - Cache diagnostics (simulator cache, GEFS cache)
 - `GET /sim/which` - Current GEFS timestamp
 
 ---
@@ -142,21 +156,40 @@ data: {"completed": 100, "total": 441, "percentage": 23, "status": "simulating"}
 **Key Functions**:
 - `singlezpb()`: Three-phase simulation (ascent → coast → descent)
 - `spaceshot()`: Ensemble + Monte Carlo coordinator
-- `wait_for_prefetch()`: Prefetches first models to warm cache
+- `wait_for_prefetch()`: Progressive prefetch (waits for 12 models, continues rest in background)
+- `_prefetch_model()`: Prefetches single model with GEFS cycle validation
 - `_generate_perturbations()`: Monte Carlo parameter generation
 - `update_progress()`: Atomic progress tracking (in-memory + file-based)
+- `run_ensemble_simulation()`: Single ensemble model simulation
+- `run_montecarlo_simulation()`: Single Monte Carlo perturbation
+
+**Progressive Prefetch Strategy**:
+- Waits for first 12 models to complete (fast simulation start)
+- Continues prefetching remaining 9 models in background
+- When simulations need models 13-21, they're likely ready (avoids 100+ second delays)
+- Early abort if 5+ models fail (detects GEFS cycle change)
 
 **Progress Tracking**:
-- Status: `'downloading'` (prefetch) → `'simulating'` (running)
+- Status: `'loading'` (prefetch) → `'simulating'` (running)
 - Batched updates (every 10 completions) to reduce lock contention
+- Dual storage: in-memory (fast) + file-based (shared across workers)
 - 30-second cleanup delay after completion
 
+**GEFS Cycle Protection**:
+- Captures `initial_gefs` at prefetch start
+- Validates cycle BEFORE and AFTER loading each model
+- Aborts prefetch if cycle changes mid-prefetch (prevents stale data)
+
 ### `simulate.py` - Simulation Orchestrator
-**Purpose**: Simulator cache management, trajectory calculation
+**Purpose**: Simulator cache management, trajectory calculation, GEFS cycle management
 
 **Key Functions**:
 - `simulate()`: Main simulation (checks cache, runs physics)
 - `_get_simulator()`: Gets/creates simulator with adaptive caching
+- `_validate_simulator_cycle()`: Validates cached simulator matches current GEFS cycle
+- `refresh()`: Checks S3 for new GEFS cycle, updates shared file
+- `reset()`: Clears simulator cache when GEFS cycle changes (only unused simulators)
+- `get_currgefs()`: Gets current GEFS timestamp from shared file
 - `_should_preload_arrays()`: Auto-detects ensemble workload (10+ models)
 - `_get_target_cache_size()`: Auto-sizes cache (10 normal, 30 ensemble)
 - `_trim_cache_to_normal()`: Trims cache based on workload
@@ -168,6 +201,18 @@ data: {"completed": 100, "total": 441, "percentage": 23, "status": "simulating"}
 - **Prediction cache**: 200 entries, 1hr TTL
 - **Reference counting**: Prevents cleanup of active simulators
 - **Shared elevation**: Single `ElevationFile` instance for ensemble workloads
+- **LRU eviction**: Evicts least recently used unused simulators
+
+**GEFS Cycle Validation**:
+- Extracts GEFS timestamp from `wind_file._source_path` (e.g., `"2025111312_00.npz"` → `"2025111312"`)
+- Compares with current `currgefs` on cache hits
+- Rejects stale simulators (different cycle) and forces reload
+- Handles edge cases (missing `_source_path`, invalid filenames)
+
+**Auto-refresh**:
+- Checks for new GEFS cycle every 5 minutes
+- Updates shared file (`/app/data/currgefs.txt`) across workers
+- Clears cache and cleans up old files when cycle changes
 
 ### `windfile.py` - Wind Data Access
 **Purpose**: 4D wind interpolation (lat, lon, alt, time)
@@ -180,6 +225,7 @@ data: {"completed": 100, "total": 441, "percentage": 23, "status": "simulating"}
 - Extracts NPZ to memory-mapped `.npy` for fast access
 - Per-file locks prevent zipfile contention
 - Filter cache for interpolation arrays
+- Stores `_source_path` for GEFS cycle validation
 
 ### `gefs.py` - GEFS File Management
 **Purpose**: Downloads and caches GEFS files from AWS S3
@@ -190,11 +236,19 @@ data: {"completed": 100, "total": 441, "percentage": 23, "status": "simulating"}
 - LRU eviction when cache exceeds limits
 
 **Features**:
-- Per-file locking prevents duplicate downloads across workers
-- Connection pooling (64 connections) for high concurrency
-- Retry logic with exponential backoff (up to 5 retries)
-- Semaphore limits concurrent downloads (4 at a time)
-- Automatic cleanup of old GEFS cycle files
+- **S3 TransferManager**: Multipart parallel downloads (faster, more resilient)
+- **Connection pooling**: 64 connections for high concurrency
+- **Download semaphore**: 8 concurrent downloads (increased from 4)
+- **Per-file locking**: Prevents duplicate downloads across workers
+- **Retry logic**: Exponential backoff (up to 5 retries)
+- **File integrity**: Validates NPZ files before returning
+- **Automatic cleanup**: Removes old GEFS cycle files when new cycle detected
+- **Download protection**: `_downloading_files` set prevents cleanup of active downloads
+
+**Performance**:
+- Cache hits: <1s (file already on disk)
+- Cache misses: 5-30s (download from S3, ~308MB per file)
+- Parallel downloads: 8 concurrent (improves ensemble prefetch speed)
 
 ### `habsim/classes.py` - Physics Engine
 **Purpose**: Balloon state, Runge-Kutta integration
@@ -218,7 +272,7 @@ data: {"completed": 100, "total": 441, "percentage": 23, "status": "simulating"}
 
 ---
 
-## Performance
+## Performance & Optimization
 
 ### Single Model Run
 - **Speed**: ~5-10 seconds
@@ -227,6 +281,7 @@ data: {"completed": 100, "total": 441, "percentage": 23, "status": "simulating"}
 
 ### Ensemble Run (First Time)
 - **Speed**: ~5-15 minutes
+  - Prefetch (12 models): ~30-60s
   - 21 ensemble paths: ~5-10 seconds each
   - 420 Monte Carlo: ~4-14 minutes total
 - **Memory**: ~13.8GB per worker
@@ -237,9 +292,54 @@ data: {"completed": 100, "total": 441, "percentage": 23, "status": "simulating"}
 - **Memory**: ~13.8GB per worker (simulators cached in RAM)
 - **Why faster**: Files on disk, simulators in RAM cache
 
+### Progressive Prefetch Benefits
+- **Fast startup**: Simulations start after 12 models (vs waiting for all 21)
+- **Background loading**: Models 13-21 continue prefetching while simulations run
+- **Reduced delays**: On-demand requests for models 13-21 are likely already ready
+- **Early abort**: Detects GEFS cycle changes quickly (5+ failures)
+
 ### After Ensemble Completes
 - **Auto-trim**: Cache automatically trims when workload decreases
 - **Idle cleanup**: Workers idle >15 minutes trigger deep cleanup
+- **Memory recovery**: Multi-pass GC + `malloc_trim(0)` after cache trims
+
+---
+
+## GEFS Cycle Management
+
+### Cycle Change Detection
+- **Auto-refresh**: Checks S3 every 5 minutes for new GEFS cycle
+- **Shared state**: Uses `/app/data/currgefs.txt` file (shared across workers)
+- **Cache invalidation**: Clears unused simulators when cycle changes
+
+### Protection Mechanisms
+
+**1. Dual Cycle Validation (Prefetch)**
+- Check BEFORE loading: Prevents starting download of wrong files
+- Check AFTER loading: Catches cycle changes during `_get_simulator()` execution
+- Aborts prefetch if cycle changes mid-prefetch
+
+**2. Cache Validation (Runtime)**
+- Validates cached simulators on every access
+- Extracts GEFS timestamp from `wind_file._source_path`
+- Rejects stale simulators (different cycle) and forces reload
+
+**3. File Protection**
+- `_downloading_files` set prevents cleanup of active downloads
+- Per-file locks prevent concurrent downloads
+- Old files only deleted after new cycle is confirmed
+
+**4. Early Abort**
+- Prefetch aborts if 5+ models fail (likely cycle change)
+- Prevents wasting time on stale data
+
+### Flow During Cycle Change
+
+1. **Refresh detects new cycle**: Reads `whichgefs` from S3
+2. **Updates shared file**: Writes new timestamp to `/app/data/currgefs.txt`
+3. **Clears cache**: `reset()` evicts unused simulators (preserves active ones)
+4. **Cleans up old files**: Deletes old GEFS files from disk (except active downloads)
+5. **New requests**: Load new cycle files, validate on cache hits
 
 ---
 
@@ -341,15 +441,26 @@ habsim/
 - Preloading automatically enabled for ensemble workloads
 - No explicit "ensemble mode" - system adapts to workload automatically
 
+**Progressive Prefetch**:
+- Waits for first 12 models (fast startup)
+- Continues prefetching remaining 9 models in background
+- Balances speed (simulations start quickly) with completeness (all models ready)
+
 **Memory Management**:
 - Reference counting prevents cleanup of active simulators
 - Shared elevation file for ensemble workloads
 - Multi-pass GC + `malloc_trim(0)` after cache trims
 - Automatic cleanup of old GEFS cycle files
 
+**GEFS Cycle Protection**:
+- Dual validation (before + after loading)
+- Cache validation on every access
+- Early abort on cycle change detection
+- File protection during downloads
+
 **Progress Tracking**:
 - Dual storage: in-memory (fast) + file-based (shared across workers)
-- Status: `'downloading'` → `'simulating'`
+- Status: `'loading'` → `'simulating'`
 - Batched updates (every 10 completions) to reduce lock contention
 - 30-second cleanup delay for late-connecting SSE clients
 
