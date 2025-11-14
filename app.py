@@ -120,10 +120,13 @@ def _prefetch_model(model_id, worker_pid, expected_gefs=None):
         model_id: Model ID to prefetch
         worker_pid: Worker process ID for logging
         expected_gefs: Expected GEFS timestamp (validates cycle hasn't changed)
+                       If 'Unavailable', skips validation (allows initialization)
     """
     try:
-        # CRITICAL: Check cycle BEFORE loading (prevents loading wrong files)
-        if expected_gefs:
+        # Skip validation if expected_gefs is 'Unavailable' (initialization phase)
+        # This prevents false cycle change errors when cycle is first detected
+        if expected_gefs and expected_gefs != 'Unavailable':
+            # CRITICAL: Check cycle BEFORE loading (prevents loading wrong files)
             current_gefs = simulate.get_currgefs()
             if current_gefs and current_gefs != expected_gefs:
                 raise RuntimeError(f"GEFS cycle changed: expected {expected_gefs}, got {current_gefs}")
@@ -132,9 +135,8 @@ def _prefetch_model(model_id, worker_pid, expected_gefs=None):
         simulate._get_simulator(model_id)
         
         # CRITICAL: Check cycle AFTER loading (catches changes during load)
-        # If cycle changed during _get_simulator(), cache validation will reject it
-        # but we also check here to fail fast
-        if expected_gefs:
+        # Skip validation if expected was 'Unavailable' (initialization phase)
+        if expected_gefs and expected_gefs != 'Unavailable':
             current_gefs = simulate.get_currgefs()
             if current_gefs and current_gefs != expected_gefs:
                 raise RuntimeError(f"GEFS cycle changed during load: expected {expected_gefs}, got {current_gefs}")
