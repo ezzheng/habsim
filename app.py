@@ -1035,32 +1035,32 @@ def spaceshot():
                     if future in ensemble_future_set:
                         model = ensemble_futures[future]
                         try:
-                        idx = model_ids.index(model)
-                        result = future.result()
-                        paths[idx] = result
-                        
-                        # Extract landing position from ensemble result
-                        landing = extract_landing_position(result)
-                        if landing:
-                            landing.update({
-                                'perturbation_id': -1,
-                                        'model_id': model,
-                                'weight': ENSEMBLE_WEIGHT
-                                    })
-                            landing_positions.append(landing)
-                        
-                        ensemble_completed += 1
-                        # Batch ensemble progress updates (update every 5 or on completion)
-                        if ensemble_completed % 5 == 0 or ensemble_completed == len(model_ids):
-                            update_progress(request_id, ensemble_completed=ensemble_completed)
-                    except Exception as e:
-                        print(f"ERROR: Ensemble model {model} failed: {e}", flush=True)
-                        paths[model_ids.index(model)] = None
-                        ensemble_completed += 1
-                        # Batch ensemble progress updates
-                        if ensemble_completed % 5 == 0 or ensemble_completed == len(model_ids):
-                            update_progress(request_id, ensemble_completed=ensemble_completed)
-                else:
+                            idx = model_ids.index(model)
+                            result = future.result()
+                            paths[idx] = result
+                            
+                            # Extract landing position from ensemble result
+                            landing = extract_landing_position(result)
+                            if landing:
+                                landing.update({
+                                    'perturbation_id': -1,
+                                    'model_id': model,
+                                    'weight': ENSEMBLE_WEIGHT
+                                })
+                                landing_positions.append(landing)
+                            
+                            ensemble_completed += 1
+                            # Batch ensemble progress updates (update every 5 or on completion)
+                            if ensemble_completed % 5 == 0 or ensemble_completed == len(model_ids):
+                                update_progress(request_id, ensemble_completed=ensemble_completed)
+                        except Exception as e:
+                            print(f"ERROR: Ensemble model {model} failed: {e}", flush=True)
+                            paths[model_ids.index(model)] = None
+                            ensemble_completed += 1
+                            # Batch ensemble progress updates
+                            if ensemble_completed % 5 == 0 or ensemble_completed == len(model_ids):
+                                update_progress(request_id, ensemble_completed=ensemble_completed)
+                    else:
                     try:
                         result = future.result()
                         if result is not None:
