@@ -161,25 +161,18 @@ def _consume_forced_preload_slot() -> bool:
     return False
 
 def refresh():
-    """Refresh GEFS cycle from S3 and update shared file atomically.
+    """Refresh GEFS cycle from S3 and update shared state atomically.
     
-    Cycle Change Protocol:
-    1. Verify all 21 model files exist in S3 (retries for eventual consistency)
-    2. Set cache invalidation cycle (signals other workers that cache is invalid)
-    3. Wait 5 seconds (grace period for S3 propagation)
-    4. Update currgefs (other workers can now see new cycle)
-    5. Clear caches and schedule old file cleanup
-    
-    This order ensures other workers see invalidation_cycle before currgefs, allowing
-    them to detect and wait for cycle transitions properly.
-    
-    Uses file-based locking to prevent concurrent refreshes across workers.
-    Preserves old timestamp if refresh fails to avoid leaving "Unavailable" state.
+    Steps:
+    1. Read `whichgefs` and verify all 21 model files are readable.
+    2. Set `_cache_invalidation_cycle` so other workers stop using cached simulators.
+    3. Wait 3 seconds for S3 propagation, then write `currgefs`.
+    4. Call `reset()` and schedule cleanup of the previous cycle's files.
     
     Returns:
-        True if cycle was updated
-        False if no update (same cycle, files not ready, or error)
-        Tuple (False, "pending_cycle") if new cycle detected but files not ready
+        True if the cycle was updated.
+        False if nothing changed or verification failed.
+        (False, pending_cycle) when a new timestamp is announced but files are still uploading.
     """
     import fcntl
     global _last_refresh_check, _cache_invalidation_cycle
@@ -276,9 +269,7 @@ def refresh():
                 if old_invalidation_cycle != new_gefs:
                     print(f"INFO: Cache invalidation cycle set to {new_gefs} (was {old_invalidation_cycle}). All cached simulators will be re-validated.", flush=True)
             
-            # Grace period: wait for S3 to fully propagate files before other workers see new cycle
-            # Reduced from 5s to 3s - files already verified above, shorter wait reduces latency
-            # 3 seconds handles S3 eventual consistency across regions while keeping response time low
+            # Grace period: short wait keeps currgefs hidden until files are definitely readable
             time.sleep(3.0)
             
             # Update timestamp atomically (after grace period, files should be fully available)

@@ -110,18 +110,7 @@ def generate_request_id(args, base_coeff):
     return hashlib.md5(request_key.encode()).hexdigest()[:16]
 
 def _prefetch_model(model_id, worker_pid, expected_gefs=None):
-    """Prefetch a single model (downloads file and builds simulator).
-    
-    Validates cycle consistency before and after loading. If cycle changes during
-    prefetch, retries with new cycle. Ref counts are already acquired by wait_for_prefetch(),
-    so reset() won't evict simulators during prefetch.
-    
-    Args:
-        model_id: Model ID to prefetch
-        worker_pid: Worker process ID for logging
-        expected_gefs: Expected GEFS cycle (validates cycle hasn't changed)
-                       If None or 'Unavailable', skips validation
-    """
+    """Download/build one simulator while re-checking the GEFS cycle on every step."""
     max_retries = 3
     retry_delay = 0.5
     
@@ -220,11 +209,10 @@ def _prefetch_model(model_id, worker_pid, expected_gefs=None):
             raise  # Re-raise to be caught by wait_for_prefetch error handling
 
 def _wait_for_cycle_stable(worker_pid, max_wait=6.0):
-    """Wait for GEFS cycle to stabilize after refresh() grace period.
+    """Wait for currgefs to match the invalidation cycle after refresh().
     
-    During refresh(), invalidation_cycle is set before currgefs is updated (5s grace period).
-    This function waits for currgefs to match invalidation_cycle, ensuring we're not in a
-    transition state.
+    refresh() sets `_cache_invalidation_cycle` first, sleeps 3 seconds, then writes `currgefs`.
+    If another worker is mid-refresh, this guard catches the overlap.
     
     Args:
         worker_pid: Worker process ID for logging
@@ -386,28 +374,13 @@ def _acquire_ref_counts_atomic(model_ids, worker_pid, expected_cycle, max_retrie
 
 
 def wait_for_prefetch(model_ids, worker_pid, timeout=120, min_models=12):
-    """Progressive prefetch: wait for first N models, continue rest in background.
+    """Prefetch 21 simulators while guarding against GEFS cycle churn.
     
-    Strategy:
-    - Waits for first 12 models to complete (fast simulation start)
-    - Continues prefetching remaining models in background
-    - When simulations need models 13-21, they're likely ready
+    - Blocks until `min_models` finish building, remaining models continue in background.
+    - Calls `simulate.refresh()` up front to detect cycle flips and pending uploads.
+    - Re-validates cycle stability, acquires ref counts atomically, and bails if anything drifts.
     
-    Cycle Change Handling:
-    - Detects new cycles via refresh()
-    - Waits for cycle to stabilize (handles grace period race conditions)
-    - Waits for pending cycle files if needed (S3 eventual consistency)
-    - Acquires ref counts atomically with cycle validation
-    - Ensures all models use the same cycle
-    
-    Args:
-        model_ids: List of model IDs to prefetch
-        worker_pid: Worker process ID for logging
-        timeout: Maximum time to wait for initial models (seconds)
-        min_models: Number of models to wait for before returning (default: 12)
-    
-    Returns:
-        Time spent waiting for initial models (seconds)
+    Returns time spent waiting for the initial batch.
     """
     from concurrent.futures import ThreadPoolExecutor, as_completed
     start_time = time.time()
@@ -434,8 +407,7 @@ def wait_for_prefetch(model_ids, worker_pid, timeout=120, min_models=12):
     if isinstance(refresh_result, tuple):
         _, pending_cycle = refresh_result
     elif refresh_result:
-        # Cycle was just updated by refresh() - it's already stable (refresh() waits 5s grace period)
-        # No need to call _wait_for_cycle_stable() - cycle is guaranteed stable
+        # refresh() already waited its 3s grace window, so the cycle is stable
         cycle_just_updated = True
         if not current_gefs or current_gefs == "Unavailable":
             raise RuntimeError("GEFS cycle unavailable after refresh")
@@ -482,7 +454,6 @@ def wait_for_prefetch(model_ids, worker_pid, timeout=120, min_models=12):
                     raise RuntimeError(f"Neither cycle available: pending {pending_cycle}, current {current_gefs}")
     
     # Phase 3: Wait for cycle to stabilize (only if cycle wasn't just updated)
-    # If refresh() returned True, cycle is already stable (5s grace period already waited)
     if not cycle_just_updated:
         stable_cycle = _wait_for_cycle_stable(worker_pid)
         if stable_cycle:

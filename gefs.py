@@ -112,10 +112,9 @@ _CACHE_DIR.mkdir(parents=True, exist_ok=True)
 _CACHE_LOCK = threading.Lock()
 _MAX_CACHED_FILES = 30  # Allow 30 weather files (~9.2GB) - increased for 32GB RAM system, handles full 21-model ensemble + buffer
 
-# Cache for whichgefs to reduce connection pool pressure (updates every 6 hours, but status checks every 5 seconds)
-# Uses ETag from head_object to detect changes without downloading body
-# CRITICAL: Always check ETag even if cache is fresh to detect cycle changes immediately
-_whichgefs_cache = {"value": None, "timestamp": 0, "ttl": 15, "etag": None}  # Cache for 15 seconds, always ETag-checked
+# Lightweight whichgefs cache: we still check the ETag every poll, but only download the body
+# when the hash changes so we can detect cycle flips without hammering S3.
+_whichgefs_cache = {"value": None, "timestamp": 0, "ttl": 15, "etag": None}
 _whichgefs_lock = threading.Lock()
 
 # Track files currently being downloaded to prevent premature deletion during cleanup
