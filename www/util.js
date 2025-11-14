@@ -895,3 +895,62 @@ function habmcshoweach(data2) {
         document.getElementById("eqtime").value = 0;
     }
 }
+
+// ============================================================================
+// VALIDATION HELPERS
+// ============================================================================
+
+/**
+ * Convert date/time components to Unix timestamp (seconds since epoch).
+ * 
+ * @param {number} year - Year (e.g., 2025)
+ * @param {number} month - Month (1-12)
+ * @param {number} day - Day of month (1-31)
+ * @param {number} hour - Hour (0-23)
+ * @param {number} minute - Minute (0-59)
+ * @returns {number} Unix timestamp in seconds
+ */
+function toTimestamp(year, month, day, hour, minute) {
+    const datum = new Date(year, month - 1, day, hour, minute);
+    return datum.getTime() / 1000;
+}
+
+/**
+ * Validate that all values in array are positive numbers.
+ * 
+ * Checks each value in the array to ensure it's:
+ * - A valid number (not NaN)
+ * - Positive (not negative or zero)
+ * - Truthy (not null, undefined, empty string, etc.)
+ * 
+ * @param {Array} numlist - Array of values to validate
+ * @returns {boolean} True if all values are positive numbers, false otherwise
+ */
+function checkNumPos(numlist){
+    for (var each in numlist){
+        if(isNaN(numlist[each]) || Math.sign(numlist[each]) === -1 || !numlist[each]){
+            alert("ATTENTION: All values should be positive and numbers, check your inputs again!");
+            return false;
+        }
+    }
+    return true;
+}
+
+/**
+ * Validate ascent rate is not zero when balloon is below burst altitude.
+ * 
+ * Prevents invalid simulation state where balloon is below burst altitude
+ * but has zero ascent rate (would never reach burst altitude).
+ * 
+ * @param {string|number} asc - Ascent rate value
+ * @param {string|number} alt - Current altitude
+ * @param {string|number} equil - Burst/equilibrium altitude
+ * @returns {boolean} True if valid, false if ascent rate is 0 while below burst altitude
+ */
+function checkasc(asc,alt,equil){
+    if(alt<equil && asc==="0"){
+        alert("ATTENTION: Ascent rate is 0 while balloon altitude is below its descent ready altitude");
+        return false;
+    }
+    return true;
+}
