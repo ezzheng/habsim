@@ -253,7 +253,9 @@ def wait_for_prefetch(model_ids, worker_pid, timeout=120, min_models=12):
     # Always read the latest currgefs - never cache stale values
     current_gefs = simulate.get_currgefs()
     
-    # Handle "Unavailable" case - wait briefly for refresh to complete
+    # FIX: Problem 4 - Remove duplicate refresh() call
+    # Only call refresh() once - if currgefs is unavailable, refresh it; otherwise check for updates
+    refresh_result = None
     if not current_gefs or current_gefs == "Unavailable":
         print(f"INFO: [WORKER {worker_pid}] GEFS cycle unavailable, waiting for refresh...", flush=True)
         time.sleep(1.0)
@@ -262,15 +264,18 @@ def wait_for_prefetch(model_ids, worker_pid, timeout=120, min_models=12):
         if not current_gefs or current_gefs == "Unavailable":
             print(f"WARNING: [WORKER {worker_pid}] GEFS cycle still unavailable after refresh, proceeding with prefetch", flush=True)
             current_gefs = "Unavailable"  # Allow prefetch to proceed (validation will be skipped)
-    
-    # FIX: Problem 1 - Refresh and immediately re-read currgefs atomically
-    # This reduces the window where another worker can update cycle between refresh and read
-    refresh_result = simulate.refresh()
+    else:
+        # FIX: Problem 1 - Refresh and immediately re-read currgefs atomically
+        # This reduces the window where another worker can update cycle between refresh and read
+        refresh_result = simulate.refresh()
     
     # Handle refresh() return value - may be bool or tuple (False, pending_cycle)
     refresh_updated = False
     pending_cycle = None
-    if isinstance(refresh_result, tuple):
+    if refresh_result is None:
+        # refresh() was not called or returned None (shouldn't happen, but handle gracefully)
+        refresh_updated = False
+    elif isinstance(refresh_result, tuple):
         refresh_updated, pending_cycle = refresh_result
     else:
         refresh_updated = refresh_result
@@ -304,7 +309,7 @@ def wait_for_prefetch(model_ids, worker_pid, timeout=120, min_models=12):
     if pending_cycle:
         print(f"INFO: [WORKER {worker_pid}] New GEFS cycle {pending_cycle} detected but files not ready. Waiting for files to become available...", flush=True)
         max_wait_time = 120  # Wait up to 2 minutes for files
-        wait_interval = 5.0  # Check every 5 seconds
+        wait_interval = 2.0  # Check every 2 seconds (reduced from 5s for faster detection)
         waited = 0.0
         files_ready = False
         
@@ -475,6 +480,18 @@ def wait_for_prefetch(model_ids, worker_pid, timeout=120, min_models=12):
         else:
             final_gefs = "Unavailable"
     
+    # FIX: Problem 5 - Verify files are available BEFORE acquiring ref counts
+    # This prevents wasting time acquiring/releasing ref counts if files aren't ready
+    # This is a last-ditch defensive check to catch any edge cases where files
+    # became unavailable between Phase 2 and Phase 3
+    if final_gefs and final_gefs != "Unavailable":
+        files_available = simulate._check_cycle_files_available(final_gefs, check_disk_cache=False, retry_for_consistency=True)
+        if not files_available:
+            # Files not available - this should not happen if logic is correct, but handle gracefully
+            # With the 2-second grace period in refresh(), this should be rare
+            print(f"ERROR: [WORKER {worker_pid}] Cycle {final_gefs} files not available in S3 before ref count acquisition. This indicates a logic error or S3 issue.", flush=True)
+            raise RuntimeError(f"Cannot proceed with prefetch: Cycle {final_gefs} files are not available in S3. Please check S3 storage or wait for files to be uploaded.")
+    
     # CRITICAL: Acquire ref counts and handle cycle changes atomically
     # FIX: Problem 5 - Improved ref count acquisition with better cache invalidation handling
     # If cycle changes during ref count acquisition, release ref counts and retry
@@ -574,17 +591,13 @@ def wait_for_prefetch(model_ids, worker_pid, timeout=120, min_models=12):
     if not prefetch_gefs or prefetch_gefs == "Unavailable":
         raise RuntimeError(f"Cannot proceed with prefetch: GEFS cycle is unavailable")
     
-    # FINAL SAFETY CHECK: Verify files are available before starting prefetch
-    # This is a last-ditch defensive check to catch any edge cases where files
-    # became unavailable between Phase 2 and Phase 3
+    # Note: File availability check was moved to before ref count acquisition (Problem 5 fix)
+    # This final check is a redundant safety check in case cycle changed during ref acquisition
     # FIX: Problem 2 - Use retry_for_consistency to handle S3 eventual consistency
-    # FIX: Problem 6 - Check happens after ref counts acquired, but before prefetch starts
-    # This minimizes wasted resources if files become unavailable
     files_available = simulate._check_cycle_files_available(prefetch_gefs, check_disk_cache=False, retry_for_consistency=True)
     if not files_available:
-        # Files not available - this should not happen if logic is correct, but handle gracefully
-        # With the 2-second grace period in refresh(), this should be rare
-        print(f"ERROR: [WORKER {worker_pid}] Cycle {prefetch_gefs} files not available in S3 before prefetch. This indicates a logic error or S3 issue.", flush=True)
+        # Files not available - cycle may have changed during ref count acquisition
+        print(f"ERROR: [WORKER {worker_pid}] Cycle {prefetch_gefs} files not available in S3 after ref count acquisition. Cycle may have changed.", flush=True)
         # Release ref counts before failing (they were acquired above)
         for model_id in model_ids:
             simulate._release_simulator_ref(model_id)

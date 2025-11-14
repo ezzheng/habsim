@@ -229,13 +229,13 @@ def refresh():
                 if old_invalidation_cycle != new_gefs:
                     print(f"INFO: Cache invalidation cycle set to {new_gefs} (was {old_invalidation_cycle}). All cached simulators will be re-validated.", flush=True)
             
-            # Update timestamp atomically
-            _write_currgefs(new_gefs)
-            
-            # FIX: Problem 2 - Add grace period for S3 eventual consistency
-            # After updating currgefs, wait briefly to allow S3 to propagate files
-            # This reduces the chance of 404 errors when prefetch starts immediately
+            # FIX: Problem 1 - Move grace period BEFORE updating currgefs to prevent race conditions
+            # Wait briefly to allow S3 to fully propagate files before other workers can see the new cycle
+            # This reduces the chance of 404 errors when prefetch starts immediately after cycle change
             time.sleep(2.0)  # 2 second grace period for S3 eventual consistency
+            
+            # Update timestamp atomically (after grace period, files should be fully available)
+            _write_currgefs(new_gefs)
             
             # Log cycle change for debugging
             print(f"INFO: GEFS cycle updated: {old_gefs} -> {new_gefs}. Invalidating cache and clearing simulators.", flush=True)
