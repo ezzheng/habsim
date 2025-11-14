@@ -129,10 +129,7 @@ def _ensure_ensemble_optimizations(worker_pid):
     """Ensure cache is ready for ensemble workload (adaptive sizing will handle it)."""
     # Cache will automatically expand when many models are loaded
     # No explicit activation needed - adaptive behavior handles it
-    with simulate._cache_lock:
-        cache_limit = simulate._current_max_cache
-        cache_size = len(simulate._simulator_cache)
-    print(f"INFO: [WORKER {worker_pid}] Ensemble run starting: cache_size={cache_size}, cache_limit={cache_limit}", flush=True)
+    pass
 
 def _prefetch_model(model_id, worker_pid):
     """Prefetch a single model (downloads file and builds simulator)."""
@@ -785,7 +782,8 @@ def singlezpbh():
     asc = get_arg(args, 'asc')
     desc = get_arg(args, 'desc')
     model = get_arg(args, 'model', type_func=int)
-    print(f"INFO: [WORKER {worker_pid}] Single simulate call: model={model}, lat={lat}, lon={lon}, alt={alt}", flush=True)
+    print(f"INFO: [WORKER {worker_pid}] Single simulate: model={model}, lat={lat}, lon={lon}, alt={alt}, "
+          f"burst={equil}, ascent={asc}m/s, descent={desc}m/s", flush=True)
     try:
         path = singlezpb(timestamp, lat, lon, alt, equil, eqtime, asc, desc, model)
         return jsonify(path)
@@ -901,14 +899,6 @@ def spaceshot():
     with _progress_lock:
         _progress_tracking[request_id] = progress_data.copy()
     _write_progress(request_id, progress_data)
-    
-    # Log ensemble call with key information
-    with simulate._cache_lock:
-        cache_size = len(simulate._simulator_cache)
-        cache_limit = simulate._current_max_cache
-    print(f"INFO: [WORKER {worker_pid}] Ensemble call: request_id={request_id}, models={len(model_ids)}, "
-          f"montecarlo={num_perturbations}×{len(model_ids)}={total_montecarlo}, total_sims={total_simulations}, "
-          f"cache_size={cache_size}, cache_limit={cache_limit}", flush=True)
     
     _ensure_ensemble_optimizations(worker_pid)
     
@@ -1062,8 +1052,12 @@ def spaceshot():
         elapsed = time.time() - start_time
         ensemble_landings = sum(1 for p in landing_positions if p.get('perturbation_id') == -1)
         montecarlo_landings = len(landing_positions) - ensemble_landings
-        print(f"INFO: [WORKER {worker_pid}] Ensemble complete: {ensemble_success}/{len(model_ids)} paths, "
-              f"{len(landing_positions)} landings in {elapsed:.0f}s", flush=True)
+        print(f"INFO: [WORKER {worker_pid}] Ensemble: request_id={request_id}, "
+              f"lat={base_lat}, lon={base_lon}, alt={base_alt}, burst={base_equil}, "
+              f"ascent={base_asc}m/s, descent={base_desc}m/s, "
+              f"models={len(model_ids)}, montecarlo={num_perturbations}×{len(model_ids)}={total_montecarlo}, "
+              f"result={ensemble_success}/{len(model_ids)} paths, {len(landing_positions)} landings, "
+              f"time={elapsed:.0f}s", flush=True)
         
     except Exception as e:
         print(f"ERROR: Ensemble run failed: {e}", flush=True)
