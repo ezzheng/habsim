@@ -808,6 +808,13 @@ def _get_simulator(model):
     with _cache_lock:
         _simulator_cache[model] = simulator
         _simulator_access_times[model] = now
+        # Update cache size history to track active work
+        global _cache_size_history
+        _cache_size_history.append((time.time(), len(_simulator_cache)))
+        # Keep only recent history (last 5 minutes)
+        _cache_size_history = [(ts, sz) for ts, sz in _cache_size_history if time.time() - ts < 300]
+        if len(_cache_size_history) > _MAX_CACHE_HISTORY:
+            _cache_size_history = _cache_size_history[-_MAX_CACHE_HISTORY:]
     
     total_get_sim = time.time() - func_start
     if total_get_sim > 3.0:
