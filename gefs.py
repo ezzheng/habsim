@@ -373,7 +373,8 @@ def _ensure_cached(file_name: str) -> Path:
     # For large files, prevent concurrent downloads of the same file ACROSS PROCESSES
     # This avoids connection pool exhaustion and partial download conflicts
     # Use file-based locking (fcntl) which works across Gunicorn worker processes
-    is_large_file = file_name == 'worldelev.npy' or file_name.endswith('.npy')
+    # Large files: worldelev.npy and .npz files (model files are ~300MB each)
+    is_large_file = file_name == 'worldelev.npy' or file_name.endswith(('.npz', '.npy'))
     lock_file = None
     lock_fd = None
     if is_large_file:
@@ -429,7 +430,6 @@ def _ensure_cached(file_name: str) -> Path:
     try:
         download_start = time.time()
         
-        is_large_file = file_name == 'worldelev.npy' or file_name.endswith(('.npz', '.npy'))
         max_retries = 5 if file_name.endswith('.npz') else (3 if is_large_file else 1)
         last_error = None
         
@@ -731,23 +731,6 @@ def _ensure_cached(file_name: str) -> Path:
             error_msg = f"Download failed: error renaming temp file for {file_name}: {e}"
             print(f"ERROR: {error_msg}", flush=True)
             raise IOError(error_msg) from e
-            
-            # Release the file lock after successful download and rename
-            if lock_fd:
-                try:
-                    import fcntl
-                    fcntl.flock(lock_fd.fileno(), fcntl.LOCK_UN)
-                    lock_fd.close()
-                    
-                    # Clean up lock file on successful download to prevent accumulation
-                    # Lock files are small but can accumulate over time
-                    if lock_file and lock_file.exists():
-                        try:
-                            lock_file.unlink()
-                        except:
-                            pass  # Non-critical if cleanup fails
-                except Exception:
-                    pass
 
         # Final check that file exists
         if not cache_path.exists():
@@ -755,6 +738,23 @@ def _ensure_cached(file_name: str) -> Path:
         
         return cache_path
     finally:
+        # CRITICAL: Always release file lock and clean up lock file, even on error
+        # This prevents deadlocks on subsequent downloads
+        if lock_fd:
+            try:
+                import fcntl
+                fcntl.flock(lock_fd.fileno(), fcntl.LOCK_UN)
+                lock_fd.close()
+            except Exception:
+                pass
+        
+        # Clean up lock file on successful download to prevent accumulation
+        if lock_file and lock_file.exists():
+            try:
+                lock_file.unlink()
+            except Exception:
+                pass  # Non-critical if cleanup fails
+        
         # CRITICAL: Always remove from downloading set, even on error
         # This ensures the set doesn't grow unbounded with failed download attempts
         with _downloading_lock:

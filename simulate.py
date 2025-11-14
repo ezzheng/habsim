@@ -489,7 +489,6 @@ def _periodic_cache_trim():
     This ensures idle workers trim their cache even if they don't receive requests.
     Without this, each worker process maintains its own cache, and idle workers never trim.
     """
-    consecutive_trim_failures = 0
     global _last_idle_cleanup
     while True:
         try:
@@ -515,7 +514,6 @@ def _periodic_cache_trim():
                 except Exception as cleanup_error:
                     print(f"ERROR: Idle cleanup failed: {cleanup_error}", flush=True)
                     _last_idle_cleanup = time.time()
-                consecutive_trim_failures = 0
                 time.sleep(5)
                 continue
             
@@ -551,23 +549,17 @@ def _periodic_cache_trim():
                     rss_after = _get_rss_memory_mb()
                     
                     if new_size > target_size:
-                        consecutive_trim_failures += 1
+                        # Cache trim didn't reduce size enough - log warning
+                        # This can happen if models are in use (protected from eviction)
                         if rss_after is not None and rss_before is not None:
                             rss_delta = rss_before - rss_after
-                            print(f"WARNING: Cache trim failed #{consecutive_trim_failures}: {new_size} > {target_size}", flush=True)
-                        if consecutive_trim_failures > 2:
-                            print(f"WARNING: Multiple trim failures, forcing aggressive cleanup", flush=True)
-                            _force_aggressive_trim()
-                            consecutive_trim_failures = 0
-                    else:
-                        consecutive_trim_failures = 0
+                            print(f"WARNING: Cache trim incomplete: {new_size} > {target_size} (models may be in use)", flush=True)
                     time.sleep(3)
                 else:
                     time.sleep(20)
             else:
                 # Normal check interval - always call trim to handle edge cases
                 _trim_cache_to_normal()
-                consecutive_trim_failures = 0
                 time.sleep(20)
         except Exception as e:
             print(f"ERROR: Cache trim thread error: {e}", flush=True)
@@ -582,66 +574,6 @@ def _periodic_cache_trim():
                     print(f"ERROR: Emergency cleanup failed after {idle_duration_error:.1f}s idle: {emergency_error}", flush=True)
                     _last_idle_cleanup = time.time()
             time.sleep(10)
-
-def _force_aggressive_trim():
-    """Force aggressive cache trimming - removes all but 1 most recently used simulator"""
-    global _simulator_cache, _simulator_access_times, _current_max_cache
-    with _cache_lock:
-        if len(_simulator_cache) <= 1:
-            return
-        
-        cache_size_before = len(_simulator_cache)
-        
-        # Sort by access time (most recent first)
-        sorted_models = sorted(_simulator_access_times.items(), key=lambda x: x[1], reverse=True)
-        
-        # Keep only the most recently used model
-        model_to_keep = sorted_models[0][0] if sorted_models else None
-        
-        # Evict all others (skip if in use)
-        for model_id in list(_simulator_cache.keys()):
-            if _is_simulator_in_use(model_id):
-                continue
-            if model_id != model_to_keep:
-                simulator = _simulator_cache.get(model_id)
-                if simulator:
-                    # Clear WindFile data (pre-loaded arrays are the main memory consumers)
-                    if hasattr(simulator, 'wind_file') and simulator.wind_file:
-                        wind_file = simulator.wind_file
-                        # Use WindFile's cleanup method if available
-                        if hasattr(wind_file, 'cleanup'):
-                            wind_file.cleanup()
-                        else:
-                            # Manual cleanup fallback
-                            if hasattr(wind_file, 'data') and wind_file.data is not None:
-                                if isinstance(wind_file.data, np.ndarray) and not hasattr(wind_file.data, 'filename'):
-                                    del wind_file.data
-                                    wind_file.data = None
-                            if hasattr(wind_file, 'levels') and isinstance(wind_file.levels, np.ndarray):
-                                del wind_file.levels
-                                wind_file.levels = None
-                        # Break reference to WindFile
-                        del wind_file
-                        simulator.wind_file = None
-                    # Break reference to Simulator
-                    del simulator
-                del _simulator_cache[model_id]
-                del _simulator_access_times[model_id]
-        
-        _current_max_cache = MAX_SIMULATOR_CACHE_NORMAL
-        
-        # Multiple GC passes
-        for _ in range(5):
-            gc.collect()
-        
-        # Force OS memory release
-        try:
-            import ctypes
-            libc = ctypes.CDLL("libc.so.6")
-            libc.malloc_trim(0)
-        except:
-            pass
-        
 
 def _start_cache_trim_thread():
     """Start background thread for periodic cache trimming (called once per worker)

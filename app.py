@@ -1017,15 +1017,6 @@ def spaceshot():
             
             try:
                 for future in as_completed(all_futures, timeout=timeout_seconds):
-                    # Check timeout
-                    if time.time() > timeout_deadline:
-                        print(f"WARNING: [WORKER {worker_pid}] Ensemble timeout after {timeout_seconds}s, cancelling remaining tasks", flush=True)
-                        # Cancel remaining futures
-                        for f in all_futures:
-                            if not f.done():
-                                f.cancel()
-                        break
-                    
                     total_completed += 1
                     # Batch progress updates to reduce lock contention (update every N completions)
                     if total_completed - last_progress_update >= progress_update_interval or total_completed == total_simulations:
