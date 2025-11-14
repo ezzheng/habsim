@@ -1820,14 +1820,12 @@ async function simulate() {
                                     return;
                                 }
                                 if (simBtn) {
-                                    // Show status text when loading, otherwise show percentage
-                                    if (data.status === 'loading') {
+                                    // Show "Loading..." when loading files or when percentage is 0
+                                    // Show percentage when simulations are actually running
+                                    if (data.status === 'loading' || (data.percentage !== undefined && data.percentage === 0)) {
                                         simBtn.textContent = 'Loading...';
                                     } else if (data.percentage !== undefined && data.percentage > 0) {
                                         simBtn.textContent = data.percentage + '%';
-                                    } else if (data.percentage === 0 && data.status === 'simulating') {
-                                        // Just started simulating, show 0%
-                                        simBtn.textContent = '0%';
                                     }
                                     if (data.percentage >= 100 && progressEventSource) {
                                         progressEventSource.close();
