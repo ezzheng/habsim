@@ -1061,20 +1061,20 @@ def spaceshot():
                             if ensemble_completed % 5 == 0 or ensemble_completed == len(model_ids):
                                 update_progress(request_id, ensemble_completed=ensemble_completed)
                     else:
-                    try:
-                        result = future.result()
-                        if result is not None:
-                            landing_positions.append(result)
-                        montecarlo_completed += 1
-                        # Batch Monte Carlo progress updates (update every 20 or on completion)
-                        if montecarlo_completed % 20 == 0 or montecarlo_completed == total_montecarlo:
-                            update_progress(request_id, montecarlo_completed=montecarlo_completed)
-                    except Exception as e:
-                        print(f"WARNING: Monte Carlo simulation failed: {e}", flush=True)
-                        montecarlo_completed += 1
-                        # Batch Monte Carlo progress updates
-                        if montecarlo_completed % 20 == 0 or montecarlo_completed == total_montecarlo:
-                            update_progress(request_id, montecarlo_completed=montecarlo_completed)
+                        try:
+                            result = future.result()
+                            if result is not None:
+                                landing_positions.append(result)
+                            montecarlo_completed += 1
+                            # Batch Monte Carlo progress updates (update every 20 or on completion)
+                            if montecarlo_completed % 20 == 0 or montecarlo_completed == total_montecarlo:
+                                update_progress(request_id, montecarlo_completed=montecarlo_completed)
+                        except Exception as e:
+                            print(f"WARNING: Monte Carlo simulation failed: {e}", flush=True)
+                            montecarlo_completed += 1
+                            # Batch Monte Carlo progress updates
+                            if montecarlo_completed % 20 == 0 or montecarlo_completed == total_montecarlo:
+                                update_progress(request_id, montecarlo_completed=montecarlo_completed)
             except TimeoutError:
                 print(f"WARNING: [WORKER {worker_pid}] Ensemble timeout after {timeout_seconds}s", flush=True)
                 # Cancel all remaining futures
