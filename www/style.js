@@ -2,8 +2,7 @@
  * Balloon type and mode management module.
  * 
  * Handles:
- * - Balloon type selection (STANDARD, ZPB, FLOAT)
- * - Mode switching and UI visibility
+ * - Balloon type selection (STANDARD only)
  * - Default value initialization
  * - Server status polling
  * - Waypoint toggle functionality
@@ -13,7 +12,7 @@
 // GLOBAL STATE
 // ============================================================================
 
-/** Current balloon type: "STANDARD", "ZPB", or "FLOAT" */
+/** Current balloon type: "STANDARD" */
 var btype = "STANDARD";
 
 /** Whether waypoint markers are currently displayed */
@@ -28,26 +27,7 @@ var waypointsToggle = false;
  * Sets up event listeners for radio button changes and syncs visual state.
  */
 $(document).ready(function() {
-    // Handle balloon type radio button changes
-    $('input[name="optradio"]').on('change', function () {
-        const val = $(this).val();
-        
-        // Map radio button values to balloon types
-        if (val === "standardbln") setMode("STANDARD");
-        else if (val === "zpbbln") setMode("ZPB");
-        else if (val === "floatbln") setMode("FLOAT");
-        
-        // Sync segmented control visual state (mobile UI)
-        document.querySelectorAll('.segment').forEach(btn => {
-            if (btn.getAttribute('data-mode') === val) {
-                btn.classList.add('active');
-            } else {
-                btn.classList.remove('active');
-            }
-        });
-    });
-
-    // Initialize defaults and visibility on page load
+    // Initialize defaults and visibility on page load (STANDARD mode only)
     setMode("STANDARD");
 });
 
@@ -204,10 +184,6 @@ setInterval(updateServerStatus, 5000);
  * - Ascent rate: 4 m/s
  * - Burst altitude: 30000 m
  * - Descent rate: 8 m/s
- * - Coefficient: 0.5 (FLOAT mode)
- * - Duration: 48 hours (FLOAT mode)
- * - Step: 120 seconds (FLOAT mode)
- * - Equilibrium time: 1 hour (ZPB mode)
  */
 function setDefaultValues() {
     const ascEl = document.getElementById("asc");
@@ -248,23 +224,21 @@ if (document.readyState === 'loading') {
     initializeDefaults();
 }
 /**
- * Switch balloon mode and update UI visibility accordingly.
+ * Initialize STANDARD mode and update UI visibility.
  * 
- * Three modes are supported:
- * - STANDARD: Simple ascent/descent with burst altitude
- * - ZPB: Zero Pressure Balloon with equilibrium time
- * - FLOAT: Floating mode with coefficient, duration, and step size
+ * STANDARD mode: Simple ascent/descent with burst altitude.
+ * Hides FLOAT/ZPB-specific fields (eqtime, coeff, dur, step).
  * 
- * @param {string} mode - Balloon type: "STANDARD", "ZPB", or "FLOAT"
+ * @param {string} mode - Balloon type (must be "STANDARD")
  * 
  * Side effects:
- * - Updates global btype variable
+ * - Updates global btype variable to "STANDARD"
  * - Shows/hides relevant input groups based on mode
  * - Sets default values for empty fields
  * - Updates timer visibility
  */
 function setMode(mode) {
-    btype = mode;
+    btype = "STANDARD"; // Always STANDARD mode
     
     // Get DOM elements for input groups and controls
     const geqtime = document.getElementById("group-eqtime");
@@ -299,35 +273,5 @@ function setMode(mode) {
         setDefaultIfEmpty('equil', 30000);
         setDefaultIfEmpty('desc', 8);
         if (remain) remain.style.visibility = "visible";
-        
-    } else if (mode === "ZPB") {
-        // ZPB mode: Zero Pressure Balloon with equilibrium time
-        if (geqtime) geqtime.style.display = "flex";
-        if (gcoeff) gcoeff.style.display = "none";
-        if (gdur) gdur.style.display = "none";
-        if (gstep) gstep.style.display = "none";
-        if (gtimer) gtimer.style.display = "flex";
-        if (eqbtn) eqbtn.style.visibility = "visible";
-        setDefaultIfEmpty('asc', 4);
-        setDefaultIfEmpty('equil', 30000);
-        setDefaultIfEmpty('desc', 8);
-        setDefaultIfEmpty('eqtime', 1);
-        if (remain) remain.style.visibility = "visible";
-        
-    } else { // FLOAT
-        // FLOAT mode: Floating with coefficient, duration, and step size
-        if (geqtime) geqtime.style.display = "none";
-        if (gcoeff) gcoeff.style.display = "flex";
-        if (gdur) gdur.style.display = "flex";
-        if (gstep) gstep.style.display = "flex";
-        if (gtimer) gtimer.style.display = "none";
-        if (eqbtn) eqbtn.style.visibility = "hidden";
-        setDefaultIfEmpty('asc', 4);
-        setDefaultIfEmpty('equil', 30000);
-        setDefaultIfEmpty('desc', 8);
-        setDefaultIfEmpty('coeff', 0.5);
-        setDefaultIfEmpty('dur', 48);
-        setDefaultIfEmpty('step', 120);
-        if (remain) remain.style.visibility = "hidden";
     }
 }

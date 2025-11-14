@@ -25,6 +25,16 @@ var lastLaunchInfo = null;
 var multiConnectorPath = null;
 var multiEndPositions = [];
 var endPinZoomListener = null;
+/** Array of waypoint circle markers for cleanup */
+var circleslist = [];
+/** Array of trajectory path polylines for cleanup */
+var currpaths = [];
+/** Array of contour layer objects (polygons and labels) */
+var contourLayers = [];
+/** Array of contour label markers */
+var contourLabels = [];
+/** Array of input values for validation (used in simulate function) */
+var allValues = [];
 
 // ============================================================================
 // HELPER FUNCTIONS
@@ -188,7 +198,7 @@ function clearEndPinZoomListener() {
  * Polyline objects and adds them to the map. Control model (gec00) gets
  * thicker, more opaque lines for visibility.
  * 
- * @param {string} btype - Balloon type (STANDARD, ZPB, FLOAT) - currently unused
+ * @param {string} btype - Balloon type (STANDARD only)
  * @param {Array} allpaths - Array of path arrays, each containing [time, lat, lon, alt] points
  * @param {boolean} isControl - If true, render as control model (thicker, more opaque line)
  * 
@@ -628,28 +638,11 @@ function setEndPin(endPoint, color, hourOffset) {
 
 function addMultiEndPin(payload, hourOffset, color) {
     try {
-        // Derive segments from payload depending on mode
-        let rise = [], equil = [], fall = [], fpath = [];
-        switch(btype) {
-            case 'STANDARD':
-                rise = payload[0];
-                equil = [];
-                fall = payload[2];
-                fpath = [];
-                break;
-            case 'ZPB':
-                rise = payload[0];
-                equil = payload[1];
-                fall = payload[2];
-                fpath = [];
-                break;
-            case 'FLOAT':
-                rise = [];
-                equil = [];
-                fall = [];
-                fpath = payload;
-                break;
-        }
+        // STANDARD mode: path[0] = rise, path[1] = empty (no equilibrium), path[2] = fall
+        let rise = payload[0];
+        let equil = [];
+        let fall = payload[2];
+        let fpath = [];
         const allpaths = [rise, equil, fall, fpath];
         // Determine end point
         let lastSegIdx = -1;
@@ -714,30 +707,13 @@ function addMultiEndPin(payload, hourOffset, color) {
     }
 }
 
-circleslist = [];
-
 function showpath(path, modelId = 1, hourOffset = null, endpointColor = null) {
-    switch(btype) {
-        case 'STANDARD':
-            var rise = path[0];
-            var equil = []
-            var fall = path[2];
-            var fpath = [];
-
-            break;
-        case 'ZPB':
-            var rise = path[0];
-            var equil = path[1]
-            var fall = path[2];
-            var fpath = [];
-            break;
-
-        case 'FLOAT':
-            var rise = [];
-            var equil = [];
-            var fall = [];
-            var fpath = path;
-    }
+    // STANDARD mode: path[0] = rise, path[1] = empty (no equilibrium), path[2] = fall
+    var rise = path[0];
+    var equil = [];
+    var fall = path[2];
+    var fpath = [];
+    
     var allpaths = [rise, equil, fall, fpath];
     const isControl = (modelId === 0);
     // Track model id for this path entry to support end pin exclusion logic
@@ -767,21 +743,32 @@ function showpath(path, modelId = 1, hourOffset = null, endpointColor = null) {
     }
 }
 
+/**
+ * Get color for trajectory path based on model index.
+ * 
+ * Returns distinct colors for different model indices. Used for rendering
+ * trajectory paths and waypoint markers with model-specific colors.
+ * 
+ * @param {string|number} index - Model index ('0', '1', '2', '3', or numeric)
+ * @returns {string} Hex color code
+ */
 function getcolor(index){
-    switch(index){
+    // Convert to string for consistent comparison
+    const idx = String(index);
+    switch(idx){
         case '0':
-            return '#DC143C';
+            return '#DC143C';  // Crimson red (control model)
         case '1':
-            return '#0000FF';
+            return '#0000FF';  // Blue
         case '2':
+            return '#000000';  // Black
+        case '3':
+            return '#000000';  // Black
+        default:
+            // Fallback to black for unknown indices
             return '#000000';
-        case '3': return '#000000';
     }
 }
-
-var currpaths = [];
-var contourLayers = [];
-var contourLabels = [];
 
 // ============================================================================
 // CUSTOM HEATMAP OVERLAY: Preserves actual data shape without circular smoothing
@@ -1565,7 +1552,7 @@ function updateContourVisibility() {
 /**
  * Main simulation function - orchestrates trajectory simulation requests.
  * 
- * Handles all three balloon types (STANDARD, ZPB, FLOAT) and both single
+ * Handles STANDARD balloon type and both single
  * and ensemble/multi modes. Includes debouncing, race condition protection,
  * progress tracking via SSE, and comprehensive error handling.
  * 
@@ -1639,6 +1626,7 @@ async function simulate() {
         // Don't set pointer-events: none - allow clicks to cancel
     }
     if (spinner) { spinner.classList.add('active'); }
+    
     try {
         allValues = [];
         var time = toTimestamp(Number(document.getElementById('yr').value),
@@ -1669,58 +1657,33 @@ async function simulate() {
         
         var url = "";
         allValues.push(time,alt);
-        var equil, eqtime, asc, desc; // Declare variables for use in spaceshot URL
-        switch(btype) {
-            case 'STANDARD':
-                equil = document.getElementById('equil').value.trim();
-                eqtime = 0; // STANDARD mode uses 0 for eqtime
-                asc = document.getElementById('asc').value.trim();
-                desc = document.getElementById('desc').value.trim();
-                
-                // Validate all required parameters using helper functions
-                validatePositiveNumber(asc, "Ascent rate");
-                validatePositiveNumber(equil, "Burst altitude");
-                validatePositiveNumber(desc, "Descent rate");
-                
-                url = URL_ROOT + "/singlezpb?timestamp="
-                    + time + "&lat=" + lat + "&lon=" + lon + "&alt=" + alt + "&equil=" + equil + "&eqtime=" + eqtime + "&asc=" + asc + "&desc=" + desc;
-                allValues.push(equil,asc,desc);
-                break;
-            case 'ZPB':
-                equil = document.getElementById('equil').value.trim();
-                eqtime = document.getElementById('eqtime').value.trim();
-                asc = document.getElementById('asc').value.trim();
-                desc = document.getElementById('desc').value.trim();
-                
-                // Validate all required parameters using helper functions
-                validatePositiveNumber(asc, "Ascent rate");
-                validatePositiveNumber(equil, "Burst altitude");
-                validatePositiveNumber(desc, "Descent rate");
-                validateNonNegativeNumber(eqtime, "Equilibrium time");
-                
-                url = URL_ROOT + "/singlezpb?timestamp="
-                    + time + "&lat=" + lat + "&lon=" + lon + "&alt=" + alt + "&equil=" + equil + "&eqtime=" + eqtime + "&asc=" + asc + "&desc=" + desc
-                allValues.push(equil,eqtime,asc,desc);
-                break;
-            case 'FLOAT':
-                var coeff = document.getElementById('coeff').value;
-                var step = document.getElementById('step').value;
-                var dur = document.getElementById('dur').value;
-                url = URL_ROOT + "/singlepredict?timestamp="
-                    + time + "&lat=" + lat + "&lon=" + lon + "&alt=" + alt + "&rate=0&coeff=" + coeff + "&step=" + step + "&dur=" + dur
-                allValues.push(coeff,step,dur);
-                break;
-        }
+        // STANDARD mode: Get ascent, descent, and burst altitude
+        var equil = document.getElementById('equil').value.trim();
+        var eqtime = 0; // STANDARD mode uses 0 for eqtime
+        var asc = document.getElementById('asc').value.trim();
+        var desc = document.getElementById('desc').value.trim();
+        
+        // Validate all required parameters using helper functions
+        validatePositiveNumber(asc, "Ascent rate");
+        validatePositiveNumber(equil, "Burst altitude");
+        validatePositiveNumber(desc, "Descent rate");
+        
+        url = URL_ROOT + "/singlezpb?timestamp="
+            + time + "&lat=" + lat + "&lon=" + lon + "&alt=" + alt + "&equil=" + equil + "&eqtime=" + eqtime + "&asc=" + asc + "&desc=" + desc;
+        allValues.push(equil,asc,desc);
+        
         var onlyonce = true;
-        if(checkNumPos(allValues) && checkasc(asc,alt,equil)){
+        // Validate ascent rate for STANDARD mode
+        const validationPassed = checkNumPos(allValues) && checkasc(asc, alt, equil);
+        
+        // Only proceed with simulation if validation passed
+        if (validationPassed) {
+            // Validation passed - proceed with simulation
             // If "Multi" label is active AND the button is enabled, run multi
             const multiRequested = (window.ensembleEnabled === true) && (window.ensembleMultiLabel === true);
             if (multiRequested) {
-                // Multi is only supported for STANDARD/ZPB
-                if (btype !== 'STANDARD' && btype !== 'ZPB') {
-                    alert('Multi mode is only available for STANDARD or ZPB.');
-                } else {
-                    window.multiActive = true;
+                // Multi is supported for STANDARD mode
+                window.multiActive = true;
                     // Staggered runs: every 3 hours from 0 to 168 (one week)
                     const offsets = [];
                     for (let h = 0; h <= 168; h += 3) offsets.push(h);
@@ -1780,7 +1743,6 @@ async function simulate() {
                     if (waypointsToggle) { showWaypoints(); }
                     return;
                 }
-            }
             const isHistorical = Number(document.getElementById('yr').value) < 2019;
             // Determine which models to run based on server configuration
             const ensembleEnabled = window.ensembleEnabled || false;
@@ -1797,8 +1759,8 @@ async function simulate() {
                 modelIds = window.availableModels && window.availableModels.includes(0) ? [0] : [0];
             }
 
-            // Use /spaceshot endpoint for parallel execution when ensemble is enabled and not FLOAT mode
-            const useSpaceshot = ensembleEnabled && !isHistorical && (btype === 'STANDARD' || btype === 'ZPB');
+            // Use /spaceshot endpoint for parallel execution when ensemble is enabled (STANDARD mode)
+            const useSpaceshot = ensembleEnabled && !isHistorical;
             
             if (useSpaceshot && modelIds.length > 1) {
                 // Build URL and extract exact parameter values to match server's request_id generation
@@ -2057,45 +2019,55 @@ async function simulate() {
                     }
                 }
             } else {
-                // Sequential mode: loop through models one by one (for single model or FLOAT mode)
-            for (const modelId of modelIds) {
-                const urlWithModel = url + "&model=" + modelId;
-                console.log(urlWithModel);
-                try {
+                // Sequential mode: loop through models one by one (for single model)
+                for (const modelId of modelIds) {
+                    const urlWithModel = url + "&model=" + modelId;
+                    console.log(urlWithModel);
+                    try {
                         const response = await fetch(urlWithModel, { signal: window.__simAbort.signal });
-                    const payload = await response.json();
+                        const payload = await response.json();
 
-                    if (payload === "error") {
-                        if (onlyonce) {
-                            alert("Simulation failed on the server. Please verify inputs or try again in a few minutes.");
-                            onlyonce = false;
+                        if (payload === "error") {
+                            if (onlyonce) {
+                                alert("Simulation failed on the server. Please verify inputs or try again in a few minutes.");
+                                onlyonce = false;
+                            }
                         }
-                    }
-                    else if (payload === "alt error") {
-                        if (onlyonce) {
-                            alert("ERROR: Please make sure your entire flight altitude is within 45km.");
-                            onlyonce = false;
+                        else if (payload === "alt error") {
+                            if (onlyonce) {
+                                alert("ERROR: Please make sure your entire flight altitude is within 45km.");
+                                onlyonce = false;
+                            }
                         }
-                    }
-                    else {
+                        else {
                             showpath(payload, modelId);
-                    }
-                } catch (error) {
+                        }
+                    } catch (error) {
                         if (error && (error.name === 'AbortError' || error.message === 'The operation was aborted.')) {
                             // Cancelled: stop processing further models, keep what is already drawn
                             break;
                         }
-                    console.error('Simulation fetch failed', error);
-                    if (onlyonce) {
-                        alert('Failed to contact simulation server. Please try again later.');
-                        onlyonce = false;
+                        console.error('Simulation fetch failed', error);
+                        if (onlyonce) {
+                            alert('Failed to contact simulation server. Please try again later.');
+                            onlyonce = false;
                         }
                     }
                 }
             }
-            onlyonce = true;
+            
+            // Show waypoints if toggle is enabled (only if validation passed)
+            if (waypointsToggle) { 
+                showWaypoints(); 
+            }
         }
-        if (waypointsToggle) {showWaypoints()}
+    } catch (error) {
+        // Handle any unexpected errors during simulation
+        console.error('Simulation error:', error);
+        if (onlyonce) {
+            alert('An unexpected error occurred during simulation. Please try again.');
+            onlyonce = false;
+        }
     } finally {
         window.__simRunning = false;
         window.__simAbort = null;
