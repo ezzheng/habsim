@@ -640,9 +640,11 @@ def _get_simulator(model):
     # Refresh GEFS data if needed
     refresh_start = time.time()
     if not currgefs or currgefs == "Unavailable" or now - _last_refresh_check > 300:
+        print(f"INFO: Refreshing GEFS data (currgefs={currgefs})...", flush=True)
         refresh()
         _last_refresh_check = now
         refresh_time = time.time() - refresh_start
+        print(f"INFO: GEFS refresh complete: currgefs={currgefs}, took {refresh_time:.2f}s", flush=True)
         if refresh_time > 1.0:
             pass
     
@@ -710,8 +712,11 @@ def _get_simulator(model):
     
     try:
         load_start = time.time()
-        wind_file_path = load_gefs(f'{currgefs}_{str(model).zfill(2)}.npz')
+        model_file = f'{currgefs}_{str(model).zfill(2)}.npz'
+        print(f"INFO: Loading model file: {model_file}", flush=True)
+        wind_file_path = load_gefs(model_file)
         load_time = time.time() - load_start
+        print(f"INFO: Model file loaded: {model_file}, took {load_time:.2f}s", flush=True)
         if load_time > 2.0:
             pass
         
