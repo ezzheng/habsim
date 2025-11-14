@@ -1751,7 +1751,12 @@
         // Mobile zoom is already prevented by viewport meta tag
         (function(){
             // Block keyboard zoom shortcuts: Ctrl/Cmd + Plus, Minus, 0
+            // Skip if event is from input/textarea (allow normal editing shortcuts)
             document.addEventListener('keydown', function(e) {
+                // Don't interfere with input fields (allow Ctrl+A, Ctrl+C, etc.)
+                if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
+                    return;
+                }
                 // Check for Ctrl (Windows/Linux) or Cmd (Mac) modifier
                 if ((e.ctrlKey || e.metaKey) && (e.key === '+' || e.key === '=' || e.key === '-' || e.key === '0')) {
                     e.preventDefault();
@@ -1761,7 +1766,12 @@
             }, { passive: false });
             
             // Block mouse wheel zoom: Ctrl/Cmd + Mouse Wheel
+            // Skip if event is from input/textarea (allow normal scrolling in inputs)
             document.addEventListener('wheel', function(e) {
+                // Don't interfere with input fields
+                if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
+                    return;
+                }
                 // Only block if Ctrl/Cmd is held down (zoom gesture)
                 // Allow normal scrolling without modifiers
                 if (e.ctrlKey || e.metaKey) {
