@@ -232,7 +232,8 @@ def refresh():
             # FIX: Problem 1 - Move grace period BEFORE updating currgefs to prevent race conditions
             # Wait briefly to allow S3 to fully propagate files before other workers can see the new cycle
             # This reduces the chance of 404 errors when prefetch starts immediately after cycle change
-            time.sleep(2.0)  # 2 second grace period for S3 eventual consistency
+            # Increased from 2s to 5s to better handle S3 eventual consistency across regions
+            time.sleep(5.0)  # 5 second grace period for S3 eventual consistency
             
             # Update timestamp atomically (after grace period, files should be fully available)
             _write_currgefs(new_gefs)

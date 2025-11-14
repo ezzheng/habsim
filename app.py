@@ -290,9 +290,27 @@ def wait_for_prefetch(model_ids, worker_pid, timeout=120, min_models=12):
     # (S3 eventual consistency, transient errors, etc.)
     # FIX: Problem 1 - Skip this check if pending_cycle is already set (new cycle detected but files not ready)
     # FIX: Problem 2 - Re-read currgefs immediately before file verification to reduce race window
+    # FIX: Problem 1 - Additional validation: check cache invalidation cycle matches currgefs
     if not refresh_updated and not pending_cycle and current_gefs and current_gefs != "Unavailable":
         # Another worker may have updated the cycle - re-read to get absolute latest value
         current_gefs = simulate.get_currgefs()
+        
+        # CRITICAL: Verify cache invalidation cycle matches currgefs (catches race during grace period)
+        # If invalidation cycle is set but doesn't match currgefs, we're in a transition state
+        cache_invalidation_cycle = None
+        try:
+            with simulate._cache_invalidation_lock:
+                cache_invalidation_cycle = simulate._cache_invalidation_cycle
+        except (AttributeError, NameError):
+            pass
+        
+        if cache_invalidation_cycle and cache_invalidation_cycle != current_gefs:
+            # Cache invalidation cycle doesn't match - we're in a transition state
+            # Wait briefly for the update to complete (refresh() grace period)
+            print(f"INFO: [WORKER {worker_pid}] Cache invalidation cycle {cache_invalidation_cycle} doesn't match currgefs {current_gefs}. Waiting for cycle transition to complete...", flush=True)
+            time.sleep(3.0)  # Wait for grace period to complete
+            current_gefs = simulate.get_currgefs()  # Re-read after wait
+        
         # Verify files are actually available for the current cycle
         # Use retry_for_consistency to handle S3 eventual consistency issues
         files_available = simulate._check_cycle_files_available(current_gefs, check_disk_cache=False, retry_for_consistency=True)
@@ -612,6 +630,21 @@ def wait_for_prefetch(model_ids, worker_pid, timeout=120, min_models=12):
         for model_id in model_ids:
             simulate._release_simulator_ref(model_id)
         raise RuntimeError(f"GEFS cycle changed immediately before prefetch: started with {prefetch_gefs}, got {final_cycle_check}. Please retry the request.")
+    
+    # FINAL VALIDATION: Verify cache invalidation cycle matches prefetch cycle
+    # This is a redundant check to catch any remaining race conditions
+    try:
+        with simulate._cache_invalidation_lock:
+            invalidation_cycle = simulate._cache_invalidation_cycle
+            if invalidation_cycle and invalidation_cycle != prefetch_gefs:
+                print(f"WARNING: [WORKER {worker_pid}] Cache invalidation cycle {invalidation_cycle} doesn't match prefetch cycle {prefetch_gefs}. Releasing ref counts and aborting prefetch.", flush=True)
+                # Release ref counts before failing
+                for model_id in model_ids:
+                    simulate._release_simulator_ref(model_id)
+                raise RuntimeError(f"Cache invalidation cycle mismatch: prefetch cycle {prefetch_gefs} doesn't match invalidation cycle {invalidation_cycle}. Please retry the request.")
+    except (AttributeError, NameError):
+        # Cache invalidation lock doesn't exist - skip check (shouldn't happen)
+        pass
     
     # Log cycle being used for prefetch
     if refresh_updated or pending_cycle:
