@@ -18,7 +18,6 @@ from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
 import tempfile
-import fcntl
 from windfile import WindFile
 from habsim import Simulator, Balloon
 from gefs import open_gefs, load_gefs
@@ -110,27 +109,25 @@ def _read_currgefs():
     try:
         if _CURRGEFS_FILE.exists():
             with open(_CURRGEFS_FILE, 'r') as f:
-                fcntl.flock(f.fileno(), fcntl.LOCK_SH)  # Shared lock for reading
-                try:
-                    return f.read().strip()
-                finally:
-                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+                content = f.read().strip()
+                if content:
+                    return content
     except Exception:
         pass
     return "Unavailable"
 
 def _write_currgefs(value):
-    """Write currgefs to shared file (thread-safe, process-safe)."""
+    """Write currgefs to shared file using atomic write (thread-safe, process-safe)."""
     try:
         _CURRGEFS_FILE.parent.mkdir(parents=True, exist_ok=True)
-        with open(_CURRGEFS_FILE, 'w') as f:
-            fcntl.flock(f.fileno(), fcntl.LOCK_EX)  # Exclusive lock for writing
-            try:
-                f.write(value)
-                f.flush()
-                os.fsync(f.fileno())  # Ensure written to disk
-            finally:
-                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+        # Atomic write: write to temp file, then rename (atomic on most filesystems)
+        temp_file = _CURRGEFS_FILE.with_suffix('.tmp')
+        with open(temp_file, 'w') as f:
+            f.write(value)
+            f.flush()
+            os.fsync(f.fileno())  # Ensure written to disk
+        # Atomic rename (replaces existing file atomically)
+        temp_file.replace(_CURRGEFS_FILE)
     except Exception:
         pass
 
