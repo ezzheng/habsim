@@ -900,6 +900,12 @@ def spaceshot():
         _progress_tracking[request_id] = progress_data.copy()
     _write_progress(request_id, progress_data)
     
+    # Log ensemble start immediately
+    print(f"INFO: [WORKER {worker_pid}] Ensemble: request_id={request_id}, "
+          f"lat={base_lat}, lon={base_lon}, alt={base_alt}, burst={base_equil}, "
+          f"ascent={base_asc}m/s, descent={base_desc}m/s, "
+          f"models={len(model_ids)}, montecarlo={num_perturbations}×{len(model_ids)}={total_montecarlo}", flush=True)
+    
     _ensure_ensemble_optimizations(worker_pid)
     
     # Generate Monte Carlo perturbations
@@ -1052,10 +1058,7 @@ def spaceshot():
         elapsed = time.time() - start_time
         ensemble_landings = sum(1 for p in landing_positions if p.get('perturbation_id') == -1)
         montecarlo_landings = len(landing_positions) - ensemble_landings
-        print(f"INFO: [WORKER {worker_pid}] Ensemble: request_id={request_id}, "
-              f"lat={base_lat}, lon={base_lon}, alt={base_alt}, burst={base_equil}, "
-              f"ascent={base_asc}m/s, descent={base_desc}m/s, "
-              f"models={len(model_ids)}, montecarlo={num_perturbations}×{len(model_ids)}={total_montecarlo}, "
+        print(f"INFO: [WORKER {worker_pid}] Ensemble complete: request_id={request_id}, "
               f"result={ensemble_success}/{len(model_ids)} paths, {len(landing_positions)} landings, "
               f"time={elapsed:.0f}s", flush=True)
         
