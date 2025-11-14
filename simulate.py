@@ -56,9 +56,6 @@ _cache_trim_thread_started = False
 _IDLE_RESET_TIMEOUT = 120.0
 _IDLE_CLEAN_COOLDOWN = 120.0
 _last_activity_timestamp = time.time()
-# Track cache size history to detect active work (cache growth)
-_cache_size_history = []  # List of (timestamp, cache_size) tuples
-_MAX_CACHE_HISTORY = 10  # Keep last 10 measurements
 _last_idle_cleanup = 0.0
 _idle_cleanup_lock = threading.Lock()
 
@@ -202,48 +199,20 @@ def _idle_memory_cleanup(idle_duration):
     """Deep cleanup when the worker has been idle for a while.
     Returns True if cleanup ran, False if skipped (lock held or models in use).
     
-    This function is conservative - it will skip cleanup if:
-    - Models are in use (active references)
-    - Cache has grown recently (active work happening)
-    - Activity was recent (within grace period)
+    Very conservative: only runs if truly idle (no models in use, idle > 5 minutes).
     """
-    global _current_max_cache, elevation_cache, _cache_size_history
+    global _current_max_cache, elevation_cache
     worker_pid = os.getpid()
     if not _idle_cleanup_lock.acquire(blocking=False):
         return False
     try:
-        now = time.time()
         with _cache_lock:
             cache_size = len(_simulator_cache)
             # Check if any models are in use via ref counts
             models_in_use = any(_is_simulator_in_use(mid) for mid in _simulator_cache.keys())
-            
-            # Track cache size history to detect active work
-            _cache_size_history.append((now, cache_size))
-            # Keep only recent history (last 5 minutes)
-            _cache_size_history = [(ts, sz) for ts, sz in _cache_size_history if now - ts < 300]
-            # Limit history size
-            if len(_cache_size_history) > _MAX_CACHE_HISTORY:
-                _cache_size_history = _cache_size_history[-_MAX_CACHE_HISTORY:]
         
-        # Skip cleanup if models are in use
-        if models_in_use:
-            return False
-        
-        # Skip cleanup if cache has grown recently (active work happening)
-        # Check if cache size increased in the last 60 seconds
-        if len(_cache_size_history) >= 2:
-            recent_history = [(ts, sz) for ts, sz in _cache_size_history if now - ts < 60]
-            if len(recent_history) >= 2:
-                oldest_in_window = min(sz for _, sz in recent_history)
-                newest_in_window = max(sz for _, sz in recent_history)
-                if newest_in_window > oldest_in_window:
-                    # Cache is growing - active work happening, skip cleanup
-                    return False
-        
-        # Skip cleanup if activity was very recent (within 30 seconds)
-        # This provides a grace period even if idle_duration > threshold
-        if idle_duration < 30:
+        # Skip cleanup if models are in use or idle time is too short
+        if models_in_use or idle_duration < 300:  # Require 5 minutes of true idle
             return False
         
         rss_before = _get_rss_memory_mb()
@@ -533,49 +502,16 @@ def _periodic_cache_trim():
             else:
                 time_since_last_cleanup = now - _last_idle_cleanup
             
-            # Check if idle cleanup should run
-            should_run_idle_cleanup = (idle_duration >= _IDLE_RESET_TIMEOUT and 
+            # Very conservative: only run cleanup if idle > 5 minutes and no models in use
+            # This prevents cleanup during active work
+            should_run_idle_cleanup = (idle_duration >= 300 and 
                                       (time_since_last_cleanup >= _IDLE_CLEAN_COOLDOWN or _last_idle_cleanup == 0))
             
-            # Additional check: skip if cache is growing (active work)
-            if should_run_idle_cleanup:
-                with _cache_lock:
-                    cache_size = len(_simulator_cache)
-                    # Check if cache has grown recently (within last 60 seconds)
-                    if len(_cache_size_history) >= 2:
-                        recent_history = [(ts, sz) for ts, sz in _cache_size_history if now - ts < 60]
-                        if len(recent_history) >= 2:
-                            oldest_in_window = min(sz for _, sz in recent_history)
-                            newest_in_window = max(sz for _, sz in recent_history)
-                            if newest_in_window > oldest_in_window:
-                                # Cache is growing - active work happening, skip cleanup
-                                should_run_idle_cleanup = False
-            
-            # Emergency cleanup: if idle >600s and cleanup never ran, force it immediately
-            # But still respect the active work checks (handled inside _idle_memory_cleanup)
-            if ((idle_duration > 600 and _last_idle_cleanup == 0) or 
-                (idle_duration > 180 and _last_idle_cleanup == 0 and idle_duration >= _IDLE_RESET_TIMEOUT + 60)):
-                try:
-                    with _cache_lock:
-                        cache_size = len(_simulator_cache)
-                    cleanup_ran = _idle_memory_cleanup(idle_duration)
-                    if cleanup_ran:
-                        _last_idle_cleanup = time.time()
-                    # If cleanup was skipped (active work), don't update last_cleanup time
-                except Exception as emergency_error:
-                    print(f"ERROR: Emergency cleanup failed after {idle_duration:.1f}s idle: {emergency_error}", flush=True)
-                    _last_idle_cleanup = time.time()
-                consecutive_trim_failures = 0
-                time.sleep(5)
-                continue
-            
             if should_run_idle_cleanup:
                 try:
                     cleanup_ran = _idle_memory_cleanup(idle_duration)
                     if cleanup_ran:
                         _last_idle_cleanup = time.time()
-                    # If cleanup was skipped (active work), don't update last_cleanup time
-                    # This allows it to retry later when truly idle
                 except Exception as cleanup_error:
                     print(f"ERROR: Idle cleanup failed: {cleanup_error}", flush=True)
                     _last_idle_cleanup = time.time()

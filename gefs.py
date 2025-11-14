@@ -582,7 +582,7 @@ def _ensure_cached(file_name: str) -> Path:
                 # Log successful download
                 size_mb = actual_size / (1024 * 1024)
                 download_time = time.time() - download_start
-                print(f"INFO: Downloaded {file_name} ({size_mb:.1f} MB) in {download_time:.1f}s", flush=True)
+                print(f"INFO: Downloaded {file_name} ({size_mb:.1f} MB) in {download_time:.1f}s\n", end='', flush=True)
                 
                 # Validate NPZ file structure before committing
                 if file_name.endswith('.npz'):
