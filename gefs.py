@@ -124,8 +124,9 @@ _downloading_lock = threading.Lock()
 
 # Limit concurrent downloads to prevent connection pool exhaustion
 # During ensemble, 21 models try to download simultaneously - too many for S3
-# Semaphore limits to 4 concurrent downloads at a time across all workers
-_download_semaphore = threading.Semaphore(4)
+# Increased from 4 to 8 to improve throughput while staying within S3 limits
+# With 4 workers × 8 downloads = 32 max concurrent, well within 64 connection pool
+_download_semaphore = threading.Semaphore(8)
 
 def _release_file_lock(lock_fd):
     """Release file lock and close file descriptor. Safe to call multiple times."""
@@ -237,10 +238,20 @@ def load_gefs(file_name):
     load_start = time.time()
     
     if _should_cache(file_name):
+        # Check if file is already cached (cache hit vs miss)
+        cache_path = _CACHE_DIR / file_name
+        was_cached = cache_path.exists()
+        
         result = str(_ensure_cached(file_name))
-        load_time = time.time() - load_start
-        if load_time > 5.0:
-            print(f"WARNING: [PERF] load_gefs() slow: {file_name}, time={load_time:.2f}s", flush=True)
+        total_time = time.time() - load_start
+        
+        # Log performance warnings with context
+        # Cache hits should be fast (<1s), cache misses include download time
+        if was_cached and total_time > 1.0:
+            print(f"WARNING: [PERF] load_gefs() slow (cache hit): {file_name}, time={total_time:.2f}s", flush=True)
+        elif not was_cached and total_time > 30.0:
+            # Cache miss includes download - warn if >30s (download + validation)
+            print(f"WARNING: [PERF] load_gefs() slow (cache miss): {file_name}, time={total_time:.2f}s", flush=True)
         return result
 
     try:

@@ -1793,7 +1793,8 @@ async function simulate() {
                 
                 console.log(`[Client] Generated request_id: ${clientRequestId} from key: ${requestKey}`);
                 
-                if (simBtn) simBtn.textContent = '0%';
+                // Set initial button text to "Starting..." instead of "0%" to avoid flash
+                if (simBtn) simBtn.textContent = 'Starting...';
                 
                 let progressEventSource = null;
                 let requestIdFromServer = null;
@@ -1809,8 +1810,7 @@ async function simulate() {
                     const sseUrl = URL_ROOT + "/progress-stream?request_id=" + requestId;
                     try {
                         progressEventSource = new EventSource(sseUrl);
-                        // Initial status - will be updated by SSE
-                        if (simBtn) simBtn.textContent = 'Starting...';
+                        // Keep "Starting..." text until first SSE message arrives
                         
                         progressEventSource.onmessage = function(event) {
                             try {
@@ -1820,11 +1820,14 @@ async function simulate() {
                                     return;
                                 }
                                 if (simBtn) {
-                                    // Show status (loading/simulating) when percentage is 0, otherwise show percentage
-                                    if (data.status && data.status === 'loading' && data.percentage === 0) {
+                                    // Show status text when loading, otherwise show percentage
+                                    if (data.status === 'loading') {
                                         simBtn.textContent = 'Loading...';
-                                    } else if (data.percentage !== undefined) {
+                                    } else if (data.percentage !== undefined && data.percentage > 0) {
                                         simBtn.textContent = data.percentage + '%';
+                                    } else if (data.percentage === 0 && data.status === 'simulating') {
+                                        // Just started simulating, show 0%
+                                        simBtn.textContent = '0%';
                                     }
                                     if (data.percentage >= 100 && progressEventSource) {
                                         progressEventSource.close();

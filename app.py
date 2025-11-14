@@ -120,31 +120,78 @@ def _prefetch_model(model_id, worker_pid):
     except Exception as e:
         print(f"WARNING: [WORKER {worker_pid}] Prefetch failed for model {model_id}: {e}", flush=True)
 
-def wait_for_prefetch(model_ids, worker_pid, timeout=60, max_models=12):
-    """Start background prefetching and wait for first few models. Returns wait time."""
-    models_to_wait = min(max_models, len(model_ids))
+def wait_for_prefetch(model_ids, worker_pid, timeout=120, min_models=12):
+    """Progressive prefetch: wait for first N models, continue prefetching rest in background.
     
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-    with ThreadPoolExecutor(max_workers=min(10, len(model_ids))) as executor:
+    Hybrid approach that balances fast startup with avoiding on-demand delays:
+    - Waits for first 12 models to complete (fast simulation start)
+    - Continues prefetching remaining models in background
+    - When simulations need models 13-21, they're likely ready (avoiding 100+ second delays)
+    
+    Args:
+        model_ids: List of model IDs to prefetch
+        worker_pid: Worker process ID for logging
+        timeout: Maximum time to wait for initial models (seconds)
+        min_models: Number of models to wait for before returning (default: 12)
+    
+    Returns:
+        Time spent waiting for initial models (seconds)
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
+    start_time = time.time()
+    
+    # Submit all models for prefetch in parallel
+    # This ensures models 13-21 are actively downloading while simulations run
+    executor = ThreadPoolExecutor(max_workers=min(10, len(model_ids)))
+    try:
         prefetch_futures = {
             executor.submit(_prefetch_model, model_id, worker_pid): model_id
             for model_id in model_ids
         }
         
         completed_count = 0
-        start_time = time.time()
+        failed_count = 0
+        total_models = len(model_ids)
+        models_to_wait = min(min_models, total_models)
         
-        for future in as_completed(prefetch_futures):
-            model_id = prefetch_futures[future]
-            try:
-                future.result()
-                completed_count += 1
+        # Wait for first N models to complete, then return (simulations can start)
+        # Remaining models continue prefetching in background (executor not shut down)
+        try:
+            for future in as_completed(prefetch_futures, timeout=timeout):
+                model_id = prefetch_futures[future]
+                try:
+                    future.result()
+                    completed_count += 1
+                except Exception as e:
+                    failed_count += 1
+                    print(f"WARNING: [WORKER {worker_pid}] Prefetch failed for model {model_id}: {e}", flush=True)
+                
+                # Return after first N models complete (allow simulations to start)
+                # Leave executor running so remaining prefetches continue in background
                 if completed_count >= models_to_wait:
-                    break
-            except Exception:
-                pass
+                    elapsed = time.time() - start_time
+                    remaining = total_models - completed_count - failed_count
+                    # Don't shutdown executor - let remaining prefetches continue
+                    print(f"INFO: [WORKER {worker_pid}] Prefetch: {completed_count}/{total_models} ready in {elapsed:.1f}s, "
+                          f"{remaining} continuing in background", flush=True)
+                    return elapsed
+                    
+        except TimeoutError:
+            # Timeout reached - return with whatever we have
+            elapsed = time.time() - start_time
+            # Don't shutdown executor - let remaining prefetches continue
+            print(f"WARNING: [WORKER {worker_pid}] Prefetch timeout after {timeout}s: "
+                  f"{completed_count}/{total_models} ready, {total_models - completed_count - failed_count} continuing", flush=True)
+            return elapsed
+    finally:
+        # Shutdown executor without waiting (remaining prefetches continue as daemon threads)
+        # This prevents executor from blocking on exit while allowing background work to finish
+        executor.shutdown(wait=False)
     
-    return time.time() - start_time
+    # All models completed (shouldn't reach here due to early return, but handle gracefully)
+    elapsed = time.time() - start_time
+    print(f"INFO: [WORKER {worker_pid}] Prefetch complete: {completed_count}/{total_models} models in {elapsed:.1f}s", flush=True)
+    return elapsed
 
 def perturb_lat(base_lat):
     """Perturb latitude: ±0.001° ≈ ±111m. Clamped to [-90, 90]."""
@@ -1038,7 +1085,9 @@ def spaceshot():
             return None
     
     try:
-        # Prefetch first few models to warm cache (adaptive behavior will handle the rest)
+        # Progressive prefetch: wait for first 12 models, continue rest in background
+        # This balances fast startup (simulations start after 12 models) with avoiding
+        # on-demand delays (models 13-21 continue prefetching, ready when needed)
         # Update status to show we're loading
         update_progress(request_id, status='loading')
         wait_for_prefetch(model_ids, worker_pid)
