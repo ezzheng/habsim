@@ -1034,7 +1034,7 @@ def spaceshot():
                     
                     if future in ensemble_future_set:
                         model = ensemble_futures[future]
-                    try:
+                        try:
                         idx = model_ids.index(model)
                         result = future.result()
                         paths[idx] = result
