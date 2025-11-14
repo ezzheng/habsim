@@ -35,12 +35,23 @@
             :root{ --bg:#0b0f14; --fg:#e5e7eb; --muted:#9ca3af; --line:#1f2937; --soft:#0f1520; --soft2:#0d131d; --brand:#93c5fd; --brand-600:#60a5fa; }
         }
         html, body { height: 100%; margin: 0; padding: 0; }
+        /* Prevent desktop browser zoom - allow only Google Maps zoom */
+        html {
+            zoom: 1;
+            -webkit-text-size-adjust: 100%;
+            -moz-text-size-adjust: 100%;
+            -ms-text-size-adjust: 100%;
+            text-size-adjust: 100%;
+        }
         body {
             display: flex;
             flex-direction: column;
             font-family: 'Inter', system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
             color: var(--fg);
             background: var(--bg);
+            /* Prevent desktop zoom via transform */
+            transform: scale(1);
+            transform-origin: top left;
         }
         main {
             flex: 1;
@@ -1734,6 +1745,31 @@
                     el.addEventListener('input', refreshTitleFromInputs);
                 }
             });
+        })();
+        
+        // Prevent desktop browser zoom (keyboard shortcuts and mouse wheel)
+        // Mobile zoom is already prevented by viewport meta tag
+        (function(){
+            // Block keyboard zoom shortcuts: Ctrl/Cmd + Plus, Minus, 0
+            document.addEventListener('keydown', function(e) {
+                // Check for Ctrl (Windows/Linux) or Cmd (Mac) modifier
+                if ((e.ctrlKey || e.metaKey) && (e.key === '+' || e.key === '=' || e.key === '-' || e.key === '0')) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    return false;
+                }
+            }, { passive: false });
+            
+            // Block mouse wheel zoom: Ctrl/Cmd + Mouse Wheel
+            document.addEventListener('wheel', function(e) {
+                // Only block if Ctrl/Cmd is held down (zoom gesture)
+                // Allow normal scrolling without modifiers
+                if (e.ctrlKey || e.metaKey) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    return false;
+                }
+            }, { passive: false });
         })();
 </script>
 <!-- Vercel Web Analytics (no framework) -->
