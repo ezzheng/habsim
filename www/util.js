@@ -258,7 +258,8 @@ function initMapControls() {
             // Track modifier key presses to prevent unwanted autocomplete repositioning
             let modifierKeyPressed = false;
             let modifierKeyTimeout = null;
-            let cachedInputRect = null; // Cache input position when modifier keys are active
+            let cachedInputRect = null; // Cache input position to prevent shifting
+            let useCachedPosition = false; // Flag to use cache during focus transitions
             
             if (typeof google === 'undefined' || !google.maps || !google.maps.places || !google.maps.places.Autocomplete) {
                 console.warn('Places library not loaded');
@@ -335,22 +336,36 @@ function initMapControls() {
                         const hasText = searchInput.value.trim().length > 0;
                         const isMobile = window.innerWidth <= 768;
                         
-                        // Use cached position when modifier keys are pressed to prevent shifting
-                        // Otherwise get fresh bounding rect
+                        // Use cached position to prevent shifting during focus transitions
+                        // Only update cache when input is focused and modifier keys are NOT pressed
                         let inputRect;
-                        if (modifierKeyPressed && cachedInputRect) {
+                        const isFocused = document.activeElement === searchInput;
+                        
+                        if (useCachedPosition && cachedInputRect) {
+                            // Use cache during focus transitions (when modifier keys caused blur)
+                            inputRect = cachedInputRect;
+                        } else if (isFocused && !modifierKeyPressed) {
+                            // Input is focused and no modifier keys - get fresh position and update cache
+                            inputRect = searchInput.getBoundingClientRect();
+                            cachedInputRect = {
+                                left: inputRect.left,
+                                top: inputRect.top,
+                                bottom: inputRect.bottom,
+                                width: inputRect.width
+                            };
+                            useCachedPosition = false; // Clear flag when we have fresh position
+                        } else if (cachedInputRect) {
+                            // Input not focused or modifier keys pressed - use cached position
                             inputRect = cachedInputRect;
                         } else {
+                            // Fallback: get fresh position if no cache available
                             inputRect = searchInput.getBoundingClientRect();
-                            // Cache the position when we get a fresh one (for use during modifier key presses)
-                            if (!modifierKeyPressed) {
-                                cachedInputRect = {
-                                    left: inputRect.left,
-                                    top: inputRect.top,
-                                    bottom: inputRect.bottom,
-                                    width: inputRect.width
-                                };
-                            }
+                            cachedInputRect = {
+                                left: inputRect.left,
+                                top: inputRect.top,
+                                bottom: inputRect.bottom,
+                                width: inputRect.width
+                            };
                         }
                         
                         pacContainer.style.zIndex = '10000';
@@ -392,14 +407,11 @@ function initMapControls() {
                     }, 50);
                 });
                 
-                searchInput.addEventListener('focus', styleAutocomplete);
-                
                 // Track modifier key presses to prevent autocomplete repositioning
-                // Cache input position before modifier keys cause focus loss
                 searchInput.addEventListener('keydown', (e) => {
                     if (e.ctrlKey || e.metaKey || e.altKey) {
                         // Cache current position before focus is lost
-                        if (!modifierKeyPressed) {
+                        if (!modifierKeyPressed && document.activeElement === searchInput) {
                             const rect = searchInput.getBoundingClientRect();
                             cachedInputRect = {
                                 left: rect.left,
@@ -407,24 +419,26 @@ function initMapControls() {
                                 bottom: rect.bottom,
                                 width: rect.width
                             };
+                            useCachedPosition = true; // Flag to use cache during transition
                         }
                         modifierKeyPressed = true;
                         // Clear any existing timeout
                         if (modifierKeyTimeout) {
                             clearTimeout(modifierKeyTimeout);
                         }
-                        // Reset flag after a short delay (modifier key released)
+                        // Keep cache active for a bit after modifier keys released (for focus transition)
                         modifierKeyTimeout = setTimeout(() => {
                             modifierKeyPressed = false;
-                            cachedInputRect = null; // Clear cache when modifier keys released
-                        }, 100);
+                            // Don't clear cache immediately - keep it for focus transition
+                            // Cache will be cleared when input regains focus properly
+                        }, 200);
                     }
                 });
                 
                 searchInput.addEventListener('keyup', (e) => {
                     if (!e.ctrlKey && !e.metaKey && !e.altKey) {
                         modifierKeyPressed = false;
-                        cachedInputRect = null; // Clear cache when modifier keys released
+                        // Keep useCachedPosition flag and cache - will be cleared on proper focus
                         if (modifierKeyTimeout) {
                             clearTimeout(modifierKeyTimeout);
                             modifierKeyTimeout = null;
@@ -433,18 +447,30 @@ function initMapControls() {
                 });
                 
                 searchInput.addEventListener('blur', () => {
-                    // Ignore blur events caused by modifier key presses
-                    // These cause unwanted autocomplete repositioning
+                    // If blur was caused by modifier keys, keep using cached position
                     if (modifierKeyPressed) {
+                        useCachedPosition = true;
                         return;
                     }
                     
+                    // Normal blur - clear cache flag after delay
                     setTimeout(() => {
                         const pacContainer = document.querySelector('.pac-container');
                         if (pacContainer && !pacContainer.contains(document.activeElement)) {
                             toggleAutocompleteVisibility();
                         }
+                        // Clear cache flag if input is still not focused
+                        if (document.activeElement !== searchInput) {
+                            useCachedPosition = false;
+                        }
                     }, 200);
+                });
+                
+                searchInput.addEventListener('focus', () => {
+                    // When input regains focus, clear the cache flag and update cache with fresh position
+                    useCachedPosition = false;
+                    // Call styleAutocomplete to update cache with fresh position
+                    styleAutocomplete();
                 });
                 
                 window.addEventListener('resize', styleAutocomplete);
