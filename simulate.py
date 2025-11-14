@@ -100,9 +100,11 @@ def refresh():
     f = open_gefs('whichgefs')
     s = f.readline().strip()  # Strip newline and whitespace
     f.close()
+    print(f"DEBUG: refresh() read whichgefs: '{s}' (length={len(s)}, currgefs was '{currgefs}')", flush=True)
     if s != currgefs:
         old_currgefs = currgefs  # Save old timestamp for cleanup
         currgefs = s
+        print(f"DEBUG: refresh() updating currgefs: '{old_currgefs}' -> '{currgefs}'", flush=True)
         reset()
         # Clear cache when model changes
         _prediction_cache.clear()
@@ -113,6 +115,8 @@ def refresh():
             _cleanup_old_model_files(old_currgefs)
         
         return True
+    else:
+        print(f"DEBUG: refresh() no change needed (s == currgefs == '{s}')", flush=True)
     return False
 
 def reset():
