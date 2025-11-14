@@ -283,9 +283,12 @@ def wait_for_prefetch(model_ids, worker_pid, timeout=120, min_models=12):
     # verify that files are actually available before proceeding. This handles the race
     # condition where another worker updated currgefs but files aren't fully available yet
     # (S3 eventual consistency, transient errors, etc.)
-    # FIX: Problem 1 - Use retry_for_consistency to handle S3 eventual consistency
-    if not refresh_updated and current_gefs and current_gefs != "Unavailable":
-        # Another worker may have updated the cycle - verify files are actually available
+    # FIX: Problem 1 - Skip this check if pending_cycle is already set (new cycle detected but files not ready)
+    # FIX: Problem 2 - Re-read currgefs immediately before file verification to reduce race window
+    if not refresh_updated and not pending_cycle and current_gefs and current_gefs != "Unavailable":
+        # Another worker may have updated the cycle - re-read to get absolute latest value
+        current_gefs = simulate.get_currgefs()
+        # Verify files are actually available for the current cycle
         # Use retry_for_consistency to handle S3 eventual consistency issues
         files_available = simulate._check_cycle_files_available(current_gefs, check_disk_cache=False, retry_for_consistency=True)
         if not files_available:
@@ -355,6 +358,7 @@ def wait_for_prefetch(model_ids, worker_pid, timeout=120, min_models=12):
                             print(f"WARNING: [WORKER {worker_pid}] Current cycle {current_gefs} files not available after refresh", flush=True)
         else:
             # Files still not ready after timeout - fall back to current cycle
+            # FIX: Problem 3 - Handle case where old cycle files were deleted during timeout wait
             # FIX: Problem 5 - Implement graceful degradation instead of failing completely
             # Re-read currgefs to get latest value (may have been updated by another worker)
             current_gefs = simulate.get_currgefs()
@@ -365,11 +369,12 @@ def wait_for_prefetch(model_ids, worker_pid, timeout=120, min_models=12):
                 disk_available = simulate._check_cycle_files_available(current_gefs, check_disk_cache=True)
                 
                 if not s3_available:
-                    # Current cycle files don't exist in S3 - try to find any available cycle
+                    # Current cycle files don't exist in S3 - may have been deleted (old cycle cleanup)
+                    # FIX: Problem 3 - Try pending cycle first (new cycle may be ready now)
                     # FIX: Problem 5 - Graceful degradation: try to use any available cycle
-                    print(f"WARNING: [WORKER {worker_pid}] New cycle {pending_cycle} files not ready after {max_wait_time}s, and current cycle {current_gefs} files are missing from S3. Attempting to find available cycle...", flush=True)
+                    print(f"WARNING: [WORKER {worker_pid}] New cycle {pending_cycle} files not ready after {max_wait_time}s, and current cycle {current_gefs} files are missing from S3 (may have been deleted). Attempting to find available cycle...", flush=True)
                     
-                    # Try pending cycle one more time with retry
+                    # Try pending cycle one more time with retry (may have become available during timeout)
                     if simulate._check_cycle_files_available(pending_cycle, check_disk_cache=False, retry_for_consistency=True):
                         print(f"INFO: [WORKER {worker_pid}] Pending cycle {pending_cycle} files are now available after timeout. Using pending cycle.", flush=True)
                         current_gefs = pending_cycle
@@ -380,8 +385,12 @@ def wait_for_prefetch(model_ids, worker_pid, timeout=120, min_models=12):
                         except Exception:
                             pass
                     else:
-                        # Neither cycle available - this is a critical error
-                        raise RuntimeError(f"GEFS cycle transition error: New cycle {pending_cycle} files not ready after {max_wait_time}s, and current cycle {current_gefs} files are missing from S3. Cannot proceed with prefetch.")
+                        # Check if current cycle files exist in disk cache (may have been cached before deletion)
+                        if disk_available:
+                            print(f"INFO: [WORKER {worker_pid}] Current cycle {current_gefs} files exist in disk cache (S3 deleted, but cache available). Using cached files.", flush=True)
+                        else:
+                            # Neither cycle available - this is a critical error
+                            raise RuntimeError(f"GEFS cycle transition error: New cycle {pending_cycle} files not ready after {max_wait_time}s, and current cycle {current_gefs} files are missing from both S3 and disk cache. Cannot proceed with prefetch.")
                 elif not disk_available:
                     # Files exist in S3 but not in disk cache - this is OK, they'll be downloaded
                     print(f"INFO: [WORKER {worker_pid}] New cycle {pending_cycle} files not ready after {max_wait_time}s. Using current cycle {current_gefs} (files exist in S3, will download to cache)", flush=True)
