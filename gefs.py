@@ -189,11 +189,14 @@ def open_gefs(file_name):
 def load_gefs(file_name):
     """Load GEFS file from cache or download from S3.
     Returns path to cached file for memory-mapped access."""
+    print(f"DEBUG: load_gefs() called for {file_name}", flush=True)
     load_start = time.time()
     
     if _should_cache(file_name):
+        print(f"DEBUG: load_gefs() file should be cached, calling _ensure_cached()", flush=True)
         result = str(_ensure_cached(file_name))
         load_time = time.time() - load_start
+        print(f"DEBUG: load_gefs() completed for {file_name}, took {load_time:.2f}s", flush=True)
         if load_time > 5.0:
             print(f"WARNING: [PERF] load_gefs() slow: {file_name}, time={load_time:.2f}s", flush=True)
         return result

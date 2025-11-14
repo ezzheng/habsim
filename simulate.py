@@ -707,6 +707,7 @@ def _get_simulator(model):
             raise RuntimeError(f"GEFS timestamp not available after refresh (currgefs='{currgefs}'). Cannot load model files.")
     
     # Update cache size based on current workload (adaptive sizing)
+    print(f"DEBUG: _get_simulator() updating cache size", flush=True)
     _update_cache_size()
     
     # Trim cache if it's too large (safety check for memory leaks)
@@ -714,10 +715,12 @@ def _get_simulator(model):
     with _cache_lock:
         cache_too_large = len(_simulator_cache) > MAX_SIMULATOR_CACHE_ENSEMBLE
     if cache_too_large:
+        print(f"DEBUG: _get_simulator() cache too large, trimming", flush=True)
         _trim_cache_to_normal()
     
     with _cache_lock:
         # Fast path: return cached simulator if available
+        print(f"DEBUG: _get_simulator() checking cache for model {model}", flush=True)
         if model in _simulator_cache:
             simulator = _simulator_cache[model]
             # Verify simulator is still valid (wind_file.data hasn't been cleaned up)
@@ -739,6 +742,7 @@ def _get_simulator(model):
                 del _simulator_access_times[model]
         
         # Cache miss - need to load new simulator
+        print(f"DEBUG: _get_simulator() cache miss for model {model}, loading new simulator", flush=True)
         # Evict oldest if cache is full (only evict if not in use)
         if len(_simulator_cache) >= _current_max_cache:
             # Find oldest model that's not in use
