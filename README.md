@@ -424,6 +424,8 @@ habsim/
 ├── elev.py                # Elevation data
 ├── downloader.py          # GEFS data downloader
 ├── gunicorn_config.py     # Gunicorn configuration
+├── scripts/
+│   └── auto_downloader.py  # Automated GEFS downloader (single-cycle/daemon modes)
 ├── habsim/
 │   └── classes.py         # Physics engine
 ├── www/                   # Frontend
@@ -433,6 +435,8 @@ habsim/
 │   └── style.js           # Mode switching
 └── requirements.txt       # Python dependencies
 ```
+<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>
+codebase_search
 
 ### Key Design Decisions
 
