@@ -2,7 +2,7 @@
 Flask WSGI application serving REST API and static assets for HABSIM.
 
 Provides endpoints for:
-- Single and ensemble trajectory simulations (/sim/singlezpb, /sim/spaceshot)
+- Single and ensemble trajectory simulations (/sim/singlezpb, /sim/spaceshot) - STANDARD mode only
 - Real-time progress tracking (/sim/progress-stream via SSE)
 - Elevation data lookup (/sim/elev)
 - Cache and model status (/sim/status, /sim/models, /sim/cache-status)
@@ -648,74 +648,6 @@ def ls():
         "count": len(files),
         "files": files
     })
-
-
-'''
-Returns a json object representing the flight path, given a UTC launch time (yr, mo, day, hr, mn),
-a location (lat, lon), a launch elevation (alt), a drift coefficient (coeff),
-a maximum duration in hrs (dur), a step interval in seconds (step), and a GEFS model number (model)
-
-
-Return format is a list of [loc1, loc2 ...] where each loc is a list [lat, lon, altitude, u-wind, v-wind]
-
-u-wind is wind towards the EAST: wind vector in the positive X direction
-v-wind is wind towards the NORTH: wind vector in the positve Y direction
-'''
-@app.route('/sim/singlepredicth')
-@cache_for(600)  # Cache for 10 minutes
-def singlepredicth():
-    try:
-        args = request.args
-        yr = get_arg(args, 'yr', type_func=int)
-        mo = get_arg(args, 'mo', type_func=int)
-        day = get_arg(args, 'day', type_func=int)
-        hr = get_arg(args, 'hr', type_func=int)
-        mn = get_arg(args, 'mn', type_func=int)
-        lat = get_arg(args, 'lat')
-        lon = get_arg(args, 'lon')
-        rate = get_arg(args, 'rate')
-        dur = get_arg(args, 'dur')
-        step = get_arg(args, 'step')
-        model = get_arg(args, 'model', type_func=int)
-        coeff = get_arg(args, 'coeff')
-        alt = get_arg(args, 'alt')
-        
-        timestamp = datetime(yr, mo, day, hr, mn).replace(tzinfo=timezone.utc)
-        path = simulate.simulate(timestamp, lat, lon, rate, step, dur, alt, model, coefficient=coeff)
-        return jsonify(path)
-    except ValueError as e:
-        return make_response(jsonify({"error": str(e)}), 400)
-    except FileNotFoundError as e:
-        return make_response(jsonify({"error": "Model file not available"}), 404)
-    except Exception as e:
-        print(f"ERROR: singlepredicth failed: {e}", flush=True)
-        return make_response(jsonify({"error": "Simulation failed"}), 500)
-
-@app.route('/sim/singlepredict')
-@cache_for(600)  # Cache for 10 minutes
-def singlepredict():
-    try:
-        args = request.args
-        timestamp = datetime.utcfromtimestamp(get_arg(args, 'timestamp')).replace(tzinfo=timezone.utc)
-        lat = get_arg(args, 'lat')
-        lon = get_arg(args, 'lon')
-        rate = get_arg(args, 'rate')
-        dur = get_arg(args, 'dur')
-        step = get_arg(args, 'step')
-        model = get_arg(args, 'model', type_func=int)
-        coeff = get_arg(args, 'coeff')
-        alt = get_arg(args, 'alt')
-        
-        path = simulate.simulate(timestamp, lat, lon, rate, step, dur, alt, model, coefficient=coeff)
-        return jsonify(path)
-    except ValueError as e:
-        return make_response(jsonify({"error": str(e)}), 400)
-    except FileNotFoundError as e:
-        return make_response(jsonify({"error": "Model file not available"}), 404)
-    except Exception as e:
-        print(f"ERROR: singlepredict failed: {e}", flush=True)
-        return make_response(jsonify({"error": "Simulation failed"}), 500)
-
 
 def singlezpb(timestamp, lat, lon, alt, equil, eqtime, asc, desc, model, coefficient=1.0):
     """
