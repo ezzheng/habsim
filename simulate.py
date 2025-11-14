@@ -52,6 +52,7 @@ if Path("/app/data").exists():  # Railway persistent volume
     _CURRGEFS_FILE = Path("/app/data/currgefs.txt")
 else:
     _CURRGEFS_FILE = Path(tempfile.gettempdir()) / "habsim-currgefs.txt"
+print(f"INFO: currgefs file: {_CURRGEFS_FILE}", flush=True)
 _CURRGEFS_LOCK = threading.Lock()
 _last_refresh_check = 0.0
 _cache_trim_thread_started = False
@@ -135,21 +136,24 @@ def _write_currgefs(value):
 
 def refresh():
     """Refresh GEFS timestamp from S3 and update shared file."""
-    f = open_gefs('whichgefs')
-    new_gefs = f.readline().strip()
-    f.close()
-    
-    old_gefs = _read_currgefs()
-    if new_gefs != old_gefs:
-        _write_currgefs(new_gefs)
-        reset()
-        _prediction_cache.clear()
-        _cache_access_times.clear()
+    try:
+        f = open_gefs('whichgefs')
+        new_gefs = f.readline().strip()
+        f.close()
         
-        if old_gefs and old_gefs != "Unavailable":
-            _cleanup_old_model_files(old_gefs)
-        
-        return True
+        old_gefs = _read_currgefs()
+        if new_gefs and new_gefs != old_gefs:
+            _write_currgefs(new_gefs)
+            reset()
+            _prediction_cache.clear()
+            _cache_access_times.clear()
+            
+            if old_gefs and old_gefs != "Unavailable":
+                _cleanup_old_model_files(old_gefs)
+            
+            return True
+    except Exception as e:
+        print(f"ERROR: refresh() failed: {e}", flush=True)
     return False
 
 def get_currgefs():
@@ -684,10 +688,8 @@ def _get_simulator(model):
         refresh()
         _last_refresh_check = now
         currgefs = get_currgefs()
-    
-    # Safety check: ensure currgefs is valid before using it
-    if not currgefs or currgefs == "Unavailable":
-        raise RuntimeError(f"GEFS timestamp not available (currgefs='{currgefs}'). Cannot load model files.")
+        if not currgefs or currgefs == "Unavailable":
+            raise RuntimeError(f"GEFS timestamp not available after refresh (currgefs='{currgefs}'). Cannot load model files.")
     
     # Update cache size based on current workload (adaptive sizing)
     _update_cache_size()
