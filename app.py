@@ -1033,7 +1033,7 @@ def spaceshot():
                         last_progress_update = total_completed
                     
                     if future in ensemble_future_set:
-                    model = ensemble_futures[future]
+                        model = ensemble_futures[future]
                     try:
                         idx = model_ids.index(model)
                         result = future.result()
@@ -1075,6 +1075,12 @@ def spaceshot():
                         # Batch Monte Carlo progress updates
                         if montecarlo_completed % 20 == 0 or montecarlo_completed == total_montecarlo:
                             update_progress(request_id, montecarlo_completed=montecarlo_completed)
+            except TimeoutError:
+                print(f"WARNING: [WORKER {worker_pid}] Ensemble timeout after {timeout_seconds}s", flush=True)
+                # Cancel all remaining futures
+                for f in all_futures:
+                    if not f.done():
+                        f.cancel()
             
             # Ensure all ensemble models have results
             for i, path in enumerate(paths):
