@@ -609,11 +609,7 @@ function setEndPin(endPoint, color, hourOffset) {
                 + '<div><strong style="font-weight: 600;">Launch Time:</strong> ' + lformattedTime + ' ' + tzAbbr + '</div>'
                 + '</div>';
         }
-        // Generate unique ID for this info window to enable X button functionality
-        var infoId = 'endpin-info-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
-        
-        var contentHtml = '<div style="font-family: -apple-system, BlinkMacSystemFont, \'Segoe UI\', Roboto, \'Helvetica Neue\', Arial, sans-serif; padding: 6px 8px; line-height: 1.5; position: relative;">'
-            + '<button id="' + infoId + '-close" style="position: absolute; top: 4px; right: 4px; background: none; border: none; font-size: 18px; line-height: 1; cursor: pointer; color: #666; padding: 2px 6px; font-weight: bold;" title="Close">×</button>'
+        var contentHtml = '<div style="font-family: -apple-system, BlinkMacSystemFont, \'Segoe UI\', Roboto, \'Helvetica Neue\', Arial, sans-serif; padding: 6px 8px; line-height: 1.5;">'
             + '<div style="margin-bottom: 4px;"><strong style="font-weight: 600;">Land Lat:</strong> ' + roundedLat + '°</div>'
             + '<div style="margin-bottom: 4px;"><strong style="font-weight: 600;">Land Lon:</strong> ' + roundedLon + '°</div>'
             + '<div style="margin-bottom: 4px;"><strong style="font-weight: 600;">Land Altitude:</strong> ' + roundedAltitude + 'm</div>'
@@ -621,56 +617,11 @@ function setEndPin(endPoint, color, hourOffset) {
             + launchSection
             + '</div>';
         var info = new google.maps.InfoWindow({ content: contentHtml });
-        
-        // Function to close info window and (for multi mode) clear trajectory
-        var closeInfoAndTrajectory = function() {
-            info.close();
-            // For multi mode, also clear trajectory if it exists
-            if (window.multiActive && marker._polylines && marker._polylines.length) {
-                try {
-                    for (const pl of marker._polylines) {
-                        try { pl.setMap(null); } catch (e) {}
-                    }
-                    currpaths = currpaths.filter(pl => marker._polylines.indexOf(pl) === -1);
-                    if (marker._rawIndex !== null && marker._rawIndex >= 0) {
-                        rawpathcache[marker._rawIndex] = [];
-                        rawpathcacheModels[marker._rawIndex] = null;
-                    }
-                    marker._polylines = null;
-                    marker._rawIndex = null;
-                    if (typeof clearWaypoints === 'function') {
-                        clearWaypoints();
-                        if (waypointsToggle) { showWaypoints(); }
-                    }
-                } catch (e) {
-                    console.warn('Error clearing trajectory on X click', e);
-                }
-            }
-        };
-        
-        // Attach X button click handler after InfoWindow opens
-        google.maps.event.addListener(info, 'domready', function() {
-            var closeBtn = document.getElementById(infoId + '-close');
-            if (closeBtn) {
-                closeBtn.addEventListener('click', function(e) {
-                    e.stopPropagation();
-                    closeInfoAndTrajectory();
-                });
-                // Hover effect for X button
-                closeBtn.addEventListener('mouseenter', function() {
-                    closeBtn.style.color = '#000';
-                });
-                closeBtn.addEventListener('mouseleave', function() {
-                    closeBtn.style.color = '#666';
-                });
-            }
-        });
-        
         marker.addListener('click', function() {
             // Toggle behavior: if already open, close it; otherwise open it
             if (info.getMap()) {
                 // Info window is open, close it
-                closeInfoAndTrajectory();
+                info.close();
             } else {
                 // Close any other open end pin info windows first
                 if (window.multiActive) {
