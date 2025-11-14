@@ -666,44 +666,61 @@ function initTiltControlRepositioning() {
             'div[aria-label*="rotate"]'
         ];
         
-        let tiltControl = null;
+        let tiltButton = null;
         for (const selector of tiltSelectors) {
-            tiltControl = document.querySelector(selector);
-            if (tiltControl) break;
+            const candidate = document.querySelector(selector);
+            if (candidate) {
+                tiltButton = candidate;
+                break;
+            }
         }
         
-        // Also check bundled controls - tilt is usually the last child
-        if (!tiltControl) {
+        if (!tiltButton) {
             const bundledControls = document.querySelector('.gm-bundled-control-on-bottom');
             if (bundledControls) {
-                const children = Array.from(bundledControls.children);
-                // Tilt control is typically the second-to-last or last button
-                if (children.length >= 2) {
-                    tiltControl = children[children.length - 1];
+                const children = Array.from(bundledControls.querySelectorAll('button, div[role="button"]'));
+                if (children.length) {
+                    tiltButton = children[children.length - 1];
                 }
             }
         }
         
-        if (tiltControl) {
-            const isMobile = window.innerWidth <= 768;
-            
-            if (isMobile) {
-                // Mobile: Upper right
-                tiltControl.style.position = 'absolute';
-                tiltControl.style.top = '10px';
-                tiltControl.style.right = '10px';
-                tiltControl.style.bottom = 'auto';
-                tiltControl.style.left = 'auto';
-                tiltControl.style.zIndex = '1000';
-            } else {
-                // Desktop: Above fullscreen button (58px from bottom = 10px + 40px + 8px gap)
-                tiltControl.style.position = 'absolute';
-                tiltControl.style.bottom = '58px';
-                tiltControl.style.right = '10px';
-                tiltControl.style.top = 'auto';
-                tiltControl.style.left = 'auto';
-                tiltControl.style.zIndex = '1000';
-            }
+        if (!tiltButton) return;
+        
+        const controlContainer = tiltButton.closest('.gm-bundled-control') ||
+                                 tiltButton.closest('.gm-bundled-control-on-bottom') ||
+                                 tiltButton.parentElement;
+        if (!controlContainer) return;
+        
+        const isMobile = window.innerWidth <= 768;
+        const FULLSCREEN_MARGIN = 10;
+        const FULLSCREEN_HEIGHT = 40;
+        const GAP = 8;
+        const desktopBottom = FULLSCREEN_MARGIN + FULLSCREEN_HEIGHT + GAP; // 58px
+        
+        controlContainer.style.position = 'absolute';
+        controlContainer.style.right = '10px';
+        controlContainer.style.left = 'auto';
+        controlContainer.style.zIndex = '1000';
+        controlContainer.style.display = 'flex';
+        controlContainer.style.flexDirection = 'column';
+        controlContainer.style.alignItems = 'stretch';
+        controlContainer.style.gap = `${GAP}px`;
+        controlContainer.style.width = '40px';
+        controlContainer.style.pointerEvents = 'auto';
+        controlContainer.style.background = 'transparent';
+        controlContainer.style.boxShadow = 'none';
+        
+        if (isMobile) {
+            controlContainer.style.top = '10px';
+            controlContainer.style.bottom = 'auto';
+        } else {
+            controlContainer.style.top = 'auto';
+            controlContainer.style.bottom = `${desktopBottom}px`;
+        }
+        
+        if (getComputedStyle(controlContainer).display === 'none') {
+            controlContainer.style.display = 'flex';
         }
     };
     
