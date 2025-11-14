@@ -989,8 +989,11 @@ def spaceshot():
         # Switch to simulating status once prefetch is done
         update_progress(request_id, status='simulating')
         
-        # Run ensemble and Monte Carlo simulations in parallel
+        # Run ensemble and Monte Carlo simulations in parallel with 10-minute timeout
         max_workers = min(32, os.cpu_count() or 4)
+        timeout_seconds = 600  # 10 minutes
+        timeout_deadline = start_time + timeout_seconds
+        
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             ensemble_futures = {
                 executor.submit(run_ensemble_simulation, model): model
@@ -1012,7 +1015,16 @@ def spaceshot():
             last_progress_update = 0
             progress_update_interval = 10  # Batch progress updates every 10 completions
             
-            for future in as_completed(all_futures):
+            try:
+                for future in as_completed(all_futures, timeout=timeout_seconds):
+                    # Check timeout
+                    if time.time() > timeout_deadline:
+                        print(f"WARNING: [WORKER {worker_pid}] Ensemble timeout after {timeout_seconds}s, cancelling remaining tasks", flush=True)
+                        # Cancel remaining futures
+                        for f in all_futures:
+                            if not f.done():
+                                f.cancel()
+                        break
                 total_completed += 1
                 # Batch progress updates to reduce lock contention (update every N completions)
                 if total_completed - last_progress_update >= progress_update_interval or total_completed == total_simulations:
