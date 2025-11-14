@@ -9,7 +9,6 @@ import urllib.request
 import time
 import logging
 import socket
-import sys
 import os
 import argparse
 import shutil

@@ -11,7 +11,6 @@ import tempfile
 import time
 import logging
 from pathlib import Path
-from typing import Iterator
 import threading
 
 import boto3
@@ -117,6 +116,16 @@ _downloading_lock = threading.Lock()
 # During ensemble, 21 models try to download simultaneously - too many for S3
 # Semaphore limits to 4 concurrent downloads at a time across all workers
 _download_semaphore = threading.Semaphore(4)
+
+def _release_file_lock(lock_fd):
+    """Release file lock and close file descriptor. Safe to call multiple times."""
+    if lock_fd:
+        try:
+            import fcntl
+            fcntl.flock(lock_fd.fileno(), fcntl.LOCK_UN)
+            lock_fd.close()
+        except Exception:
+            pass
 
 def listdir_gefs():
     """List all files in S3 bucket."""
@@ -359,66 +368,76 @@ def _ensure_cached(file_name: str) -> Path:
             return cache_path
 
         # Clean up old files before downloading new one
-        cleanup_start = time.time()
         _cleanup_old_cache_files()
-        cleanup_time = time.time() - cleanup_start
-        if cleanup_time > 1.0:
-            pass
     
     # CRITICAL: Mark file as downloading ONLY after cache miss confirmed
     # This prevents false positives where cache hits would leave files in the set
+    # The _downloading_files set is used by cleanup to avoid deleting files mid-download
     with _downloading_lock:
         _downloading_files.add(file_name)
     
-    # For large files, prevent concurrent downloads of the same file ACROSS PROCESSES
-    # This avoids connection pool exhaustion and partial download conflicts
-    # Use file-based locking (fcntl) which works across Gunicorn worker processes
-    # Large files: worldelev.npy and .npz files (model files are ~300MB each)
+    # INTER-PROCESS COORDINATION: For large files, prevent concurrent downloads across workers
+    # 
+    # PROBLEM: Multiple Gunicorn workers may try to download the same file simultaneously.
+    # This causes:
+    # 1. Connection pool exhaustion (too many concurrent S3 connections)
+    # 2. Partial download conflicts (multiple workers writing to same file)
+    # 3. Wasted bandwidth (downloading same file multiple times)
+    #
+    # SOLUTION: Use file-based locking (fcntl) which works across processes (not just threads).
+    # Only one worker downloads, others wait and then use the completed file.
+    #
+    # Large files: worldelev.npy (451MB) and .npz files (model files are ~300MB each)
     is_large_file = file_name == 'worldelev.npy' or file_name.endswith(('.npz', '.npy'))
     lock_file = None
     lock_fd = None
     if is_large_file:
         # Create a lock file for inter-process coordination
+        # Lock file name: .{filename}.lock (e.g., .2025110306_00.npz.lock)
         lock_file = _CACHE_DIR / f".{file_name}.lock"
         try:
             # Open lock file (create if doesn't exist)
+            # Using 'a' mode ensures file exists even if empty
             lock_fd = open(lock_file, 'a')
             
             # Try to acquire exclusive lock (non-blocking)
             import fcntl
             try:
                 fcntl.flock(lock_fd.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                # Lock acquired - we're the downloader
             except BlockingIOError:
-                # Another process is downloading - wait and check if it completed
+                # Another worker is downloading - wait and check if it completed
+                # This avoids duplicate downloads and connection pool exhaustion
                 
                 # Wait up to 5 minutes for the download to complete
+                # Poll every second to check if file was created by other worker
                 for i in range(300):  # 300 * 1s = 5 minutes
                     time.sleep(1)
                     if cache_path.exists() and cache_path.stat().st_size > 0:
-                        # File was downloaded by another process
+                        # File was downloaded by another worker - use it
                         lock_fd.close()
-                        cache_path.touch()
+                        cache_path.touch()  # Update access time
                         # Remove from downloading set before returning
                         with _downloading_lock:
                             _downloading_files.discard(file_name)
                         return cache_path
-                    
-                    # Log progress every 30 seconds
-                    if i % 30 == 0 and i > 0:
-                        pass
-                # After 5 minutes, acquire lock (blocking) to download ourselves
+                # After 5 minutes, other worker may have failed - acquire lock (blocking) to download ourselves
+                # This handles case where other worker crashed mid-download
                 fcntl.flock(lock_fd.fileno(), fcntl.LOCK_EX)
             
-            # Double-check file wasn't created while waiting for lock
+            # RACE CONDITION PROTECTION: Double-check file wasn't created while waiting for lock
+            # Another worker may have completed the download between our check and acquiring lock
             if cache_path.exists() and cache_path.stat().st_size > 0:
+                # File exists - release lock and use it (no need to download)
                 fcntl.flock(lock_fd.fileno(), fcntl.LOCK_UN)
                 lock_fd.close()
                 cache_path.touch()
-                # Remove from downloading set before returning
                 with _downloading_lock:
                     _downloading_files.discard(file_name)
                 return cache_path
         except Exception as e:
+            # Lock acquisition failed - continue without lock (fallback to semaphore-only)
+            # This prevents lock file issues from breaking downloads
             if lock_fd:
                 try:
                     lock_fd.close()
@@ -426,6 +445,10 @@ def _ensure_cached(file_name: str) -> Path:
                     pass
             lock_fd = None
 
+    # CONNECTION POOL LIMITING: Use semaphore to limit concurrent downloads
+    # During ensemble, 21 models try to download simultaneously - too many for S3
+    # Semaphore limits to 4 concurrent downloads at a time across all workers
+    # This prevents connection pool exhaustion and S3 throttling
     _download_semaphore.acquire()
     try:
         download_start = time.time()
@@ -514,12 +537,6 @@ def _ensure_cached(file_name: str) -> Path:
                                 # This prevents data loss if process crashes mid-download
                                 if is_large_file and bytes_written % (10 * 1024 * 1024) < _CHUNK_SIZE:
                                     fh.flush()
-                                
-                                # For large files, log progress every 50MB
-                                if is_large_file and bytes_written % (50 * 1024 * 1024) < _CHUNK_SIZE:
-                                    mb_written = bytes_written / (1024 * 1024)
-                                    if expected_size:
-                                        mb_total = expected_size / (1024 * 1024)
                             
                             # Flush and sync to disk before closing (ensures data is persisted)
                             fh.flush()
@@ -558,24 +575,28 @@ def _ensure_cached(file_name: str) -> Path:
                         except:
                             pass
                 
-                # Verify download completed successfully
+                # FILE INTEGRITY VERIFICATION: Verify download completed successfully
                 # This is a critical step to ensure file integrity before committing
+                # We verify multiple aspects to catch different failure modes
                 if not tmp_path.exists():
                     raise IOError(f"Download failed: temp file not created for {file_name} (request succeeded but no file written)")
                 
                 actual_size = tmp_path.stat().st_size
                 if actual_size == 0:
                     # Empty file - fatal error, don't retry (file exists but is corrupted)
+                    # This indicates S3 returned success but wrote no data
                     raise IOError(f"Download failed: file {file_name} is empty (fatal)")
                 
-                # Verify file size matches expected size (if available)
+                # Verify file size matches expected size (if available from S3 metadata)
                 # This catches incomplete downloads that weren't detected during streaming
+                # Size mismatch indicates network interruption or S3 issue
                 if expected_size and actual_size != expected_size:
                     # Size mismatch - retryable error (download was incomplete)
                     raise IOError(f"Download incomplete: {file_name} expected {expected_size} bytes, got {actual_size} (retryable)")
                 
                 # Final verification: ensure file is readable and non-empty
-                # This catches edge cases where file exists but is corrupted
+                # This catches edge cases where file exists but is corrupted or too small
+                # Model files are ~300MB, so anything < 1KB is definitely wrong
                 if actual_size < 1024:  # Files should be at least 1KB
                     raise IOError(f"Download failed: file {file_name} is suspiciously small ({actual_size} bytes) (fatal)")
                 
@@ -603,13 +624,7 @@ def _ensure_cached(file_name: str) -> Path:
                         tmp_path.unlink()
                     except:
                         pass
-                if lock_fd:
-                    try:
-                        import fcntl
-                        fcntl.flock(lock_fd.fileno(), fcntl.LOCK_UN)
-                        lock_fd.close()
-                    except:
-                        pass
+                _release_file_lock(lock_fd)
                 # Re-raise immediately (no retry for missing files)
                 raise
             except IOError as e:
@@ -629,13 +644,7 @@ def _ensure_cached(file_name: str) -> Path:
                     if 'fatal' in error_str:
                         # Fatal error - don't retry
                         print(f"ERROR: Download failed with fatal error for {file_name}: {e}", flush=True)
-                        if lock_fd:
-                            try:
-                                import fcntl
-                                fcntl.flock(lock_fd.fileno(), fcntl.LOCK_UN)
-                                lock_fd.close()
-                            except:
-                                pass
+                        _release_file_lock(lock_fd)
                         raise
                 else:
                     # Retryable error - log and retry
@@ -656,13 +665,7 @@ def _ensure_cached(file_name: str) -> Path:
                 else:
                     # Last attempt failed - release lock and clean up
                     print(f"ERROR: Download failed after {max_retries} attempts for {file_name}: {last_error}", flush=True)
-                    if lock_fd:
-                        try:
-                            import fcntl
-                            fcntl.flock(lock_fd.fileno(), fcntl.LOCK_UN)
-                            lock_fd.close()
-                        except:
-                            pass
+                    _release_file_lock(lock_fd)
                     raise IOError(f"Download failed: temp file not created for {file_name} after {max_retries} attempts: {last_error}")
         
         # If we got here without error, file should exist (successful download broke out of loop)
@@ -719,8 +722,6 @@ def _ensure_cached(file_name: str) -> Path:
             
             if cache_path.stat().st_size != tmp_size:
                 raise IOError(f"Downloaded file {file_name} size mismatch after rename (expected {tmp_size} bytes, got {cache_path.stat().st_size} bytes)")
-            
-            download_time = time.time() - download_start
         except FileNotFoundError as e:
             # Temp file was deleted between check and rename (race condition)
             error_msg = f"Download failed: temp file {tmp_path} not found during rename for {file_name}. This may indicate a race condition or premature cleanup."
@@ -740,13 +741,7 @@ def _ensure_cached(file_name: str) -> Path:
     finally:
         # CRITICAL: Always release file lock and clean up lock file, even on error
         # This prevents deadlocks on subsequent downloads
-        if lock_fd:
-            try:
-                import fcntl
-                fcntl.flock(lock_fd.fileno(), fcntl.LOCK_UN)
-                lock_fd.close()
-            except Exception:
-                pass
+        _release_file_lock(lock_fd)
         
         # Clean up lock file on successful download to prevent accumulation
         if lock_file and lock_file.exists():

@@ -64,8 +64,8 @@ Simulation Orchestrator (simulate.py)
     └─ Memory management
     ↓
 ┌─────────────────────────────────────┐
-│  GEFS Manager (gefs.py)            │  S3 downloads, LRU cache
-│  Wind Data (windfile.py)           │  4D interpolation
+│  GEFS Manager (gefs.py)             │  S3 downloads, LRU cache
+│  Wind Data (windfile.py)            │  4D interpolation
 │  Elevation (elev.py)                │  Ground elevation lookup
 │  Physics Engine (classes.py)        │  Runge-Kutta integration
 └─────────────────────────────────────┘

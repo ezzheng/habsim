@@ -13,8 +13,7 @@ import hashlib
 import os
 import time
 import threading
-import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
 import tempfile
@@ -156,17 +155,32 @@ def get_currgefs():
     return _read_currgefs()
 
 def reset():
-    """Clear simulator cache when GEFS model changes.
-    Respects in-use models to prevent breaking active simulations."""
+    """
+    Clear simulator cache when GEFS model changes.
+    
+    CRITICAL: Only evicts simulators that are NOT currently in use (ref_count == 0).
+    This prevents breaking active simulations that are mid-execution. Uses reference
+    counting snapshot to avoid nested lock acquisition (deadlock prevention).
+    
+    Lock order: _simulator_ref_lock -> _cache_lock (consistent across all functions)
+    """
     global _simulator_cache, _simulator_access_times, elevation_cache, _current_max_cache
     
+    # DEADLOCK PREVENTION: Get snapshot of ref counts BEFORE acquiring cache lock
+    # If we acquired cache_lock first, then tried to acquire ref_lock, we'd deadlock
+    # with simulate() which acquires ref_lock then cache_lock
+    with _simulator_ref_lock:
+        ref_counts_snapshot = dict(_simulator_ref_counts)
+    
     with _cache_lock:
-        # Clear access times for models not in use
+        # Identify models to clear (only those not in use)
+        # Use snapshot to avoid nested lock acquisition
         models_to_clear = []
         for model_id in _simulator_cache.keys():
-            if not _is_simulator_in_use(model_id):
+            if ref_counts_snapshot.get(model_id, 0) == 0:
                 models_to_clear.append(model_id)
         
+        # Evict unused models
         for model_id in models_to_clear:
             simulator = _simulator_cache.get(model_id)
             if simulator:
@@ -175,49 +189,65 @@ def reset():
                 del _simulator_cache[model_id]
             if model_id in _simulator_access_times:
                 del _simulator_access_times[model_id]
+            # Clear ref count (re-acquire lock for this operation)
             with _simulator_ref_lock:
                 _simulator_ref_counts.pop(model_id, None)
         
-        # Reset cache size to normal
+        # Reset cache size to normal (was expanded for ensemble)
         _current_max_cache = MAX_SIMULATOR_CACHE_NORMAL
     
     # Clear elevation cache (will be reloaded on next use)
     elevation_cache = None
     
-    # Light garbage collection
+    # Light garbage collection to help free memory
     gc.collect()
 
 
 def record_activity():
     """Record that the worker handled a request (used for idle cleanup)."""
     global _last_activity_timestamp
-    old_timestamp = _last_activity_timestamp
     _last_activity_timestamp = time.time()
 
 
 def _idle_memory_cleanup(idle_duration):
-    """Deep cleanup when the worker has been idle for a while.
+    """
+    Deep cleanup when the worker has been idle for a while.
+    
     Returns True if cleanup ran, False if skipped (lock held or models in use).
     
-    Very conservative: only runs if truly idle (no models in use, idle > 15 minutes).
+    VERY CONSERVATIVE: Only runs if:
+    1. No models are currently in use (ref_count == 0 for all)
+    2. Worker has been idle for > 15 minutes
+    3. Cleanup lock is available (not already running)
+    
+    This prevents cleanup from running during active work, which would evict
+    simulators that are actively being used and break running simulations.
     """
     global _current_max_cache, elevation_cache
     worker_pid = os.getpid()
+    
+    # Try to acquire cleanup lock (non-blocking)
+    # If already running, skip (prevents concurrent cleanup)
     if not _idle_cleanup_lock.acquire(blocking=False):
         return False
     try:
+        # DEADLOCK PREVENTION: Get snapshot of ref counts BEFORE acquiring cache lock
+        # This prevents nested lock acquisition (ref_lock -> cache_lock would deadlock)
+        with _simulator_ref_lock:
+            ref_counts_snapshot = dict(_simulator_ref_counts)
+        
         with _cache_lock:
             cache_size = len(_simulator_cache)
-            # Check if any models are in use via ref counts
-            models_in_use = any(_is_simulator_in_use(mid) for mid in _simulator_cache.keys())
+            # Check if any models are in use via ref counts (use snapshot to avoid nested locks)
+            # If any model has ref_count > 0, it's actively being used - don't clean up
+            models_in_use = any(ref_counts_snapshot.get(mid, 0) > 0 for mid in _simulator_cache.keys())
         
         # Skip cleanup if models are in use or idle time is too short
-        if models_in_use or idle_duration < 900:  # Require 15 minutes of true idle
+        # 900 seconds = 15 minutes of true idle (no active simulations)
+        if models_in_use or idle_duration < 900:
             return False
         
         rss_before = _get_rss_memory_mb()
-        if rss_before is not None:
-            pass
         
         with _cache_lock:
             simulators = list(_simulator_cache.values())
@@ -279,7 +309,6 @@ def _cleanup_old_model_files(old_timestamp: str):
     This is critical to prevent disk bloat when GEFS cycles change every 6 hours."""
     try:
         from pathlib import Path
-        import logging
         
         # Import gefs module to access its cache directory
         from gefs import _CACHE_DIR
@@ -309,8 +338,6 @@ def _cleanup_old_model_files(old_timestamp: str):
             old_files.extend(matching)
         
         if old_files:
-            total_size = sum(f.stat().st_size for f in old_files if f.exists()) / (1024**3)  # GB
-            
             deleted_count = 0
             for old_file in old_files:
                 try:
@@ -343,6 +370,10 @@ def _get_elevation_data():
                 elevation_cache = load_gefs('worldelev.npy')
     return elevation_cache
 
+def _count_ensemble_models():
+    """Count ensemble models (0-20) in cache. Must be called while holding _cache_lock."""
+    return len([m for m in _simulator_cache.keys() if isinstance(m, int) and m < 21])
+
 def _should_preload_arrays():
     """Auto-detect if we should preload arrays based on cache size.
     Preloading is faster (CPU-bound) but uses more memory.
@@ -350,15 +381,13 @@ def _should_preload_arrays():
     with _cache_lock:
         # If we have 10+ models cached, we're likely doing ensemble work
         # Preload arrays for better performance in this case
-        ensemble_models = len([m for m in _simulator_cache.keys() if isinstance(m, int) and m < 21])
-        return ensemble_models >= 10
+        return _count_ensemble_models() >= 10
 
 def _get_target_cache_size():
     """Auto-size cache based on current usage patterns.
     Returns target cache size (normal or ensemble) based on how many models are cached.
     NOTE: Must be called while holding _cache_lock."""
-    ensemble_models = len([m for m in _simulator_cache.keys() if isinstance(m, int) and m < 21])
-    if ensemble_models >= 10:
+    if _count_ensemble_models() >= 10:
         return MAX_SIMULATOR_CACHE_ENSEMBLE
     return MAX_SIMULATOR_CACHE_NORMAL
 
@@ -440,12 +469,20 @@ def _is_simulator_in_use(model_id):
         return _simulator_ref_counts.get(model_id, 0) > 0
 
 def _trim_cache_to_normal():
-    """Trim cache to target size, keeping most recently used models.
-    Uses reference counting to ensure simulators are only cleaned up when not in use.
-    Automatically adjusts target size based on workload (adaptive sizing)."""
+    """
+    Trim cache to target size using LRU eviction, keeping most recently used models.
+    
+    CRITICAL: Uses reference counting to ensure simulators are only cleaned up when
+    not in use. Never evicts a simulator with ref_count > 0 (actively in use).
+    
+    DEADLOCK PREVENTION: Acquires ref_lock BEFORE cache_lock to maintain consistent
+    lock order across all functions. Uses snapshots to avoid nested lock acquisition.
+    
+    Adaptive sizing: Target size automatically adjusts based on workload (normal vs ensemble).
+    """
     global _current_max_cache, _simulator_cache, _simulator_access_times
     
-    # Update cache size based on current workload
+    # Update cache size based on current workload (normal or ensemble)
     _update_cache_size()
     
     with _cache_lock:
@@ -454,35 +491,53 @@ def _trim_cache_to_normal():
         
         # If cache is too large, trim to target size keeping most recently used
         if cache_size > target_size:
-            # Sort by access time (most recent first)
+            # Sort by access time (most recent first) - LRU eviction
             sorted_models = sorted(_simulator_access_times.items(), key=lambda x: x[1], reverse=True)
-            # Keep only the most recently used models
+            # Keep only the most recently used models (up to target_size)
             models_to_keep = {model_id for model_id, _ in sorted_models[:target_size]}
             
             # Evict models not in the keep list
             models_to_evict = set(_simulator_cache.keys()) - models_to_keep
-            
-            # CRITICAL: Do not evict models with active references
-            models_to_evict = {m for m in models_to_evict if not _is_simulator_in_use(m)}
+    
+    # DEADLOCK PREVENTION: Get snapshot of ref counts OUTSIDE cache_lock
+    # Lock order must be: ref_lock -> cache_lock (consistent with simulate())
+    # If we acquired cache_lock first, then ref_lock, we'd deadlock with simulate()
+    with _simulator_ref_lock:
+        ref_counts_snapshot = dict(_simulator_ref_counts)
+    
+    # CRITICAL: Filter out models with active references (ref_count > 0)
+    # These simulators are actively being used - must NOT be evicted
+    # Use snapshot to avoid nested lock acquisition
+    models_to_evict = {m for m in models_to_evict if ref_counts_snapshot.get(m, 0) == 0}
+    
+    # Re-acquire cache_lock only to actually evict (if any models to evict)
+    if models_to_evict:
+        with _cache_lock:
+            # RACE CONDITION PROTECTION: Double-check models still exist and aren't in use
+            # Another thread may have evicted them or started using them since we checked
+            models_to_evict = {m for m in models_to_evict if m in _simulator_cache and ref_counts_snapshot.get(m, 0) == 0}
             
             evicted_count = len(models_to_evict)
             
-            # Remove from cache and clean up immediately (simulators not in use are safe to clean)
+            # Remove from cache and clean up immediately
+            # Simulators not in use (ref_count == 0) are safe to clean
             for model_id in models_to_evict:
                 simulator = _simulator_cache.get(model_id)
                 if simulator:
-                    # Final safety check: verify no active references
-                    if not _is_simulator_in_use(model_id):
+                    # Final safety check: verify no active references (use snapshot)
+                    if ref_counts_snapshot.get(model_id, 0) == 0:
                         _cleanup_simulator_safely(simulator)
                 del _simulator_cache[model_id]
                 if model_id in _simulator_access_times:
                     del _simulator_access_times[model_id]
-                # Clear ref count if exists
+                # Clear ref count (re-acquire lock for this operation)
                 with _simulator_ref_lock:
                     _simulator_ref_counts.pop(model_id, None)
-            
-            if evicted_count > 0:
-                gc.collect()  # Help GC reclaim memory
+        
+        # Do GC outside lock to avoid blocking other threads
+        # Holding locks during GC would serialize all threads
+        if evicted_count > 0:
+            gc.collect()  # Help GC reclaim memory from evicted simulators
 
 def _periodic_cache_trim():
     """Background thread that periodically trims cache and handles idle cleanup.
@@ -521,11 +576,17 @@ def _periodic_cache_trim():
             with _cache_lock:
                 cache_size = len(_simulator_cache)
                 target_size = _get_target_cache_size()  # Must be called while holding lock
+                # Get snapshot of cache keys while holding lock
+                cache_keys_snapshot = list(_simulator_cache.keys())
+            
+            # Get snapshot of ref counts BEFORE checking (prevents deadlock)
+            with _simulator_ref_lock:
+                ref_counts_snapshot = dict(_simulator_ref_counts)
             
             # If cache is larger than target, trim it
             if cache_size > target_size:
-                # Check if any models are currently in use before trimming
-                models_in_use = any(_is_simulator_in_use(mid) for mid in _simulator_cache.keys())
+                # Check if any models are currently in use before trimming (use snapshot to avoid nested locks)
+                models_in_use = any(ref_counts_snapshot.get(mid, 0) > 0 for mid in cache_keys_snapshot)
                 
                 if not models_in_use:
                     rss_before = _get_rss_memory_mb()
@@ -551,9 +612,7 @@ def _periodic_cache_trim():
                     if new_size > target_size:
                         # Cache trim didn't reduce size enough - log warning
                         # This can happen if models are in use (protected from eviction)
-                        if rss_after is not None and rss_before is not None:
-                            rss_delta = rss_before - rss_after
-                            print(f"WARNING: Cache trim incomplete: {new_size} > {target_size} (models may be in use)", flush=True)
+                        print(f"WARNING: Cache trim incomplete: {new_size} > {target_size} (models may be in use)", flush=True)
                     time.sleep(3)
                 else:
                     time.sleep(20)
@@ -592,15 +651,26 @@ def _start_cache_trim_thread():
 _start_cache_trim_thread()
 
 def _get_simulator(model):
-    """Get simulator for given model, with dynamic multi-simulator LRU cache."""
+    """
+    Get simulator for given model with dynamic multi-simulator LRU cache.
+    
+    Implements LRU eviction: when cache is full, evicts least recently used simulator
+    that is not currently in use (ref_count == 0). Uses reference counting to prevent
+    evicting simulators that are actively being used.
+    
+    DEADLOCK PREVENTION: Acquires ref_lock BEFORE cache_lock when checking ref counts.
+    Uses snapshots to avoid nested lock acquisition.
+    
+    PERFORMANCE: Fast path for cache hits. Expensive operations (file I/O, simulator
+    creation) done outside locks to reduce contention.
+    """
     global _simulator_cache, _simulator_access_times, _last_refresh_check, _current_max_cache
     now = time.time()
-    func_start = now
     
     # Start background cache trim thread if not already started
     _start_cache_trim_thread()
     
-    # Refresh GEFS data if needed
+    # Refresh GEFS data if needed (check every 5 minutes)
     currgefs = get_currgefs()
     if not currgefs or currgefs == "Unavailable" or now - _last_refresh_check > 300:
         refresh()
@@ -612,20 +682,23 @@ def _get_simulator(model):
     # Update cache size based on current workload (adaptive sizing)
     _update_cache_size()
     
-    # Trim cache if it's too large (safety check for memory leaks)
-    # The background thread handles periodic trimming, but we check here for safety
+    # Safety check: trim cache if it's too large (prevents memory leaks)
+    # Background thread handles periodic trimming, but we check here for safety
     with _cache_lock:
         cache_too_large = len(_simulator_cache) > MAX_SIMULATOR_CACHE_ENSEMBLE
+    
     if cache_too_large:
         _trim_cache_to_normal()
     
     with _cache_lock:
-        # Fast path: return cached simulator if available
+        # FAST PATH: Return cached simulator if available
         if model in _simulator_cache:
             simulator = _simulator_cache[model]
             # Verify simulator is still valid (wind_file.data hasn't been cleaned up)
+            # This handles race condition where simulator was evicted/cleaned up
             if simulator:
                 if not hasattr(simulator, 'wind_file') or simulator.wind_file is None:
+                    # Simulator was partially cleaned up - remove from cache
                     del _simulator_cache[model]
                     del _simulator_access_times[model]
                 elif getattr(simulator.wind_file, 'data', None) is None:
@@ -633,7 +706,7 @@ def _get_simulator(model):
                     del _simulator_cache[model]
                     del _simulator_access_times[model]
                 else:
-                    # Valid simulator - return it
+                    # Valid simulator - update access time and return
                     _simulator_access_times[model] = now
                     return simulator
             else:
@@ -645,27 +718,34 @@ def _get_simulator(model):
         cache_size = len(_simulator_cache)
         needs_eviction = cache_size >= _current_max_cache
     
-    # Cache miss - need to load new simulator
-    # Evict oldest if cache is full (only evict if not in use)
+    # CACHE MISS: Need to load new simulator
+    # If cache is full, evict oldest unused simulator first
     # Do expensive operations OUTSIDE the lock to reduce contention
     oldest_model = None
     if needs_eviction:
-        # Get access times snapshot outside lock
+        # Get access times snapshot (need to release lock to avoid holding it during sorting)
         with _cache_lock:
             access_times_snapshot = dict(_simulator_access_times)
         
-        # Sort and find candidate outside lock (no nested locks)
-        sorted_models = sorted(access_times_snapshot.items(), key=lambda x: x[1])
+        # DEADLOCK PREVENTION: Get snapshot of ref counts BEFORE checking
+        # Lock order must be: ref_lock -> cache_lock (consistent with simulate())
+        with _simulator_ref_lock:
+            ref_counts_snapshot = dict(_simulator_ref_counts)
+        
+        # Sort and find eviction candidate OUTSIDE locks (no nested locks)
+        # Find oldest simulator that is not in use (ref_count == 0)
+        sorted_models = sorted(access_times_snapshot.items(), key=lambda x: x[1])  # Oldest first
         for candidate_model, _ in sorted_models:
-            if not _is_simulator_in_use(candidate_model):
+            if ref_counts_snapshot.get(candidate_model, 0) == 0:
                 oldest_model = candidate_model
                 break
         
         # Re-acquire lock only to actually evict
         if oldest_model:
             with _cache_lock:
-                # Double-check it still exists and isn't in use (race condition protection)
-                if oldest_model in _simulator_cache and not _is_simulator_in_use(oldest_model):
+                # RACE CONDITION PROTECTION: Double-check it still exists and isn't in use
+                # Another thread may have evicted it or started using it since we checked
+                if oldest_model in _simulator_cache and ref_counts_snapshot.get(oldest_model, 0) == 0:
                     simulator = _simulator_cache.get(oldest_model)
                     if simulator:
                         _cleanup_simulator_safely(simulator)
@@ -707,10 +787,6 @@ def _get_simulator(model):
         _simulator_cache[model] = simulator
         _simulator_access_times[model] = now
     
-    total_get_sim = time.time() - func_start
-    if total_get_sim > 3.0:
-        pass
-    
     return simulator
 
 # Optimize coordinate transformations with vectorization-ready math
@@ -738,17 +814,12 @@ def simulate(simtime, lat, lon, rate, step, max_duration, alt, model, coefficien
     cache_key = _cache_key(simtime, lat, lon, rate, step, max_duration, alt, model, coefficient)
     cached_result = _get_cached_prediction(cache_key)
     if cached_result is not None:
-        cache_time = time.time() - func_start
         return cached_result
     
     # Acquire simulator reference (prevents cleanup while in use)
     _acquire_simulator_ref(model)
     try:
-        get_sim_start = time.time()
         simulator = _get_simulator(model)
-        get_sim_time = time.time() - get_sim_start
-        if get_sim_time > 1.0:
-            pass
         
         # Validate simulator before use (race condition protection)
         if not hasattr(simulator, 'wind_file') or simulator.wind_file is None:
@@ -786,10 +857,6 @@ def simulate(simtime, lat, lon, rate, step, max_duration, alt, model, coefficien
         
         # Cache successful result
         _cache_prediction(cache_key, path)
-        
-        total_time = time.time() - func_start
-        if total_time > 5.0:
-            pass
         
         return path
         

@@ -9,7 +9,6 @@ import math
 import os
 import time
 import threading
-import logging
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
@@ -180,32 +179,43 @@ class WindFile:
                 pass
 
     def _load_memmap_data(self, npz: np.lib.npyio.NpzFile, path: Path):
-        """Load data using memory-mapping for memory efficiency.
-        
-        PERFORMANCE: NPZ files are compressed (zip), so accessing npz['data'] requires
-        decompression which takes 6-9 seconds. We extract to an uncompressed .npy file
-        ONCE, then memory-map that file for fast subsequent access.
         """
-        import os
-        import logging
+        Load data using memory-mapping for memory efficiency.
+        
+        PERFORMANCE OPTIMIZATION: NPZ files are compressed (zip format), so accessing
+        npz['data'] requires decompression which takes 6-9 seconds per access. This is
+        too slow for repeated access during simulation.
+        
+        SOLUTION: Extract the data array to an uncompressed .npy file ONCE, then
+        memory-map that file for fast subsequent access. The extraction takes 6-9 seconds
+        the first time, but subsequent loads are instant (just memory-mapping).
+        
+        THREAD SAFETY: Uses per-file locks to prevent multiple threads from extracting
+        the same file simultaneously (which would waste time and disk I/O).
+        """
         memmap_path = Path(f"{path}.data.npy")
         temp_path = Path(f"{path}.data.npy.tmp")
         
-        # CRITICAL: Always use the lock when checking/loading the file to prevent race conditions
+        # THREAD SAFETY: Always use the lock when checking/loading the file
         # Multiple threads might try to load the same file simultaneously
+        # Without locking, we'd extract the same file multiple times (wasteful)
         lock = _get_memmap_lock(memmap_path)
         with lock:
-            # Check if extracted .npy file already exists (fast path)
+            # FAST PATH: Check if extracted .npy file already exists
+            # Another thread may have already extracted it
             if memmap_path.exists():
                 try:
                     # Verify file is not corrupted by checking its size
+                    # Corrupted files would cause errors during memory-mapping
                     file_size = memmap_path.stat().st_size
                     if file_size > 0:
+                        # Memory-map the existing file (instant, no decompression needed)
                         memmap_data = np.load(memmap_path, mmap_mode='r')
                         if memmap_data is not None:
                             return memmap_data
                 except (EOFError, OSError, ValueError) as e:
                     # Corrupted extraction file - delete and re-extract
+                    # This handles cases where extraction was interrupted or file system error
                     print(f"WARNING: Cached extraction corrupted: {memmap_path.name}, re-extracting", flush=True)
                     try:
                         memmap_path.unlink()
@@ -213,6 +223,7 @@ class WindFile:
                         pass
                 except Exception as e:
                     # Other errors - log and re-extract
+                    # Unknown error, safest to re-extract
                     try:
                         memmap_path.unlink()
                     except:
@@ -221,40 +232,46 @@ class WindFile:
             if 'data' not in npz:
                 raise KeyError(f"NPZ file {path} is missing 'data' key")
             
-            # Extract data array to uncompressed .npy file for fast memory-mapping
-            # Use temporary file first, then rename atomically to prevent corruption
-            extract_start = time.time()
+            # EXTRACTION: Extract data array to uncompressed .npy file for fast memory-mapping
+            # This is the expensive operation (6-9 seconds) but only happens once per file
             array = npz['data']
             memmap_path.parent.mkdir(parents=True, exist_ok=True)
             
-            # Write to temporary file first
+            # ATOMIC WRITE: Write to temporary file first, then rename atomically
+            # This prevents other threads from seeing a partially-written file
+            # If extraction fails, temp file is cleaned up and final file is never created
             try:
                 # Remove temp file if it exists (from previous failed extraction)
+                # Stale temp files indicate a previous crash or error
                 if temp_path.exists():
                     try:
                         temp_path.unlink()
                     except:
                         pass
                 
+                # Create memory-mapped array in write mode
+                # This allows us to write the large array efficiently
                 mm = open_memmap(temp_path, mode='w+', dtype=array.dtype, shape=array.shape)
-                mm[...] = array
-                mm.flush()  # Flush memory-mapped array to disk
-                del mm
-                del array
+                mm[...] = array  # Copy data from compressed NPZ to uncompressed .npy
+                mm.flush()  # Flush memory-mapped array to disk (ensures data is written)
+                del mm  # Close memory-mapped file
+                del array  # Free memory from NPZ array
                 
-                # Sync file to disk to ensure it's fully written before rename
+                # CRITICAL: Sync file to disk to ensure it's fully written before rename
+                # Without this, rename might happen before all data is flushed to disk
+                # This could cause corruption if process crashes between flush and rename
                 try:
                     with open(temp_path, 'rb') as f:
-                        os.fsync(f.fileno())
+                        os.fsync(f.fileno())  # Force write to disk
                 except:
                     pass
                 
-                # Atomically rename temp file to final file (prevents partial reads)
+                # ATOMIC RENAME: Rename temp file to final file (prevents partial reads)
+                # On most filesystems, rename is atomic - either succeeds completely or fails
+                # This ensures other threads never see a partially-written file
                 temp_path.rename(memmap_path)
-                
-                extract_time = time.time() - extract_start
             except Exception as e:
-                # Clean up temp file on error
+                # Clean up temp file on error (prevents accumulation of failed extractions)
                 try:
                     if temp_path.exists():
                         temp_path.unlink()
@@ -262,7 +279,9 @@ class WindFile:
                     pass
                 raise RuntimeError(f"Failed to extract NPZ data to {memmap_path}: {e}")
             
-            # Now memory-map the extracted file (still inside lock)
+            # MEMORY-MAP: Now memory-map the extracted file (still inside lock)
+            # This is fast (just creates a memory mapping, no data copy)
+            # The file is now available for fast access by this and other threads
             try:
                 memmap_data = np.load(memmap_path, mmap_mode='r')
                 if memmap_data is None:
@@ -270,6 +289,7 @@ class WindFile:
                 return memmap_data
             except (EOFError, OSError, ValueError) as e:
                 # File is corrupted - delete and raise error (will be retried by caller)
+                # This handles rare cases where extraction succeeded but file is unreadable
                 print(f"ERROR: Extracted file corrupted: {memmap_path.name}", flush=True)
                 try:
                     memmap_path.unlink()
@@ -321,36 +341,62 @@ class WindFile:
         return float(np.interp(pressure, self._interp_levels, self._interp_indices))
 
     def interpolate(self, lat, lon, level, time):
-        """Optimized 4D interpolation with filter caching."""
+        """
+        Optimized 4D trilinear interpolation with filter caching.
+        
+        Performs trilinear interpolation across 4 dimensions (lat, lon, pressure level, time)
+        to get wind vector at arbitrary coordinates. Uses cached filter arrays to avoid
+        repeated allocations (major performance win for ensemble workloads).
+        
+        ALGORITHM: Trilinear interpolation in 4D space
+        - Takes 2×2×2×2 = 16 data points surrounding the target coordinates
+        - Computes weighted average using fractional parts as weights
+        - Returns 2D wind vector (u, v components)
+        """
         if self.data is None:
             raise RuntimeError("WindFile data is None - file may not have loaded correctly or was cleaned up")
         
+        # Convert continuous coordinates to integer indices and fractional parts
         lat_i, lon_i, level_i, time_i = int(lat), int(lon), int(level), int(time)
         lat_frac = lat - lat_i
         lon_frac = lon - lon_i
         level_frac = level - level_i
         time_frac = time - time_i
         
-        # Round fractional parts to reduce cache size (0.001 precision ~100m for lat/lon)
+        # CACHE KEY: Round fractional parts to reduce cache size
+        # 0.001 precision ≈ 100m for lat/lon, sufficient for interpolation accuracy
+        # Without rounding, cache would have millions of unique keys (wasteful)
         frac_key = (round(lat_frac, 3), round(lon_frac, 3), round(level_frac, 3), round(time_frac, 3))
         
         # Get or create filter arrays from cache
+        # Filter arrays are the interpolation weights - expensive to compute, cheap to cache
         if frac_key not in self._filter_cache:
             # Limit cache size to prevent memory growth
+            # In ensemble mode, cache is larger (2000 vs 1000) since all models share it
             if len(self._filter_cache) >= self._filter_cache_max_size:
                 # Clear cache if too large (simple FIFO eviction)
+                # More sophisticated eviction (LRU) would be slower
                 self._filter_cache.clear()
             
+            # Create interpolation filter arrays for each dimension
+            # Each filter is a 2-element array [1-frac, frac] reshaped for broadcasting
+            # These are the weights for trilinear interpolation
             self._filter_cache[frac_key] = (
-                np.array([1-level_frac, level_frac], dtype=np.float32).reshape(1, 1, 2, 1, 1),
-                np.array([1-time_frac, time_frac], dtype=np.float32).reshape(1, 1, 1, 2, 1),
-                np.array([1-lat_frac, lat_frac], dtype=np.float32).reshape(2, 1, 1, 1, 1),
-                np.array([1-lon_frac, lon_frac], dtype=np.float32).reshape(1, 2, 1, 1, 1)
+                np.array([1-level_frac, level_frac], dtype=np.float32).reshape(1, 1, 2, 1, 1),  # Pressure level filter
+                np.array([1-time_frac, time_frac], dtype=np.float32).reshape(1, 1, 1, 2, 1),   # Time filter
+                np.array([1-lat_frac, lat_frac], dtype=np.float32).reshape(2, 1, 1, 1, 1),     # Latitude filter
+                np.array([1-lon_frac, lon_frac], dtype=np.float32).reshape(1, 2, 1, 1, 1)      # Longitude filter
             )
         
         pressure_filter, time_filter, lat_filter, lon_filter = self._filter_cache[frac_key]
 
+        # Extract 2×2×2×2 cube of data points surrounding target coordinates
+        # Shape: (2, 2, 2, 2, 2) where last dimension is [u, v] wind components
         cube = self.data[lat_i:lat_i+2, lon_i:lon_i+2, level_i:level_i+2, time_i:time_i+2, :]
+        
+        # Perform trilinear interpolation: multiply cube by filters and sum
+        # Broadcasting automatically handles the 4D interpolation
+        # Result is 2D vector [u, v] wind components
         return np.sum(cube * lat_filter * lon_filter * pressure_filter * time_filter, axis=(0,1,2,3))
 
     def alt_to_hpa(self, altitude):
