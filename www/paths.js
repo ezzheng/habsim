@@ -208,20 +208,43 @@ function clearEndPinZoomListener() {
  * - Renders polylines on global map object
  */
 function makepaths(btype, allpaths, isControl = false) {
+    // Validate inputs
+    if (!map) {
+        console.warn('makepaths: map not initialized');
+        return;
+    }
+    if (!allpaths || !Array.isArray(allpaths)) {
+        console.warn('makepaths: invalid allpaths', allpaths);
+        return;
+    }
+    
     // Cache raw path data for waypoint visualization
     rawpathcache.push(allpaths);
     
     // Convert each path array to Google Maps Polyline
     for (index in allpaths) {
+        if (!allpaths[index] || !Array.isArray(allpaths[index]) || allpaths[index].length === 0) {
+            continue; // Skip empty path segments
+        }
+        
         var pathpoints = [];
 
         // Convert [time, lat, lon, alt] points to {lat, lng} objects for Google Maps
         for (point in allpaths[index]) {
+            var pointData = allpaths[index][point];
+            if (!pointData || !Array.isArray(pointData) || pointData.length < 3) {
+                continue; // Skip invalid points
+            }
             var position = {
-                lat: allpaths[index][point][1],
-                lng: allpaths[index][point][2],
+                lat: pointData[1],
+                lng: pointData[2],
             };
             pathpoints.push(position);
+        }
+        
+        // Skip if no valid points were found
+        if (pathpoints.length === 0) {
+            continue;
         }
         
         // Control model (gec00) gets thicker, solid line; perturbed models get thinner lines
@@ -708,6 +731,12 @@ function addMultiEndPin(payload, hourOffset, color) {
 }
 
 function showpath(path, modelId = 1, hourOffset = null, endpointColor = null) {
+    // Validate path data
+    if (!path || !Array.isArray(path)) {
+        console.warn('showpath: invalid path data', path);
+        return;
+    }
+    
     // STANDARD mode: path[0] = rise, path[1] = empty (no equilibrium), path[2] = fall
     var rise = path[0];
     var equil = [];
@@ -718,6 +747,8 @@ function showpath(path, modelId = 1, hourOffset = null, endpointColor = null) {
     const isControl = (modelId === 0);
     // Track model id for this path entry to support end pin exclusion logic
     rawpathcacheModels.push(modelId);
+    
+    console.log(`showpath: modelId=${modelId}, rise points=${rise?.length || 0}, fall points=${fall?.length || 0}`);
     makepaths(btype, allpaths, isControl);
 
     // Determine the last point of this model's trajectory and set end pin when applicable
