@@ -212,7 +212,7 @@ def _idle_memory_cleanup(idle_duration):
             models_in_use = any(_is_simulator_in_use(mid) for mid in _simulator_cache.keys())
         
         # Skip cleanup if models are in use or idle time is too short
-        if models_in_use or idle_duration < 300:  # Require 5 minutes of true idle
+        if models_in_use or idle_duration < 900:  # Require 15 minutes of true idle
             return False
         
         rss_before = _get_rss_memory_mb()
@@ -502,9 +502,9 @@ def _periodic_cache_trim():
             else:
                 time_since_last_cleanup = now - _last_idle_cleanup
             
-            # Very conservative: only run cleanup if idle > 5 minutes and no models in use
+            # Very conservative: only run cleanup if idle > 15 minutes and no models in use
             # This prevents cleanup during active work
-            should_run_idle_cleanup = (idle_duration >= 300 and 
+            should_run_idle_cleanup = (idle_duration >= 900 and 
                                       (time_since_last_cleanup >= _IDLE_CLEAN_COOLDOWN or _last_idle_cleanup == 0))
             
             if should_run_idle_cleanup:
