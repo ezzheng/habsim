@@ -488,7 +488,13 @@ function initMapControls() {
         controlsContainer.appendChild(searchControl);
         
         // Close menus when clicking outside
+        // Ignore clicks with modifier keys (Ctrl/Cmd/Option) - these are keyboard shortcuts, not intentional outside clicks
         document.addEventListener('click', (e) => {
+            // Skip if modifier keys are pressed (prevents closing when using keyboard shortcuts)
+            if (e.ctrlKey || e.metaKey || e.altKey) {
+                return;
+            }
+            
             const pacContainer = document.querySelector('.pac-container');
             const clickedInPac = pacContainer && pacContainer.contains(e.target);
             
