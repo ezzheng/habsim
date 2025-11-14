@@ -709,9 +709,37 @@ def _get_simulator(model):
                     del _simulator_cache[model]
                     del _simulator_access_times[model]
                 else:
-                    # Valid simulator - update access time and return
-                    _simulator_access_times[model] = now
-                    return simulator
+                    # CRITICAL: Validate cached simulator matches current GEFS cycle
+                    # Prevents using stale simulators after cycle change during prefetch
+                    # Extract GEFS timestamp from wind_file path (e.g., "2025110312_00.npz" -> "2025110312")
+                    try:
+                        wind_file_path = getattr(simulator.wind_file, '_source_path', None)
+                        if wind_file_path:
+                            # Extract timestamp from filename (format: YYYYMMDDHH_NN.npz)
+                            import os
+                            filename = os.path.basename(str(wind_file_path))
+                            if '_' in filename:
+                                cached_gefs = filename.split('_')[0]
+                                if cached_gefs != currgefs:
+                                    # Cached simulator is from different GEFS cycle - invalidate it
+                                    del _simulator_cache[model]
+                                    del _simulator_access_times[model]
+                                else:
+                                    # Valid simulator matching current cycle - update access time and return
+                                    _simulator_access_times[model] = now
+                                    return simulator
+                            else:
+                                # Can't extract timestamp from filename - return simulator (safer to use than reject)
+                                _simulator_access_times[model] = now
+                                return simulator
+                        else:
+                            # No source path (BytesIO or other) - return simulator (assume valid)
+                            _simulator_access_times[model] = now
+                            return simulator
+                    except Exception:
+                        # If validation fails, remove from cache and recreate (safe fallback)
+                        del _simulator_cache[model]
+                        del _simulator_access_times[model]
             else:
                 # Invalid simulator - remove it
                 del _simulator_cache[model]

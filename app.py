@@ -113,9 +113,20 @@ def _ensure_ensemble_optimizations(worker_pid):
     """No-op: cache automatically adapts when 10+ models detected."""
     pass
 
-def _prefetch_model(model_id, worker_pid):
-    """Prefetch a single model (downloads file and builds simulator)."""
+def _prefetch_model(model_id, worker_pid, expected_gefs=None):
+    """Prefetch a single model (downloads file and builds simulator).
+    
+    Args:
+        model_id: Model ID to prefetch
+        worker_pid: Worker process ID for logging
+        expected_gefs: Expected GEFS timestamp (validates cycle hasn't changed)
+    """
     try:
+        # Check if GEFS cycle changed during prefetch (abort if so)
+        if expected_gefs:
+            current_gefs = simulate.get_currgefs()
+            if current_gefs and current_gefs != expected_gefs:
+                raise RuntimeError(f"GEFS cycle changed during prefetch: expected {expected_gefs}, got {current_gefs}")
         simulate._get_simulator(model_id)
     except Exception as e:
         print(f"WARNING: [WORKER {worker_pid}] Prefetch failed for model {model_id}: {e}", flush=True)
@@ -140,12 +151,16 @@ def wait_for_prefetch(model_ids, worker_pid, timeout=120, min_models=12):
     from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
     start_time = time.time()
     
+    # Capture current GEFS cycle to detect changes during prefetch
+    # If cycle changes mid-prefetch, abort to prevent loading stale data
+    initial_gefs = simulate.get_currgefs()
+    
     # Submit all models for prefetch in parallel
     # This ensures models 13-21 are actively downloading while simulations run
     executor = ThreadPoolExecutor(max_workers=min(10, len(model_ids)))
     try:
         prefetch_futures = {
-            executor.submit(_prefetch_model, model_id, worker_pid): model_id
+            executor.submit(_prefetch_model, model_id, worker_pid, initial_gefs): model_id
             for model_id in model_ids
         }
         

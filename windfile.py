@@ -82,6 +82,13 @@ class WindFile:
         """
         normalized_path = _normalize_path(path)
         
+        # Store source path for GEFS cycle validation (extract timestamp from filename)
+        # Format: YYYYMMDDHH_NN.npz -> extract YYYYMMDDHH to validate against currgefs
+        if isinstance(normalized_path, Path):
+            self._source_path = normalized_path
+        else:
+            self._source_path = None
+        
         # Lock entire file loading to prevent zipfile contention
         file_lock = _get_file_load_lock(normalized_path)
         with file_lock:
