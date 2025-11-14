@@ -405,8 +405,25 @@ def wait_for_prefetch(model_ids, worker_pid, timeout=120, min_models=12):
                         if disk_available:
                             print(f"INFO: [WORKER {worker_pid}] Current cycle {current_gefs} files exist in disk cache (S3 deleted, but cache available). Using cached files.", flush=True)
                         else:
-                            # Neither cycle available - this is a critical error
-                            raise RuntimeError(f"GEFS cycle transition error: New cycle {pending_cycle} files not ready after {max_wait_time}s, and current cycle {current_gefs} files are missing from both S3 and disk cache. Cannot proceed with prefetch.")
+                            # Neither cycle available in S3 - try one final check with longer wait for pending cycle
+                            # This handles edge case where files are just slightly delayed
+                            print(f"WARNING: [WORKER {worker_pid}] Neither cycle available in S3. Performing final check for pending cycle {pending_cycle} with extended wait...", flush=True)
+                            time.sleep(10.0)  # Wait 10 more seconds
+                            if simulate._check_cycle_files_available(pending_cycle, check_disk_cache=False, retry_for_consistency=True):
+                                print(f"INFO: [WORKER {worker_pid}] Pending cycle {pending_cycle} files are now available after extended wait. Using pending cycle.", flush=True)
+                                current_gefs = pending_cycle
+                                try:
+                                    simulate.refresh()
+                                    current_gefs = simulate.get_currgefs()
+                                except Exception:
+                                    pass
+                            elif simulate._check_cycle_files_available(pending_cycle, check_disk_cache=True):
+                                # Files exist in disk cache (downloaded by another worker)
+                                print(f"INFO: [WORKER {worker_pid}] Pending cycle {pending_cycle} files exist in disk cache. Using cached files.", flush=True)
+                                current_gefs = pending_cycle
+                            else:
+                                # Neither cycle available - this is a critical error
+                                raise RuntimeError(f"GEFS cycle transition error: New cycle {pending_cycle} files not ready after {max_wait_time + 10}s, and current cycle {current_gefs} files are missing from both S3 and disk cache. Cannot proceed with prefetch.")
                 elif not disk_available:
                     # Files exist in S3 but not in disk cache - this is OK, they'll be downloaded
                     print(f"INFO: [WORKER {worker_pid}] New cycle {pending_cycle} files not ready after {max_wait_time}s. Using current cycle {current_gefs} (files exist in S3, will download to cache)", flush=True)
@@ -427,8 +444,24 @@ def wait_for_prefetch(model_ids, worker_pid, timeout=120, min_models=12):
                     except Exception:
                         pass
                 else:
-                    # Both cycles unavailable - this is a critical error
-                    raise RuntimeError(f"GEFS cycle transition error: New cycle {pending_cycle} files not ready after {max_wait_time}s, and current cycle is unavailable. Cannot proceed with prefetch.")
+                    # Current cycle unavailable and pending cycle still not ready - try one final check
+                    print(f"WARNING: [WORKER {worker_pid}] Current cycle unavailable and pending cycle {pending_cycle} still not ready. Performing final check with extended wait...", flush=True)
+                    time.sleep(10.0)  # Wait 10 more seconds
+                    if simulate._check_cycle_files_available(pending_cycle, check_disk_cache=False, retry_for_consistency=True):
+                        print(f"INFO: [WORKER {worker_pid}] Pending cycle {pending_cycle} files are now available after extended wait. Using pending cycle.", flush=True)
+                        current_gefs = pending_cycle
+                        try:
+                            simulate.refresh()
+                            current_gefs = simulate.get_currgefs()
+                        except Exception:
+                            pass
+                    elif simulate._check_cycle_files_available(pending_cycle, check_disk_cache=True):
+                        # Files exist in disk cache (downloaded by another worker)
+                        print(f"INFO: [WORKER {worker_pid}] Pending cycle {pending_cycle} files exist in disk cache. Using cached files.", flush=True)
+                        current_gefs = pending_cycle
+                    else:
+                        # Both cycles unavailable - this is a critical error
+                        raise RuntimeError(f"GEFS cycle transition error: New cycle {pending_cycle} files not ready after {max_wait_time + 10}s, and current cycle is unavailable. Cannot proceed with prefetch.")
     
     # ========================================================================
     # PHASE 3: Finalize cycle value and acquire ref counts atomically
