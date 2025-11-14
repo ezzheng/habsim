@@ -547,7 +547,8 @@ def _periodic_cache_trim():
             # Regular cache trimming - check if cache is too large and trim if needed
             with _cache_lock:
                 cache_size = len(_simulator_cache)
-                target_size = _get_target_cache_size()
+                # _get_target_cache_size() must be called while holding _cache_lock
+            target_size = _get_target_cache_size()
             
             # If cache is larger than target, trim it
             if cache_size > target_size:
