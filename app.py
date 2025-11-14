@@ -290,7 +290,12 @@ def _wait_for_pending_cycle(pending_cycle, worker_pid, max_wait=120):
         
         # Check files less frequently (every 2s) to reduce S3 API calls
         if waited - last_file_check >= wait_interval:
-            if simulate._check_cycle_files_available(pending_cycle, check_disk_cache=False, retry_for_consistency=True):
+            if simulate._check_cycle_files_available(
+                pending_cycle,
+                check_disk_cache=False,
+                retry_for_consistency=True,
+                verify_content=True,
+            ):
                 print(f"INFO: [WORKER {worker_pid}] Cycle {pending_cycle} files available after {waited:.1f}s", flush=True)
                 return True
             last_file_check = waited
@@ -454,12 +459,22 @@ def wait_for_prefetch(model_ids, worker_pid, timeout=120, min_models=12):
                 raise RuntimeError(f"Pending cycle {pending_cycle} files not ready after timeout, and current cycle unavailable")
             
             # Check if current cycle files exist (may have been deleted)
-            s3_available = simulate._check_cycle_files_available(current_gefs, check_disk_cache=False, retry_for_consistency=True)
+            s3_available = simulate._check_cycle_files_available(
+                current_gefs,
+                check_disk_cache=False,
+                retry_for_consistency=True,
+                verify_content=True,
+            )
             disk_available = simulate._check_cycle_files_available(current_gefs, check_disk_cache=True)
             
             if not s3_available and not disk_available:
                 # Try pending cycle one more time
-                if simulate._check_cycle_files_available(pending_cycle, check_disk_cache=False, retry_for_consistency=True):
+                if simulate._check_cycle_files_available(
+                    pending_cycle,
+                    check_disk_cache=False,
+                    retry_for_consistency=True,
+                    verify_content=True,
+                ):
                     current_gefs = pending_cycle
                     simulate.refresh()
                     current_gefs = simulate.get_currgefs()
@@ -476,11 +491,14 @@ def wait_for_prefetch(model_ids, worker_pid, timeout=120, min_models=12):
     if not current_gefs or current_gefs == "Unavailable":
         raise RuntimeError("GEFS cycle unavailable - cannot proceed with prefetch")
     
-    # Verify files are available (skip if cycle was just updated - refresh() already verified)
-    # This prevents redundant S3 checks and reduces latency
-    if not cycle_just_updated:
-        if not simulate._check_cycle_files_available(current_gefs, check_disk_cache=False, retry_for_consistency=True):
-            raise RuntimeError(f"Cycle {current_gefs} files not available in S3")
+    # Verify files are available and readable before we start loading
+    if not simulate._check_cycle_files_available(
+        current_gefs,
+        check_disk_cache=False,
+        retry_for_consistency=True,
+        verify_content=True,
+    ):
+        raise RuntimeError(f"Cycle {current_gefs} files not available in S3")
     
     # Phase 4: Acquire ref counts atomically with cycle validation
     prefetch_gefs = _acquire_ref_counts_atomic(model_ids, worker_pid, current_gefs)

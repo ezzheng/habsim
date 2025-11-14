@@ -236,7 +236,13 @@ def refresh():
             for attempt in range(max_retries):
                 try:
                     # Use improved file check with S3 eventual consistency handling
-                    files_available = _check_cycle_files_available(new_gefs, max_models=21, check_disk_cache=False, retry_for_consistency=(attempt < max_retries - 1))
+                    files_available = _check_cycle_files_available(
+                        new_gefs,
+                        max_models=21,
+                        check_disk_cache=False,
+                        retry_for_consistency=(attempt < max_retries - 1),
+                        verify_content=True,
+                    )
                     
                     if files_available:
                         # All files available - proceed with update
@@ -323,7 +329,7 @@ def get_currgefs():
     """Get current GEFS timestamp (reads from shared file)."""
     return _read_currgefs()
 
-def _check_cycle_files_available(gefs_cycle, max_models=21, check_disk_cache=False, retry_for_consistency=False):
+def _check_cycle_files_available(gefs_cycle, max_models=21, check_disk_cache=False, retry_for_consistency=False, verify_content=False):
     """Check if all model files exist for a given GEFS cycle.
     
     Args:
@@ -331,6 +337,7 @@ def _check_cycle_files_available(gefs_cycle, max_models=21, check_disk_cache=Fal
         max_models: Number of models to check (default: 21 for ensemble)
         check_disk_cache: If True, also verify files exist in disk cache (default: False, only S3)
         retry_for_consistency: If True, retry with exponential backoff for S3 eventual consistency (default: False)
+        verify_content: If True, read first byte via Range request to ensure file is readable
     
     Returns:
         True if all files exist, False otherwise
@@ -357,7 +364,26 @@ def _check_cycle_files_available(gefs_cycle, max_models=21, check_disk_cache=Fal
                 file_exists = False
                 try:
                     _STATUS_S3_CLIENT.head_object(Bucket=_BUCKET, Key=test_file)
-                    file_exists = True
+                    if verify_content:
+                        try:
+                            _STATUS_S3_CLIENT.get_object(Bucket=_BUCKET, Key=test_file, Range='bytes=0-1')
+                        except ClientError as content_error:
+                            content_code = content_error.response.get('Error', {}).get('Code', '')
+                            if content_code in ('404', 'NoSuchKey'):
+                                file_exists = False
+                            elif retry_for_consistency and retry_attempt < max_retries - 1:
+                                file_exists = None
+                            else:
+                                raise
+                        except Exception:
+                            if retry_for_consistency and retry_attempt < max_retries - 1:
+                                file_exists = None
+                            else:
+                                raise
+                        else:
+                            file_exists = True
+                    else:
+                        file_exists = True
                 except ClientError as e:
                     error_code = e.response.get('Error', {}).get('Code', '')
                     # 404/NoSuchKey means file doesn't exist (not a consistency issue)

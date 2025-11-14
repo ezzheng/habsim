@@ -316,7 +316,7 @@ data: {"completed": 100, "total": 441, "percentage": 23, "status": "simulating"}
 
 When a new GEFS cycle is detected, the system follows a strict protocol to ensure consistency:
 
-1. **File Verification**: Verify all 21 model files exist in S3 (retries for eventual consistency)
+1. **File Verification**: Verify all 21 model files exist *and are readable* in S3 (Range-read sanity check with retries)
 2. **Cache Invalidation**: Set `_cache_invalidation_cycle` to signal other workers
 3. **Grace Period**: Wait 3 seconds for S3 propagation across regions (optimized from 5s)
 4. **Update currgefs**: Write new cycle to shared file (other workers can now see it)
@@ -328,8 +328,8 @@ This order ensures other workers see `invalidation_cycle` before `currgefs`, all
 
 **1. Optimized Grace Period Handling**
 - `refresh()` sets `invalidation_cycle` before `currgefs` (3s grace period, reduced from 5s)
-- `wait_for_prefetch()` skips stabilization wait if cycle was just updated (already stable)
-- Prevents redundant checks and reduces latency after cycle change
+- `wait_for_prefetch()` still waits out the transition but now *always* re-verifies files post-refresh
+- Prevents redundant checks while ensuring freshly announced cycles are actually downloadable
 
 **2. Atomic Ref Count Acquisition**
 - Validates cycle consistency before and after acquiring ref counts
@@ -344,7 +344,7 @@ This order ensures other workers see `invalidation_cycle` before `currgefs`, all
 - Falls back gracefully if timeout (uses current cycle or cached files)
 
 **4. Cycle Consistency Validation**
-- Validates cycle before and after each model prefetch
+- Validates cycle before and after each model prefetch and refuses to proceed if any readable-file check fails
 - Checks cache invalidation cycle before loading simulators (prevents stale data)
 - Aborts prefetch if cycle changes mid-prefetch (prevents mixed cycles)
 - Early abort if 5+ models fail with cycle change errors (likely cycle change)
