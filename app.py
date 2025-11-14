@@ -39,7 +39,7 @@ logging.getLogger('werkzeug').addFilter(StatusLogFilter())
 logging.getLogger('gunicorn.access').addFilter(StatusLogFilter())
 
 LOGIN_PASSWORD = os.environ.get('HABSIM_PASSWORD')
-MAX_CONCURRENT_ENSEMBLE_CALLS = 4
+MAX_CONCURRENT_ENSEMBLE_CALLS = 3
 _ENSEMBLE_COUNTER_FILE = '/tmp/ensemble_active_count'
 _ENSEMBLE_COUNTER_LOCK_FILE = '/tmp/ensemble_active_count.lock'
 
