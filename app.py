@@ -980,6 +980,17 @@ def spaceshot():
     worker_pid = os.getpid()
     simulate.record_activity()
     
+    # CRITICAL: Check ensemble counter limit before processing
+    # This prevents too many simultaneous ensemble requests from overwhelming the system
+    counter_incremented = False
+    if not _increment_ensemble_counter():
+        return make_response(
+            jsonify({
+                "error": f"Too many concurrent ensemble requests. Maximum is {MAX_CONCURRENT_ENSEMBLE_CALLS}. Please try again later."
+            }), 
+            429  # Too Many Requests
+        )
+    counter_incremented = True  # Only set if increment succeeded
     
     ENSEMBLE_WEIGHT = 2.0
     start_time = time.time()
@@ -1036,7 +1047,7 @@ def spaceshot():
         'ensemble_total': total_ensemble,
         'montecarlo_completed': 0,
         'montecarlo_total': total_montecarlo,
-        'status': 'downloading'  # Initial status: downloading models
+        'status': 'loading'  # Initial status: loading models
     }
     # Store in both in-memory dict (fast) and file (shared across workers)
     with _progress_lock:
@@ -1096,8 +1107,8 @@ def spaceshot():
     
     try:
         # Prefetch first few models to warm cache (adaptive behavior will handle the rest)
-        # Update status to show we're downloading
-        update_progress(request_id, status='downloading')
+        # Update status to show we're loading
+        update_progress(request_id, status='loading')
         wait_for_prefetch(model_ids, worker_pid)
         
         # Switch to simulating status once prefetch is done
@@ -1221,9 +1232,11 @@ def spaceshot():
         paths = [None] * len(model_ids)
         landing_positions = []
     finally:
-        # CRITICAL: Always decrement counter, even if ensemble failed
+        # CRITICAL: Decrement counter only if we incremented it
         # Counter tracks active ensemble calls across all workers
-        _decrement_ensemble_counter()
+        # If counter check failed (returned early), counter was never incremented, so don't decrement
+        if counter_incremented:
+            _decrement_ensemble_counter()
         
         # Trim cache back to normal size after ensemble completes
         # Cache automatically expanded during ensemble, now shrink it back
@@ -1321,7 +1334,7 @@ def progress_stream():
             total = progress['total']
             percentage = round((current_completed / total) * 100) if total > 0 else 0
             
-            # Check if status changed (downloading -> simulating -> complete)
+            # Check if status changed (loading -> simulating -> complete)
             status = progress.get('status', 'simulating')
             status_changed = 'status' in progress and (not initial_sent or status != getattr(generate, '_last_status', None))
             

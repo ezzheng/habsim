@@ -2,7 +2,8 @@
 GEFS (Global Ensemble Forecast System) data management from AWS S3.
 
 Handles downloading, caching, and serving GEFS weather model files.
-Implements LRU cache with disk persistence, retry logic, and connection pooling.
+Uses S3 TransferManager for multipart parallel downloads (faster, more resilient).
+Implements LRU cache with disk persistence and connection pooling.
 Provides load_gefs() for memory-mapped file access and open_gefs() for text files.
 """
 import io
@@ -16,6 +17,7 @@ import threading
 import boto3
 from botocore.exceptions import ClientError, NoCredentialsError
 from botocore.config import Config
+from boto3.s3.transfer import TransferConfig
 
 # Try to load from .env file if available (non-fatal)
 def _load_env_file():
@@ -88,8 +90,16 @@ _STATUS_S3_CLIENT = boto3.client(
     config=_STATUS_S3_CONFIG,
 )
 
-# Timeout constants (kept for compatibility, but S3 uses boto3 config)
-_DEFAULT_TIMEOUT = (3, 60)
+# S3 TransferManager configuration for multipart parallel downloads
+# Optimized for large files (300-450MB): uses 8MB chunks with 16 parallel threads
+# TransferManager handles retries automatically, so we don't need manual retry logic
+_TRANSFER_CONFIG = TransferConfig(
+    multipart_threshold=1024 * 1024 * 8,  # 8MB - files larger than this use multipart
+    max_concurrency=16,  # Parallel threads for multipart downloads
+    multipart_chunksize=1024 * 1024 * 8,  # 8MB chunks
+    use_threads=True  # Use threads for parallel chunk downloads
+)
+
 _CACHEABLE_SUFFIXES = (".npz", ".npy")
 # Use Railway persistent volume if available, fallback to tempdir
 _default_cache_dir = None
@@ -100,11 +110,11 @@ else:
 _CACHE_DIR = Path(os.environ.get("HABSIM_CACHE_DIR", _default_cache_dir))
 _CACHE_DIR.mkdir(parents=True, exist_ok=True)
 _CACHE_LOCK = threading.Lock()
-_CHUNK_SIZE = 1024 * 1024
 _MAX_CACHED_FILES = 30  # Allow 30 weather files (~9.2GB) - increased for 32GB RAM system, handles full 21-model ensemble + buffer
 
 # Cache for whichgefs to reduce connection pool pressure (updates every 6 hours, but status checks every 5 seconds)
-_whichgefs_cache = {"value": None, "timestamp": 0, "ttl": 60}  # Cache for 60 seconds
+# Uses ETag from head_object to detect changes without downloading body
+_whichgefs_cache = {"value": None, "timestamp": 0, "ttl": 60, "etag": None}  # Cache for 60 seconds, includes ETag
 _whichgefs_lock = threading.Lock()
 
 # Track files currently being downloaded to prevent premature deletion during cleanup
@@ -139,35 +149,58 @@ def listdir_gefs():
         return []
 
 def open_gefs(file_name):
-    """Open GEFS file from S3. Caches whichgefs to reduce connection pool pressure."""
+    """Open GEFS file from S3. Uses head_object for whichgefs to reduce bandwidth/cost."""
     if file_name == 'whichgefs':
         now = time.time()
+        # Fast path: return cached value if still valid
         if (_whichgefs_cache["value"] is not None and 
             now - _whichgefs_cache["timestamp"] < _whichgefs_cache["ttl"]):
             return io.StringIO(_whichgefs_cache["value"])
         
+        # Try to acquire lock (non-blocking first, then blocking with timeout)
         if not _whichgefs_lock.acquire(blocking=False):
+            # Another thread is fetching - return cached value if available
             if _whichgefs_cache["value"] is not None:
                 return io.StringIO(_whichgefs_cache["value"])
+            # Wait for lock with timeout
             if _whichgefs_lock.acquire(blocking=True, timeout=1.0):
                 try:
+                    # Double-check cache after acquiring lock
                     if (_whichgefs_cache["value"] is not None and 
                         now - _whichgefs_cache["timestamp"] < _whichgefs_cache["ttl"]):
                         return io.StringIO(_whichgefs_cache["value"])
                 finally:
                     _whichgefs_lock.release()
+            # If still no cache, return empty (file may not exist)
             if _whichgefs_cache["value"] is not None:
                 return io.StringIO(_whichgefs_cache["value"])
             return io.StringIO("")
         
         try:
+            # Double-check cache after acquiring lock (another thread may have updated it)
             if (_whichgefs_cache["value"] is not None and 
                 now - _whichgefs_cache["timestamp"] < _whichgefs_cache["ttl"]):
                 return io.StringIO(_whichgefs_cache["value"])
             
             try:
-                response = _STATUS_S3_CLIENT.get_object(Bucket=_BUCKET, Key=file_name)
-                content = response['Body'].read().decode("utf-8")
+                # Use head_object to check if file exists and get ETag (reduces bandwidth/cost)
+                # head_object returns metadata (ETag, Last-Modified) without body transfer
+                response = _STATUS_S3_CLIENT.head_object(Bucket=_BUCKET, Key=file_name)
+                
+                # Get ETag to check if file changed
+                etag = response.get('ETag', '').strip('"')
+                
+                # If we have cached value and ETag matches, return cached value (file hasn't changed)
+                if (_whichgefs_cache["value"] is not None and 
+                    _whichgefs_cache["etag"] == etag):
+                    # File hasn't changed - return cached value
+                    _whichgefs_cache["timestamp"] = now  # Update timestamp
+                    return io.StringIO(_whichgefs_cache["value"])
+                
+                # File changed or not cached - fetch new content
+                # whichgefs is tiny (~10 bytes), so this is still efficient
+                content_response = _STATUS_S3_CLIENT.get_object(Bucket=_BUCKET, Key=file_name)
+                content = content_response['Body'].read().decode("utf-8")
             except ClientError as e:
                 error_code = e.response.get('Error', {}).get('Code', 'Unknown')
                 error_msg = e.response.get('Error', {}).get('Message', str(e))
@@ -180,12 +213,15 @@ def open_gefs(file_name):
                 print(f"ERROR: Unexpected error reading {file_name} from S3: {type(e).__name__}: {e}", flush=True)
                 raise
             
+            # Update cache with new content and ETag
             _whichgefs_cache["value"] = content
             _whichgefs_cache["timestamp"] = now
+            _whichgefs_cache["etag"] = etag
             return io.StringIO(content)
         finally:
             _whichgefs_lock.release()
     
+    # For non-whichgefs files, use get_object (normal text files)
     try:
         response = _S3_CLIENT.get_object(Bucket=_BUCKET, Key=file_name)
         content = response['Body'].read().decode("utf-8")
@@ -335,7 +371,8 @@ def _cleanup_old_cache_files():
 def _ensure_cached(file_name: str) -> Path:
     """Ensure a GEFS file is cached on disk, downloading from S3 if necessary.
     
-    Implements robust S3 download with retry logic, file integrity verification,
+    Uses S3 TransferManager for multipart parallel downloads (faster, more resilient).
+    TransferManager handles retries automatically. Implements file integrity verification
     and proper cleanup. Returns path to cached file for memory-mapped access.
     
     Raises:
@@ -449,228 +486,138 @@ def _ensure_cached(file_name: str) -> Path:
     # During ensemble, 21 models try to download simultaneously - too many for S3
     # Semaphore limits to 4 concurrent downloads at a time across all workers
     # This prevents connection pool exhaustion and S3 throttling
+    # NOTE: TransferManager's internal parallel chunking (16 threads) does NOT conflict
+    # with this semaphore - the semaphore limits downloads, TransferManager parallelizes chunks within each download
     _download_semaphore.acquire()
     try:
         download_start = time.time()
+        tmp_path = cache_path.with_suffix(cache_path.suffix + ".tmp")
         
-        max_retries = 5 if file_name.endswith('.npz') else (3 if is_large_file else 1)
-        last_error = None
-        
-        for attempt in range(max_retries):
-            # Clean up any incomplete temp files from previous attempts
-            # BUT: Only clean up OUR OWN temp files (from previous attempts by this worker)
-            # Don't delete temp files that might belong to other workers
-            tmp_path = cache_path.with_suffix(cache_path.suffix + ".tmp")
-            if tmp_path.exists() and attempt > 0:
-                # Only clean up on retry attempts (attempt > 0)
-                # This ensures we're cleaning up OUR OWN failed attempt, not another worker's
-                try:
-                    # Check file age - if it's very old (>5 minutes), it's probably stale
-                    file_age = time.time() - tmp_path.stat().st_mtime
-                    if file_age > 300:  # 5 minutes
-                        tmp_path.unlink()
-                    elif attempt == 1:
-                        # On first retry, clean up our own temp file from previous attempt
-                        tmp_path.unlink()
-                except Exception as e:
-                    # File might have been deleted by another worker or doesn't exist
-                    pass
-            
+        # Clean up any stale temp files from previous failed attempts
+        if tmp_path.exists():
             try:
-                # Get object metadata first to check if it exists and get size
-                # This helps distinguish between fatal (file not found) and retryable errors
+                # Check file age - if it's very old (>5 minutes), it's probably stale
+                file_age = time.time() - tmp_path.stat().st_mtime
+                if file_age > 300:  # 5 minutes
+                    tmp_path.unlink()
+            except Exception:
+                pass  # File might have been deleted by another worker
+        
+        # Get object metadata first to check if it exists and get size
+        # This helps distinguish between fatal (file not found) and retryable errors
+        try:
+            head_response = _S3_CLIENT.head_object(Bucket=_BUCKET, Key=file_name)
+            expected_size = head_response.get('ContentLength')
+        except ClientError as e:
+            error_code = e.response.get('Error', {}).get('Code', '')
+            if error_code in ('404', 'NoSuchKey'):
+                # File not found - fatal error, don't retry
+                error_msg = f"File not found in S3: {file_name}"
+                print(f"ERROR: {error_msg}", flush=True)
+                _release_file_lock(lock_fd)
+                raise FileNotFoundError(f"{error_msg}. The model file may not have been uploaded yet, or the model timestamp may be incorrect. Check S3 storage or verify the model timestamp in 'whichgefs'.")
+            # Other S3 errors (403, 500, etc.) - retryable
+            _release_file_lock(lock_fd)
+            raise IOError(f"S3 metadata error: {e}")
+        
+        # Use TransferManager for multipart parallel downloads
+        # TransferManager handles retries automatically, so we don't need manual retry logic
+        # It uses multipart downloads for files > 8MB with 16 parallel threads per download
+        try:
+            tmp_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            # Download file using TransferManager (multipart parallel download)
+            # This is much faster and more resilient than manual streaming
+            _S3_CLIENT.download_file(
+                Bucket=_BUCKET,
+                Key=file_name,
+                Filename=str(tmp_path),
+                Config=_TRANSFER_CONFIG
+            )
+        except ClientError as s3_error:
+            # S3 API errors - clean up partial file and re-raise
+            if tmp_path.exists():
                 try:
-                    head_response = _S3_CLIENT.head_object(Bucket=_BUCKET, Key=file_name)
-                    expected_size = head_response.get('ContentLength')
-                except ClientError as e:
-                    error_code = e.response.get('Error', {}).get('Code', '')
-                    if error_code in ('404', 'NoSuchKey'):
-                        # File not found - fatal error, don't retry
-                        error_msg = f"File not found in S3: {file_name}"
-                        print(f"ERROR: {error_msg}", flush=True)
-                        raise FileNotFoundError(f"{error_msg}. The model file may not have been uploaded yet, or the model timestamp may be incorrect. Check S3 storage or verify the model timestamp in 'whichgefs'.")
-                    # Other S3 errors (403, 500, etc.) - retryable
-                    raise IOError(f"S3 metadata error: {e}")
-                
-                # Download file with streaming
-                # Use streaming mode to handle large files efficiently
-                response = None
-                body = None
+                    tmp_path.unlink()
+                except:
+                    pass
+            error_code = s3_error.response.get('Error', {}).get('Code', '')
+            if error_code in ('404', 'NoSuchKey'):
+                error_msg = f"File not found in S3: {file_name}"
+                print(f"ERROR: {error_msg}", flush=True)
+                _release_file_lock(lock_fd)
+                raise FileNotFoundError(f"{error_msg}. The model file may not have been uploaded yet, or the model timestamp may be incorrect. Check S3 storage or verify the model timestamp in 'whichgefs'.")
+            # Other S3 errors - TransferManager will retry automatically, but if it fails, raise
+            _release_file_lock(lock_fd)
+            raise IOError(f"S3 download error ({error_code}): {s3_error}")
+        except Exception as download_error:
+            # Other errors (network, disk, etc.) - clean up and re-raise
+            if tmp_path.exists():
                 try:
-                    response = _S3_CLIENT.get_object(Bucket=_BUCKET, Key=file_name)
-                    body = response['Body']
-                    
-                    # Configure socket timeout for large files (if supported)
-                    # Some response bodies may not support this, so check first
-                    if hasattr(body, 'set_socket_timeout'):
-                        try:
-                            body.set_socket_timeout(1800)  # 30 minutes
-                        except (AttributeError, TypeError):
-                            # Non-critical: socket timeout not supported, continue anyway
-                            pass
-                    
-                    # Create temp file and download with proper resource management
-                    tmp_path.parent.mkdir(parents=True, exist_ok=True)
-                    bytes_written = 0
-                    last_chunk_time = time.time()
-                    
-                    # Use context manager for file handle to ensure it's always closed
-                    with open(tmp_path, 'wb') as fh:
-                        try:
-                            while True:
-                                chunk = body.read(_CHUNK_SIZE)
-                                if not chunk:
-                                    break
-                                
-                                current_time = time.time()
-                                
-                                # Check for connection timeout (no data for 120 seconds)
-                                # This detects stalled downloads (retryable)
-                                if is_large_file and (current_time - last_chunk_time) > 120:
-                                    raise IOError(f"Download stalled: no data received for 120 seconds (retryable)")
-                                
-                                fh.write(chunk)
-                                bytes_written += len(chunk)
-                                last_chunk_time = current_time
-                                
-                                # Flush periodically for large files to ensure data is written to disk
-                                # This prevents data loss if process crashes mid-download
-                                if is_large_file and bytes_written % (10 * 1024 * 1024) < _CHUNK_SIZE:
-                                    fh.flush()
-                            
-                            # Flush and sync to disk before closing (ensures data is persisted)
-                            fh.flush()
-                            try:
-                                # os.fsync() ensures data is written to disk, not just buffer
-                                # This is critical for large files to prevent data loss
-                                os.fsync(fh.fileno())
-                            except (OSError, AttributeError):
-                                # Non-critical: fsync failed (e.g., on some file systems)
-                                # Data should still be written due to flush()
-                                pass
-                        except Exception as write_error:
-                            # Write error during download - clean up partial file
-                            # This is a retryable error
-                            raise IOError(f"Error writing {file_name} (wrote {bytes_written} bytes): {write_error}")
-                except ClientError as s3_error:
-                    # S3 API errors (throttling, network issues, etc.) - retryable
-                    error_code = s3_error.response.get('Error', {}).get('Code', '')
-                    if error_code in ('403', '429', '500', '502', '503', '504'):
-                        # Throttling or server errors - definitely retryable
-                        raise IOError(f"S3 error ({error_code}): {s3_error}")
-                    else:
-                        # Other S3 errors - log and retry
-                        raise IOError(f"S3 error: {s3_error}")
-                except IOError:
-                    # Re-raise IOErrors (stall detection, write errors) - already retryable
-                    raise
-                except Exception as unexpected_error:
-                    # Unexpected errors - log and treat as retryable
-                    raise IOError(f"Unexpected download error: {unexpected_error}")
-                finally:
-                    # Ensure S3 response body is closed to free resources
-                    if body is not None:
-                        try:
-                            body.close()
-                        except:
-                            pass
-                
-                # FILE INTEGRITY VERIFICATION: Verify download completed successfully
-                # This is a critical step to ensure file integrity before committing
-                # We verify multiple aspects to catch different failure modes
-                if not tmp_path.exists():
-                    raise IOError(f"Download failed: temp file not created for {file_name} (request succeeded but no file written)")
-                
-                actual_size = tmp_path.stat().st_size
-                if actual_size == 0:
-                    # Empty file - fatal error, don't retry (file exists but is corrupted)
-                    # This indicates S3 returned success but wrote no data
-                    raise IOError(f"Download failed: file {file_name} is empty (fatal)")
-                
-                # Verify file size matches expected size (if available from S3 metadata)
-                # This catches incomplete downloads that weren't detected during streaming
-                # Size mismatch indicates network interruption or S3 issue
-                if expected_size and actual_size != expected_size:
-                    # Size mismatch - retryable error (download was incomplete)
-                    raise IOError(f"Download incomplete: {file_name} expected {expected_size} bytes, got {actual_size} (retryable)")
-                
-                # Final verification: ensure file is readable and non-empty
-                # This catches edge cases where file exists but is corrupted or too small
-                # Model files are ~300MB, so anything < 1KB is definitely wrong
-                if actual_size < 1024:  # Files should be at least 1KB
-                    raise IOError(f"Download failed: file {file_name} is suspiciously small ({actual_size} bytes) (fatal)")
-                
-                # Log successful download
-                size_mb = actual_size / (1024 * 1024)
-                download_time = time.time() - download_start
-                print(f"INFO: Downloaded {file_name} ({size_mb:.1f} MB) in {download_time:.1f}s", flush=True)
-                
-                # Validate NPZ file structure before committing
-                if file_name.endswith('.npz'):
-                    try:
-                        import numpy as np
-                        test_npz = np.load(tmp_path)
-                        test_npz.close()  # Close immediately after validation
-                    except Exception as e:
-                        raise IOError(f"Downloaded file {file_name} is corrupted (invalid NPZ): {e}")
-                
-                # Success - break out of retry loop
-                break
-            except FileNotFoundError:
-                # File not found in S3 - fatal error, don't retry
-                # Clean up any partial download and release lock
+                    tmp_path.unlink()
+                except:
+                    pass
+            _release_file_lock(lock_fd)
+            raise IOError(f"Download error for {file_name}: {download_error}")
+        
+        # FILE INTEGRITY VERIFICATION: Verify download completed successfully
+        # TransferManager handles retries, but we still verify file integrity
+        if not tmp_path.exists():
+            _release_file_lock(lock_fd)
+            raise IOError(f"Download failed: temp file not created for {file_name}")
+        
+        actual_size = tmp_path.stat().st_size
+        if actual_size == 0:
+            # Empty file - fatal error
+            if tmp_path.exists():
+                try:
+                    tmp_path.unlink()
+                except:
+                    pass
+            _release_file_lock(lock_fd)
+            raise IOError(f"Download failed: file {file_name} is empty (fatal)")
+        
+        # Verify file size matches expected size (if available from S3 metadata)
+        if expected_size and actual_size != expected_size:
+            # Size mismatch - retryable error (download was incomplete)
+            if tmp_path.exists():
+                try:
+                    tmp_path.unlink()
+                except:
+                    pass
+            _release_file_lock(lock_fd)
+            raise IOError(f"Download incomplete: {file_name} expected {expected_size} bytes, got {actual_size} (retryable)")
+        
+        # Final verification: ensure file is readable and non-empty
+        # Model files are ~300MB, so anything < 1KB is definitely wrong
+        if actual_size < 1024:  # Files should be at least 1KB
+            if tmp_path.exists():
+                try:
+                    tmp_path.unlink()
+                except:
+                    pass
+            _release_file_lock(lock_fd)
+            raise IOError(f"Download failed: file {file_name} is suspiciously small ({actual_size} bytes) (fatal)")
+        
+        # Log successful download
+        size_mb = actual_size / (1024 * 1024)
+        download_time = time.time() - download_start
+        print(f"INFO: Downloaded {file_name} ({size_mb:.1f} MB) in {download_time:.1f}s", flush=True)
+        
+        # Validate NPZ file structure before committing
+        if file_name.endswith('.npz'):
+            try:
+                import numpy as np
+                test_npz = np.load(tmp_path)
+                test_npz.close()  # Close immediately after validation
+            except Exception as e:
                 if tmp_path.exists():
                     try:
                         tmp_path.unlink()
                     except:
                         pass
                 _release_file_lock(lock_fd)
-                # Re-raise immediately (no retry for missing files)
-                raise
-            except IOError as e:
-                # Retryable errors: network issues, incomplete downloads, write errors, stalls
-                # Clean up incomplete download before retry
-                if tmp_path.exists():
-                    try:
-                        tmp_path.unlink()
-                    except:
-                        pass
-                last_error = e
-                if attempt < max_retries - 1:
-                    # Wait before retry (exponential backoff: 2s, 4s, 8s, 16s, 32s)
-                    wait_time = 2 ** (attempt + 1)
-                    # Check if error message indicates fatal vs retryable
-                    error_str = str(e).lower()
-                    if 'fatal' in error_str:
-                        # Fatal error - don't retry
-                        print(f"ERROR: Download failed with fatal error for {file_name}: {e}", flush=True)
-                        _release_file_lock(lock_fd)
-                        raise
-                else:
-                    # Retryable error - log and retry
-                    time.sleep(wait_time)
-            except Exception as e:
-                # Unexpected errors - treat as retryable but log as warning
-                # Clean up incomplete download
-                if tmp_path.exists():
-                    try:
-                        tmp_path.unlink()
-                    except:
-                        pass
-                last_error = e
-                if attempt < max_retries - 1:
-                    # Retry unexpected errors
-                    wait_time = 2 ** (attempt + 1)
-                    time.sleep(wait_time)
-                else:
-                    # Last attempt failed - release lock and clean up
-                    print(f"ERROR: Download failed after {max_retries} attempts for {file_name}: {last_error}", flush=True)
-                    _release_file_lock(lock_fd)
-                    raise IOError(f"Download failed: temp file not created for {file_name} after {max_retries} attempts: {last_error}")
-        
-        # If we got here without error, file should exist (successful download broke out of loop)
-        # Reconstruct tmp_path since it was defined in the loop scope
-        tmp_path = cache_path.with_suffix(cache_path.suffix + ".tmp")
+                raise IOError(f"Downloaded file {file_name} is corrupted (invalid NPZ): {e}")
         
         # CRITICAL: Check if final file already exists (another worker might have completed the download)
         # This handles race conditions where multiple workers download the same file
