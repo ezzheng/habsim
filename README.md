@@ -42,6 +42,7 @@ GET /sim/spaceshot?timestamp=1763077920&lat=37.3553&lon=-121.8763&alt=24&equil=3
 - **Monte Carlo**: 420 parameter perturbations for probability density mapping
 - **Multi Mode**: Sequential simulations at different launch times
 - **Real-time Progress**: Server-Sent Events (SSE) for progress tracking
+- **Idempotent Requests**: Duplicate ensemble requests reuse in-progress results
 - **Adaptive Caching**: Auto-expands cache for ensemble workloads (10 → 30 simulators)
 - **Progressive Prefetch**: Waits for first 12 models, continues rest in background
 - **GEFS Cycle Protection**: Dual validation prevents stale data during cycle changes
@@ -106,13 +107,13 @@ Single model trajectory simulation (three phases: ascent, coast, descent).
 **Response**: `[[rise_path], [coast_path], [fall_path]]`
 
 #### `GET /sim/spaceshot`
-Ensemble + Monte Carlo simulation with progress tracking.
+Ensemble + Monte Carlo simulation with progress tracking and idempotent deduplication.
 
 **Parameters**: Same as `/sim/singlezpb`, plus:
 - `num_perturbations` (int): Monte Carlo perturbations (1-100, default: 20)
 - `coeff` (float): Floating coefficient (0.5-1.5, default: 1.0)
 
-**Response**: 
+**Response**:
 ```json
 {
   "paths": [...],           // 21 ensemble trajectories
@@ -122,9 +123,10 @@ Ensemble + Monte Carlo simulation with progress tracking.
 ```
 
 **Flow**:
-1. **Prefetch Phase**: Downloads first 12 models (progressive prefetch)
-2. **Simulation Phase**: Runs 21 ensemble + 420 Monte Carlo simulations in parallel
-3. **Progress**: Real-time updates via SSE stream
+1. **Deduplication**: Identical requests reuse in-progress results (up to 15min)
+2. **Prefetch Phase**: Downloads first 12 models (progressive prefetch)
+3. **Simulation Phase**: Runs 21 ensemble + 420 Monte Carlo simulations in parallel
+4. **Progress**: Real-time updates via SSE stream with collision-safe file writes
 
 #### `GET /sim/progress-stream?request_id=...`
 Server-Sent Events stream for real-time progress updates.
@@ -155,7 +157,9 @@ data: {"completed": 100, "total": 441, "percentage": 23, "status": "simulating"}
 
 **Key Functions**:
 - `singlezpb()`: Three-phase simulation (ascent → coast → descent)
-- `spaceshot()`: Ensemble + Monte Carlo coordinator
+- `spaceshot()`: Ensemble + Monte Carlo coordinator with idempotent deduplication
+- `_acquire_inflight_request()`: Prevents duplicate ensemble runs (shared across workers)
+- `_complete_inflight_request()`: Publishes results to waiting clients
 - `wait_for_prefetch()`: Progressive prefetch (waits for 12 models, continues rest in background)
 - `_prefetch_model()`: Prefetches single model with GEFS cycle validation
 - `_generate_perturbations()`: Monte Carlo parameter generation
@@ -173,6 +177,7 @@ data: {"completed": 100, "total": 441, "percentage": 23, "status": "simulating"}
 - Status: `'loading'` (prefetch) → `'simulating'` (running)
 - Batched updates (every 10 completions) to reduce lock contention
 - Dual storage: in-memory (fast) + file-based (shared across workers)
+- Collision-safe file writes using NamedTemporaryFile + fsync
 - 30-second cleanup delay after completion
 
 **GEFS Cycle Protection**:
@@ -324,6 +329,11 @@ When a new GEFS cycle is detected, the system follows a strict protocol to ensur
 
 This order ensures other workers see `invalidation_cycle` before `currgefs`, allowing them to detect and wait for cycle transitions properly.
 
+**Recent Improvements**:
+- **Cycle Stabilization Timeout**: Increased from 6s to 12s, downgraded log level to INFO for less noise
+- **Refresh Synchronization**: Even when `whichgefs` unchanged, syncs invalidation cycle to prevent timeout
+- **Streamlined Logging**: Condensed multi-line messages into single info-packed lines
+
 ### Protection Mechanisms
 
 **1. Optimized Grace Period Handling**
@@ -466,6 +476,11 @@ habsim/
 ```
 
 ### Key Design Decisions
+
+**Idempotent Ensemble Requests**:
+- Identical requests reuse in-progress results (up to 15min timeout)
+- Prevents duplicate work when multiple clients/tabs request same simulation
+- Cross-worker coordination via shared file-based event tracking
 
 **Adaptive Caching**:
 - Cache automatically expands from 10 → 30 simulators when 10+ ensemble models detected
