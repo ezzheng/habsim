@@ -189,14 +189,11 @@ def open_gefs(file_name):
 def load_gefs(file_name):
     """Load GEFS file from cache or download from S3.
     Returns path to cached file for memory-mapped access."""
-    print(f"DEBUG: load_gefs() called for {file_name}", flush=True)
     load_start = time.time()
     
     if _should_cache(file_name):
-        print(f"DEBUG: load_gefs() file should be cached, calling _ensure_cached()", flush=True)
         result = str(_ensure_cached(file_name))
         load_time = time.time() - load_start
-        print(f"DEBUG: load_gefs() completed for {file_name}, took {load_time:.2f}s", flush=True)
         if load_time > 5.0:
             print(f"WARNING: [PERF] load_gefs() slow: {file_name}, time={load_time:.2f}s", flush=True)
         return result
@@ -336,11 +333,9 @@ def _ensure_cached(file_name: str) -> Path:
         FileNotFoundError: If file doesn't exist in S3 (fatal, no retry)
         IOError: For retryable errors (network, incomplete downloads, etc.)
     """
-    print(f"DEBUG: _ensure_cached() called for {file_name}", flush=True)
     cache_path = _CACHE_DIR / file_name
     
     if cache_path.exists():
-        print(f"DEBUG: _ensure_cached() file exists in cache: {cache_path}", flush=True)
         try:
             if file_name.endswith('.npz'):
                 import numpy as np
@@ -360,12 +355,10 @@ def _ensure_cached(file_name: str) -> Path:
 
     with _CACHE_LOCK:
         if cache_path.exists():
-            print(f"DEBUG: _ensure_cached() file exists after lock check: {cache_path}", flush=True)
             cache_path.touch()
             return cache_path
 
         # Clean up old files before downloading new one
-        print(f"DEBUG: _ensure_cached() file not in cache, starting download for {file_name}", flush=True)
         cleanup_start = time.time()
         _cleanup_old_cache_files()
         cleanup_time = time.time() - cleanup_start

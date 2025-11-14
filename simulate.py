@@ -111,18 +111,14 @@ def _read_currgefs():
             with open(_CURRGEFS_FILE, 'r') as f:
                 content = f.read().strip()
                 if content:
-                    print(f"DEBUG: _read_currgefs() read: '{content}' from {_CURRGEFS_FILE}", flush=True)
                     return content
-        else:
-            print(f"DEBUG: _read_currgefs() file doesn't exist: {_CURRGEFS_FILE}", flush=True)
-    except Exception as e:
-        print(f"DEBUG: _read_currgefs() exception: {e}", flush=True)
+    except Exception:
+        pass
     return "Unavailable"
 
 def _write_currgefs(value):
     """Write currgefs to shared file using atomic write (thread-safe, process-safe)."""
     try:
-        print(f"DEBUG: _write_currgefs() writing '{value}' to {_CURRGEFS_FILE}", flush=True)
         _CURRGEFS_FILE.parent.mkdir(parents=True, exist_ok=True)
         # Atomic write: write to temp file, then rename (atomic on most filesystems)
         temp_file = _CURRGEFS_FILE.with_suffix('.tmp')
@@ -132,23 +128,18 @@ def _write_currgefs(value):
             os.fsync(f.fileno())  # Ensure written to disk
         # Atomic rename (replaces existing file atomically)
         temp_file.replace(_CURRGEFS_FILE)
-        print(f"DEBUG: _write_currgefs() successfully wrote '{value}'", flush=True)
-    except Exception as e:
-        print(f"DEBUG: _write_currgefs() exception: {e}", flush=True)
+    except Exception:
+        pass
 
 def refresh():
     """Refresh GEFS timestamp from S3 and update shared file."""
     try:
-        print(f"DEBUG: refresh() starting, calling open_gefs('whichgefs')", flush=True)
         f = open_gefs('whichgefs')
         new_gefs = f.readline().strip()
         f.close()
-        print(f"DEBUG: refresh() read from S3: '{new_gefs}'", flush=True)
         
         old_gefs = _read_currgefs()
-        print(f"DEBUG: refresh() old_gefs='{old_gefs}', new_gefs='{new_gefs}'", flush=True)
         if new_gefs and new_gefs != old_gefs:
-            print(f"DEBUG: refresh() values differ, writing new value", flush=True)
             _write_currgefs(new_gefs)
             reset()
             _prediction_cache.clear()
@@ -157,14 +148,9 @@ def refresh():
             if old_gefs and old_gefs != "Unavailable":
                 _cleanup_old_model_files(old_gefs)
             
-            print(f"DEBUG: refresh() completed successfully", flush=True)
             return True
-        else:
-            print(f"DEBUG: refresh() no change needed", flush=True)
     except Exception as e:
         print(f"ERROR: refresh() failed: {e}", flush=True)
-        import traceback
-        print(f"ERROR: refresh() traceback: {traceback.format_exc()}", flush=True)
     return False
 
 def get_currgefs():
@@ -694,20 +680,15 @@ def _get_simulator(model):
     _start_cache_trim_thread()
     
     # Refresh GEFS data if needed
-    print(f"DEBUG: _get_simulator(model={model}) starting, calling get_currgefs()", flush=True)
     currgefs = get_currgefs()
-    print(f"DEBUG: _get_simulator() currgefs='{currgefs}', _last_refresh_check={now - _last_refresh_check:.1f}s ago", flush=True)
     if not currgefs or currgefs == "Unavailable" or now - _last_refresh_check > 300:
-        print(f"DEBUG: _get_simulator() calling refresh()", flush=True)
         refresh()
         _last_refresh_check = now
         currgefs = get_currgefs()
-        print(f"DEBUG: _get_simulator() after refresh, currgefs='{currgefs}'", flush=True)
         if not currgefs or currgefs == "Unavailable":
             raise RuntimeError(f"GEFS timestamp not available after refresh (currgefs='{currgefs}'). Cannot load model files.")
     
     # Update cache size based on current workload (adaptive sizing)
-    print(f"DEBUG: _get_simulator() updating cache size", flush=True)
     _update_cache_size()
     
     # Trim cache if it's too large (safety check for memory leaks)
@@ -715,12 +696,10 @@ def _get_simulator(model):
     with _cache_lock:
         cache_too_large = len(_simulator_cache) > MAX_SIMULATOR_CACHE_ENSEMBLE
     if cache_too_large:
-        print(f"DEBUG: _get_simulator() cache too large, trimming", flush=True)
         _trim_cache_to_normal()
     
     with _cache_lock:
         # Fast path: return cached simulator if available
-        print(f"DEBUG: _get_simulator() checking cache for model {model}", flush=True)
         if model in _simulator_cache:
             simulator = _simulator_cache[model]
             # Verify simulator is still valid (wind_file.data hasn't been cleaned up)
@@ -742,7 +721,6 @@ def _get_simulator(model):
                 del _simulator_access_times[model]
         
         # Cache miss - need to load new simulator
-        print(f"DEBUG: _get_simulator() cache miss for model {model}, loading new simulator", flush=True)
         # Evict oldest if cache is full (only evict if not in use)
         if len(_simulator_cache) >= _current_max_cache:
             # Find oldest model that's not in use
@@ -770,11 +748,8 @@ def _get_simulator(model):
     
     try:
         model_file = f'{currgefs}_{str(model).zfill(2)}.npz'
-        print(f"DEBUG: _get_simulator() loading model file: {model_file}", flush=True)
         wind_file_path = load_gefs(model_file)
-        print(f"DEBUG: _get_simulator() model file loaded, creating WindFile", flush=True)
         wind_file = WindFile(wind_file_path, preload=preload_arrays)
-        print(f"DEBUG: _get_simulator() WindFile created", flush=True)
         
         # Use shared ElevationFile instance when preloading (all simulators use same elevation data)
         if preload_arrays:  # Ensemble workload detected
