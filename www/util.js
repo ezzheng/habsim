@@ -255,10 +255,9 @@ function initMapControls() {
             if (autocompleteInitialized) return;
             if (!searchInputContainer.classList.contains('expanded')) return;
             
-            // Track modifier key presses to prevent unwanted autocomplete repositioning
-            let modifierKeyPressed = false;
-            let modifierKeyTimeout = null;
-            let cachedInputRect = null; // Cache last known good position (when focused, no modifier keys)
+            // Cache input position to prevent autocomplete shifting when modifier keys are pressed
+            let cachedInputRect = null;
+            let positionLocked = false;
             
             if (typeof google === 'undefined' || !google.maps || !google.maps.places || !google.maps.places.Autocomplete) {
                 console.warn('Places library not loaded');
@@ -332,31 +331,17 @@ function initMapControls() {
                         const pacContainer = document.querySelector('.pac-container');
                         if (!pacContainer || !searchInput) return;
                         
+                        // Skip repositioning if position is locked and we have a cached position
+                        if (positionLocked && cachedInputRect) return;
+                        
                         const hasText = searchInput.value.trim().length > 0;
                         const isMobile = window.innerWidth <= 768;
                         
-                        // Use cached position when modifier keys are pressed (prevents shifting)
-                        // Otherwise, get fresh position and update cache
+                        // Get input position - use cache if position is locked, otherwise update cache
                         let inputRect;
-                        const isFocused = document.activeElement === searchInput;
-                        
-                        if (modifierKeyPressed && cachedInputRect) {
-                            // Modifier keys pressed - use cached position to prevent shifting
-                            inputRect = cachedInputRect;
-                        } else if (isFocused && !modifierKeyPressed) {
-                            // Input focused, no modifier keys - get fresh position and update cache
-                            inputRect = searchInput.getBoundingClientRect();
-                            cachedInputRect = {
-                                left: inputRect.left,
-                                top: inputRect.top,
-                                bottom: inputRect.bottom,
-                                width: inputRect.width
-                            };
-                        } else if (cachedInputRect) {
-                            // Input not focused or modifier keys pressed - use cached position
+                        if (positionLocked && cachedInputRect) {
                             inputRect = cachedInputRect;
                         } else {
-                            // Fallback: get fresh position if no cache available
                             inputRect = searchInput.getBoundingClientRect();
                             cachedInputRect = {
                                 left: inputRect.left,
@@ -405,48 +390,29 @@ function initMapControls() {
                     }, 50);
                 });
                 
-                // Track modifier key presses to prevent autocomplete repositioning
+                // Lock position when modifier keys are pressed (prevents autocomplete from shifting)
                 searchInput.addEventListener('keydown', (e) => {
                     if (e.ctrlKey || e.metaKey || e.altKey) {
-                        // Ensure cache is set before modifier keys cause any changes
-                        // On desktop, input might stay focused, so cache current position
-                        if (!modifierKeyPressed) {
-                            const rect = searchInput.getBoundingClientRect();
-                            cachedInputRect = {
-                                left: rect.left,
-                                top: rect.top,
-                                bottom: rect.bottom,
-                                width: rect.width
-                            };
+                        if (!positionLocked) {
+                            // Cache position immediately before any layout changes
+                            cachedInputRect = searchInput.getBoundingClientRect();
+                            positionLocked = true;
                         }
-                        modifierKeyPressed = true;
-                        // Clear any existing timeout
-                        if (modifierKeyTimeout) {
-                            clearTimeout(modifierKeyTimeout);
-                        }
-                        // Reset flag after modifier keys released
-                        modifierKeyTimeout = setTimeout(() => {
-                            modifierKeyPressed = false;
-                        }, 100);
                     }
                 });
                 
                 searchInput.addEventListener('keyup', (e) => {
                     if (!e.ctrlKey && !e.metaKey && !e.altKey) {
-                        modifierKeyPressed = false;
-                        if (modifierKeyTimeout) {
-                            clearTimeout(modifierKeyTimeout);
-                            modifierKeyTimeout = null;
+                        positionLocked = false;
+                        // Update cache with fresh position after modifier keys released
+                        if (document.activeElement === searchInput) {
+                            styleAutocomplete();
                         }
                     }
                 });
                 
                 searchInput.addEventListener('blur', () => {
-                    // Ignore blur if modifier keys are pressed (prevents unwanted repositioning)
-                    if (modifierKeyPressed) {
-                        return;
-                    }
-                    
+                    positionLocked = false;
                     setTimeout(() => {
                         const pacContainer = document.querySelector('.pac-container');
                         if (pacContainer && !pacContainer.contains(document.activeElement)) {
@@ -456,13 +422,17 @@ function initMapControls() {
                 });
                 
                 searchInput.addEventListener('focus', () => {
-                    // Update cache with fresh position when input regains focus
+                    positionLocked = false;
                     styleAutocomplete();
                 });
                 
-                window.addEventListener('resize', styleAutocomplete);
+                window.addEventListener('resize', () => {
+                    positionLocked = false;
+                    styleAutocomplete();
+                });
                 
                 const observer = new MutationObserver((mutations) => {
+                    if (positionLocked) return; // Skip repositioning during modifier key press
                     mutations.forEach((mutation) => {
                         mutation.addedNodes.forEach((node) => {
                             if (node.nodeType === 1) {
