@@ -506,6 +506,12 @@ def wait_for_prefetch(model_ids, worker_pid, timeout=120, min_models=12):
     except (AttributeError, NameError):
         pass
     
+    # Cold-start hint: ensure next N simulator loads preload arrays even if cache is empty
+    try:
+        simulate.force_preload_for_next_models(len(model_ids))
+    except Exception as preload_hint_error:
+        print(f"WARNING: [WORKER {worker_pid}] Failed to set force-preload hint: {preload_hint_error}", flush=True)
+    
     print(f"INFO: [WORKER {worker_pid}] Starting prefetch with cycle: {prefetch_gefs}", flush=True)
     
     # Phase 5: Submit prefetch tasks (cycle validated, ref counts acquired)

@@ -44,6 +44,10 @@ _elevation_lock = threading.Lock()
 _shared_elevation_file = None
 _shared_elevation_file_lock = threading.Lock()
 
+# Force preloading hint (ensures cold ensemble loads still preload their wind arrays)
+_force_preload_lock = threading.Lock()
+_force_preload_remaining = 0
+
 # Shared currgefs storage across workers (file-based on persistent volume)
 _CURRGEFS_FILE = None
 if Path("/app/data").exists():  # Railway persistent volume
@@ -128,6 +132,33 @@ def _write_currgefs(value):
         temp_file.replace(_CURRGEFS_FILE)
     except Exception:
         pass
+
+def force_preload_for_next_models(model_count: int):
+    """Force the next N simulator loads to preload arrays (ensemble cold-start hint)."""
+    if not isinstance(model_count, int) or model_count <= 0:
+        return
+    global _force_preload_remaining
+    with _force_preload_lock:
+        _force_preload_remaining += model_count
+
+def _clear_forced_preload():
+    """Reset forced preload hints (called after cache resets)."""
+    global _force_preload_remaining
+    with _force_preload_lock:
+        _force_preload_remaining = 0
+
+def _has_forced_preload_hint() -> bool:
+    with _force_preload_lock:
+        return _force_preload_remaining > 0
+
+def _consume_forced_preload_slot() -> bool:
+    """Consume a forced preload slot after a simulator is successfully built."""
+    global _force_preload_remaining
+    with _force_preload_lock:
+        if _force_preload_remaining > 0:
+            _force_preload_remaining -= 1
+            return True
+    return False
 
 def refresh():
     """Refresh GEFS cycle from S3 and update shared file atomically.
@@ -448,6 +479,9 @@ def reset(cycle=None):
     # Light garbage collection to help free memory
     gc.collect()
 
+    # Ensure we don't carry forced preload hints across cycles (cold start only)
+    _clear_forced_preload()
+
 
 def record_activity():
     """Record that the worker handled a request (used for idle cleanup)."""
@@ -621,13 +655,16 @@ def _count_ensemble_models():
     return len([m for m in _simulator_cache.keys() if isinstance(m, int) and m < 21])
 
 def _should_preload_arrays():
-    """Auto-detect if we should preload arrays based on cache size.
-    Preloading is faster (CPU-bound) but uses more memory.
-    Returns True if cache has many models (ensemble workload), False otherwise."""
+    """Auto-detect if we should preload arrays.
+    
+    Returns:
+        Tuple[bool, bool]: (should_preload, forced_hint_used)
+    """
+    if _has_forced_preload_hint():
+        return True, True
+    
     with _cache_lock:
-        # If we have 10+ models cached, we're likely doing ensemble work
-        # Preload arrays for better performance in this case
-        return _count_ensemble_models() >= 10
+        return _count_ensemble_models() >= 10, False
 
 def _get_target_cache_size():
     """Auto-size cache based on current usage patterns.
@@ -1109,7 +1146,7 @@ def _get_simulator(model):
     # Load new simulator (outside lock to avoid blocking other threads)
     # Auto-detect if we should preload arrays based on workload (adaptive)
     # Preloading is faster (CPU-bound) but uses more memory
-    preload_arrays = _should_preload_arrays()
+    preload_arrays, forced_preload_hint = _should_preload_arrays()
     
     # Retry logic for FileNotFoundError and cycle changes
     # Files may not be uploaded yet after cycle change, or cycle may change during download
@@ -1206,6 +1243,9 @@ def _get_simulator(model):
     # Ensure simulator was successfully created
     if simulator is None:
         raise RuntimeError(f"Failed to create simulator for model {model}: simulator is None after retry loop")
+    
+    if forced_preload_hint:
+        _consume_forced_preload_slot()
     
     # Cache it (re-acquire lock)
     with _cache_lock:

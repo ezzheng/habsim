@@ -470,6 +470,7 @@ habsim/
 **Adaptive Caching**:
 - Cache automatically expands from 10 → 30 simulators when 10+ ensemble models detected
 - Preloading automatically enabled for ensemble workloads
+- Cold-start hint forces first ensemble after a cycle change to preload every model
 - No explicit "ensemble mode" - system adapts to workload automatically
 
 **Progressive Prefetch**:
