@@ -749,12 +749,7 @@ def _get_simulator(model):
     try:
         model_file = f'{currgefs}_{str(model).zfill(2)}.npz'
         wind_file_path = load_gefs(model_file)
-        
-        windfile_start = time.time()
         wind_file = WindFile(wind_file_path, preload=preload_arrays)
-        windfile_time = time.time() - windfile_start
-        if windfile_time > 2.0:
-            pass
         
         # Use shared ElevationFile instance when preloading (all simulators use same elevation data)
         if preload_arrays:  # Ensemble workload detected
@@ -769,8 +764,6 @@ def _get_simulator(model):
             elev_file = _get_elevation_data()
         
         simulator = Simulator(wind_file, elev_file)
-        
-        total_load = time.time() - load_start
     except Exception as e:
         print(f"ERROR: Failed to load simulator for model {model}: {e}", flush=True)
         raise
