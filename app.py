@@ -1025,13 +1025,14 @@ def spaceshot():
                             if not f.done():
                                 f.cancel()
                         break
-                total_completed += 1
-                # Batch progress updates to reduce lock contention (update every N completions)
-                if total_completed - last_progress_update >= progress_update_interval or total_completed == total_simulations:
-                    update_progress(request_id, completed=total_completed)
-                    last_progress_update = total_completed
-                
-                if future in ensemble_future_set:
+                    
+                    total_completed += 1
+                    # Batch progress updates to reduce lock contention (update every N completions)
+                    if total_completed - last_progress_update >= progress_update_interval or total_completed == total_simulations:
+                        update_progress(request_id, completed=total_completed)
+                        last_progress_update = total_completed
+                    
+                    if future in ensemble_future_set:
                     model = ensemble_futures[future]
                     try:
                         idx = model_ids.index(model)
