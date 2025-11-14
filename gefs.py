@@ -51,6 +51,9 @@ if not _AWS_ACCESS_KEY_ID:
 if not _AWS_SECRET_ACCESS_KEY:
     raise ValueError("AWS_SECRET_ACCESS_KEY environment variable is not set. Please configure it in Railway settings.")
 
+# Log AWS configuration (without exposing secrets)
+print(f"INFO: AWS S3 configured: region={_AWS_REGION}, bucket={_BUCKET}, access_key_id={_AWS_ACCESS_KEY_ID[:8]}...", flush=True)
+
 # Configure boto3 with retries and connection pooling
 # Increased to 64 connections for ensemble workloads (2 devices × 21 models = 42 concurrent downloads)
 _S3_CONFIG = Config(
@@ -153,12 +156,20 @@ def open_gefs(file_name):
                 return io.StringIO(_whichgefs_cache["value"])
             
             try:
+                print(f"INFO: Attempting to read {file_name} from S3 bucket {_BUCKET}...", flush=True)
                 response = _STATUS_S3_CLIENT.get_object(Bucket=_BUCKET, Key=file_name)
                 content = response['Body'].read().decode("utf-8")
+                print(f"INFO: Successfully read {file_name} from S3 (length={len(content)})", flush=True)
             except ClientError as e:
-                if e.response['Error']['Code'] == 'NoSuchKey':
+                error_code = e.response.get('Error', {}).get('Code', 'Unknown')
+                error_msg = e.response.get('Error', {}).get('Message', str(e))
+                print(f"ERROR: S3 error reading {file_name}: Code={error_code}, Message={error_msg}", flush=True)
+                if error_code == 'NoSuchKey':
                     print(f"WARNING: File not found in S3: {file_name}", flush=True)
                     return io.StringIO("")
+                raise
+            except Exception as e:
+                print(f"ERROR: Unexpected error reading {file_name} from S3: {type(e).__name__}: {e}", flush=True)
                 raise
             
             _whichgefs_cache["value"] = content

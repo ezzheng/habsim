@@ -403,6 +403,75 @@ def whichgefs():
     f.close()
     return s
 
+@app.route('/sim/test-s3')
+def test_s3():
+    """Test S3 connectivity and credentials. Returns diagnostic info."""
+    import gefs
+    from botocore.exceptions import ClientError, NoCredentialsError
+    import time
+    
+    result = {
+        'credentials_configured': bool(gefs._AWS_ACCESS_KEY_ID and gefs._AWS_SECRET_ACCESS_KEY),
+        'region': gefs._AWS_REGION,
+        'bucket': gefs._BUCKET,
+        'access_key_prefix': gefs._AWS_ACCESS_KEY_ID[:8] + '...' if gefs._AWS_ACCESS_KEY_ID else 'NOT SET',
+        'tests': {}
+    }
+    
+    # Test 1: Try to list bucket (requires s3:ListBucket permission)
+    start = time.time()
+    try:
+        response = gefs._S3_CLIENT.list_objects_v2(Bucket=gefs._BUCKET, MaxKeys=1)
+        result['tests']['list_bucket'] = {
+            'success': True,
+            'time': f"{time.time() - start:.2f}s",
+            'message': 'Can list bucket'
+        }
+    except ClientError as e:
+        error_code = e.response.get('Error', {}).get('Code', 'Unknown')
+        error_msg = e.response.get('Error', {}).get('Message', str(e))
+        result['tests']['list_bucket'] = {
+            'success': False,
+            'time': f"{time.time() - start:.2f}s",
+            'error_code': error_code,
+            'message': error_msg
+        }
+    except Exception as e:
+        result['tests']['list_bucket'] = {
+            'success': False,
+            'time': f"{time.time() - start:.2f}s",
+            'error': f"{type(e).__name__}: {str(e)}"
+        }
+    
+    # Test 2: Try to read whichgefs file
+    start = time.time()
+    try:
+        response = gefs._STATUS_S3_CLIENT.get_object(Bucket=gefs._BUCKET, Key='whichgefs')
+        content = response['Body'].read().decode("utf-8")
+        result['tests']['read_whichgefs'] = {
+            'success': True,
+            'time': f"{time.time() - start:.2f}s",
+            'content': content.strip(),
+            'message': 'Can read whichgefs file'
+        }
+    except ClientError as e:
+        error_code = e.response.get('Error', {}).get('Code', 'Unknown')
+        error_msg = e.response.get('Error', {}).get('Message', str(e))
+        result['tests']['read_whichgefs'] = {
+            'success': False,
+            'time': f"{time.time() - start:.2f}s",
+            'error_code': error_code,
+            'message': error_msg
+        }
+    except Exception as e:
+        result['tests']['read_whichgefs'] = {
+            'success': False,
+            'time': f"{time.time() - start:.2f}s",
+            'error': f"{type(e).__name__}: {str(e)}"
+        }
+    
+    return jsonify(result)
+
 @app.route('/sim/cache-status')
 def cache_status():
     """Debug endpoint to see what's in the simulator cache and memory usage"""
