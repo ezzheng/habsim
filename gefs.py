@@ -329,16 +329,18 @@ def _cleanup_old_cache_files():
         # Prevents race condition where cleanup deletes files before other workers use them
         now = time.time()
         with _recently_downloaded_lock:
-            # Remove expired entries and get current protected files
-            protected_files = {
-                file_name for file_name, download_time in _recently_downloaded.items()
-                if now - download_time < _RECENT_DOWNLOAD_GRACE_PERIOD
-            }
-            # Clean up expired entries
-            _recently_downloaded = {
-                k: v for k, v in _recently_downloaded.items()
-                if k in protected_files
-            }
+            # Remove expired entries in-place instead of reassigning the dict
+            # Reassignment would require a global declaration and previously caused the
+            # entire cleanup routine to raise UnboundLocalError (and silently abort).
+            protected_files = set()
+            expired_keys = []
+            for file_name, download_time in list(_recently_downloaded.items()):
+                if now - download_time < _RECENT_DOWNLOAD_GRACE_PERIOD:
+                    protected_files.add(file_name)
+                else:
+                    expired_keys.append(file_name)
+            for expired_name in expired_keys:
+                _recently_downloaded.pop(expired_name, None)
         cached_files = [f for f in cached_files if f.name not in protected_files]
         
         # If worldelev.npy exists, ensure it's not too old (touch it to update access time)
