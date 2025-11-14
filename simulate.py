@@ -199,7 +199,7 @@ def _idle_memory_cleanup(idle_duration):
     """Deep cleanup when the worker has been idle for a while.
     Returns True if cleanup ran, False if skipped (lock held or models in use).
     
-    Very conservative: only runs if truly idle (no models in use, idle > 5 minutes).
+    Very conservative: only runs if truly idle (no models in use, idle > 15 minutes).
     """
     global _current_max_cache, elevation_cache
     worker_pid = os.getpid()
