@@ -50,6 +50,7 @@ if Path("/app/data").exists():  # Railway persistent volume
     _CURRGEFS_FILE = Path("/app/data/currgefs.txt")
 else:
     _CURRGEFS_FILE = Path(tempfile.gettempdir()) / "habsim-currgefs.txt"
+_REFRESH_LOCK_FILE = _CURRGEFS_FILE.with_suffix('.refresh.lock')
 _last_refresh_check = 0.0
 _cache_trim_thread_started = False
 _IDLE_RESET_TIMEOUT = 120.0
@@ -129,26 +130,104 @@ def _write_currgefs(value):
         pass
 
 def refresh():
-    """Refresh GEFS timestamp from S3 and update shared file."""
+    """Refresh GEFS timestamp from S3 and update shared file.
+    
+    Uses file-based locking to prevent concurrent refreshes across workers.
+    Preserves old timestamp if refresh fails to avoid leaving "Unavailable" state.
+    """
+    import fcntl
+    global _last_refresh_check
+    
+    # File-based lock prevents concurrent refreshes across workers
+    lock_file = None
     try:
-        f = open_gefs('whichgefs')
-        new_gefs = f.readline().strip()
-        f.close()
+        _REFRESH_LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
+        lock_file = open(_REFRESH_LOCK_FILE, 'w')
+        try:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            # Another worker is refreshing - wait briefly and check if it completed
+            lock_file.close()
+            for _ in range(10):  # Wait up to 1 second
+                time.sleep(0.1)
+                current = _read_currgefs()
+                if current and current != "Unavailable":
+                    # Another worker refreshed - update our refresh check time to avoid immediate re-check
+                    _last_refresh_check = time.time()
+                    return False  # Another worker refreshed successfully
+            # Still locked after wait - try blocking lock
+            lock_file = open(_REFRESH_LOCK_FILE, 'w')
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            # Double-check after acquiring lock
+            current = _read_currgefs()
+            if current and current != "Unavailable":
+                # Another worker refreshed - update our refresh check time
+                _last_refresh_check = time.time()
+                return False
         
+        # Read current timestamp before refresh (preserve if refresh fails)
         old_gefs = _read_currgefs()
-        if new_gefs and new_gefs != old_gefs:
+        
+        try:
+            f = open_gefs('whichgefs')
+            new_gefs = f.readline().strip()
+            f.close()
+            
+            # Only update if we got a valid timestamp (non-empty, not just whitespace)
+            if not new_gefs:
+                return False
+            
+            # Only proceed if timestamp actually changed
+            if new_gefs == old_gefs:
+                return False
+            
+            # Verify at least one model file exists before updating currgefs
+            # This prevents updating to a cycle that hasn't been uploaded yet
+            try:
+                test_file = f'{new_gefs}_00.npz'
+                from gefs import _STATUS_S3_CLIENT, _BUCKET
+                _STATUS_S3_CLIENT.head_object(Bucket=_BUCKET, Key=test_file)
+            except Exception:
+                # File not available yet - don't update currgefs
+                print(f"INFO: New GEFS cycle {new_gefs} detected but files not available yet, waiting...", flush=True)
+                return False
+            
+            # Update timestamp atomically
             _write_currgefs(new_gefs)
+            
+            # Clear caches after successful update
             reset()
             _prediction_cache.clear()
             _cache_access_times.clear()
             
+            # Delay old file cleanup - only delete after confirming new cycle is available
+            # This prevents "file not found" errors if new files aren't uploaded yet
             if old_gefs and old_gefs != "Unavailable":
-                _cleanup_old_model_files(old_gefs)
+                # Schedule cleanup in background (non-blocking)
+                def delayed_cleanup():
+                    time.sleep(30)  # Wait 30s for new files to be available
+                    try:
+                        _cleanup_old_model_files(old_gefs)
+                    except Exception:
+                        pass
+                import threading
+                threading.Thread(target=delayed_cleanup, daemon=True).start()
             
             return True
+        except Exception as e:
+            # Refresh failed - preserve old timestamp (don't leave "Unavailable")
+            print(f"ERROR: refresh() failed: {e}", flush=True)
+            return False
     except Exception as e:
-        print(f"ERROR: refresh() failed: {e}", flush=True)
-    return False
+        print(f"ERROR: refresh() lock failed: {e}", flush=True)
+        return False
+    finally:
+        if lock_file:
+            try:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+                lock_file.close()
+            except Exception:
+                pass
 
 def get_currgefs():
     """Get current GEFS timestamp (reads from shared file)."""
@@ -710,6 +789,7 @@ def _get_simulator(model):
         refresh()
         _last_refresh_check = now
         currgefs = get_currgefs()
+        
         if not currgefs or currgefs == "Unavailable":
             raise RuntimeError(f"GEFS timestamp not available after refresh (currgefs='{currgefs}'). Cannot load model files.")
     
@@ -801,27 +881,43 @@ def _get_simulator(model):
     # Preloading is faster (CPU-bound) but uses more memory
     preload_arrays = _should_preload_arrays()
     
-    try:
-        model_file = f'{currgefs}_{str(model).zfill(2)}.npz'
-        wind_file_path = load_gefs(model_file)
-        wind_file = WindFile(wind_file_path, preload=preload_arrays)
-        
-        # Use shared ElevationFile instance when preloading (all simulators use same elevation data)
-        if preload_arrays:  # Ensemble workload detected
-            global _shared_elevation_file
-            if _shared_elevation_file is None:
-                with _shared_elevation_file_lock:
-                    if _shared_elevation_file is None:
-                        from habsim import ElevationFile
-                        _shared_elevation_file = ElevationFile(_get_elevation_data())
-            elev_file = _shared_elevation_file
-        else:
-            elev_file = _get_elevation_data()
-        
-        simulator = Simulator(wind_file, elev_file)
-    except Exception as e:
-        print(f"ERROR: Failed to load simulator for model {model}: {e}", flush=True)
-        raise
+    # Retry logic for FileNotFoundError (files may not be uploaded yet after cycle change)
+    max_retries = 3
+    retry_delay = 2.0  # Start with 2 seconds
+    for attempt in range(max_retries):
+        try:
+            model_file = f'{currgefs}_{str(model).zfill(2)}.npz'
+            wind_file_path = load_gefs(model_file)
+            wind_file = WindFile(wind_file_path, preload=preload_arrays)
+            
+            # Use shared ElevationFile instance when preloading (all simulators use same elevation data)
+            if preload_arrays:  # Ensemble workload detected
+                global _shared_elevation_file
+                if _shared_elevation_file is None:
+                    with _shared_elevation_file_lock:
+                        if _shared_elevation_file is None:
+                            from habsim import ElevationFile
+                            _shared_elevation_file = ElevationFile(_get_elevation_data())
+                elev_file = _shared_elevation_file
+            else:
+                elev_file = _get_elevation_data()
+            
+            simulator = Simulator(wind_file, elev_file)
+            break  # Success - exit retry loop
+        except FileNotFoundError as e:
+            if attempt < max_retries - 1:
+                # Exponential backoff: 2s, 4s, 8s
+                wait_time = retry_delay * (2 ** attempt)
+                print(f"WARNING: Model {model} file not found (attempt {attempt + 1}/{max_retries}), retrying in {wait_time:.1f}s...", flush=True)
+                time.sleep(wait_time)
+            else:
+                # Final attempt failed - re-raise
+                print(f"ERROR: Failed to load simulator for model {model} after {max_retries} attempts: {e}", flush=True)
+                raise
+        except Exception as e:
+            # Non-FileNotFoundError - don't retry, fail immediately
+            print(f"ERROR: Failed to load simulator for model {model}: {e}", flush=True)
+            raise
     
     # Cache it (re-acquire lock)
     with _cache_lock:
@@ -909,4 +1005,5 @@ def simulate(simtime, lat, lon, rate, step, max_duration, alt, model, coefficien
     finally:
         # Release simulator reference
         _release_simulator_ref(model)
+
 

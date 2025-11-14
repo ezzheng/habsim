@@ -109,10 +109,6 @@ def generate_request_id(args, base_coeff):
     request_key = f"{args['timestamp']}_{args['lat']}_{args['lon']}_{args['alt']}_{args['equil']}_{args['eqtime']}_{args['asc']}_{args['desc']}_{base_coeff_str}"
     return hashlib.md5(request_key.encode()).hexdigest()[:16]
 
-def _ensure_ensemble_optimizations(worker_pid):
-    """No-op: cache automatically adapts when 10+ models detected."""
-    pass
-
 def _prefetch_model(model_id, worker_pid, expected_gefs=None):
     """Prefetch a single model (downloads file and builds simulator).
     
@@ -124,18 +120,15 @@ def _prefetch_model(model_id, worker_pid, expected_gefs=None):
     """
     try:
         # Skip validation if expected_gefs is 'Unavailable' (initialization phase)
-        # This prevents false cycle change errors when cycle is first detected
         if expected_gefs and expected_gefs != 'Unavailable':
-            # CRITICAL: Check cycle BEFORE loading (prevents loading wrong files)
             current_gefs = simulate.get_currgefs()
             if current_gefs and current_gefs != expected_gefs:
                 raise RuntimeError(f"GEFS cycle changed: expected {expected_gefs}, got {current_gefs}")
         
-        # Load simulator (may trigger refresh() which could change cycle)
+        # Load simulator (refresh() is now locked, so cycle won't change during load)
         simulate._get_simulator(model_id)
         
-        # CRITICAL: Check cycle AFTER loading (catches changes during load)
-        # Skip validation if expected was 'Unavailable' (initialization phase)
+        # Validate cycle after load (catches any edge cases)
         if expected_gefs and expected_gefs != 'Unavailable':
             current_gefs = simulate.get_currgefs()
             if current_gefs and current_gefs != expected_gefs:
@@ -178,6 +171,7 @@ def wait_for_prefetch(model_ids, worker_pid, timeout=120, min_models=12):
         
         completed_count = 0
         failed_count = 0
+        cycle_change_failures = 0  # Track cycle change vs file unavailability
         total_models = len(model_ids)
         models_to_wait = min(min_models, total_models)
         max_failures_before_abort = 5  # Abort if too many fail (likely cycle change)
@@ -192,13 +186,21 @@ def wait_for_prefetch(model_ids, worker_pid, timeout=120, min_models=12):
                     completed_count += 1
                 except Exception as e:
                     failed_count += 1
-                    print(f"WARNING: [WORKER {worker_pid}] Prefetch failed for model {model_id}: {e}", flush=True)
+                    error_msg = str(e)
+                    # Distinguish cycle change (expected) from file unavailability (retryable)
+                    if "GEFS cycle changed" in error_msg:
+                        cycle_change_failures += 1
+                        print(f"WARNING: [WORKER {worker_pid}] Prefetch failed for model {model_id}: {e}", flush=True)
+                    elif "FileNotFoundError" in error_msg or "file not found" in error_msg.lower():
+                        # File unavailability - don't count towards abort threshold (retryable)
+                        print(f"WARNING: [WORKER {worker_pid}] Prefetch failed for model {model_id} (file not available yet, will retry): {e}", flush=True)
+                    else:
+                        print(f"WARNING: [WORKER {worker_pid}] Prefetch failed for model {model_id}: {e}", flush=True)
                 
-                # Early exit if too many failures (likely cycle change - abort prefetch)
-                if failed_count >= max_failures_before_abort:
+                # Early exit only if cycle change detected (not file unavailability)
+                if cycle_change_failures >= max_failures_before_abort:
                     elapsed = time.time() - start_time
-                    print(f"WARNING: [WORKER {worker_pid}] Prefetch aborting: {failed_count} failures in {elapsed:.1f}s "
-                          f"(likely GEFS cycle change)", flush=True)
+                    print(f"WARNING: [WORKER {worker_pid}] Prefetch aborting: {cycle_change_failures} cycle change failures in {elapsed:.1f}s", flush=True)
                     return elapsed
                 
                 # Return after first N models complete (allow simulations to start)
@@ -392,7 +394,12 @@ def _read_progress(request_id):
         progress_file = _get_progress_file(request_id)
         if progress_file.exists():
             with open(progress_file, 'r') as f:
-                return json.load(f)
+                content = f.read().strip()
+                if content:  # Only parse if file has content
+                    return json.loads(content)
+    except json.JSONDecodeError as e:
+        # Corrupted JSON - log but don't spam (file might be mid-write)
+        print(f"Error reading progress file for {request_id}: {e}", flush=True)
     except Exception as e:
         print(f"Error reading progress file for {request_id}: {e}", flush=True)
     return None
@@ -400,6 +407,9 @@ def _read_progress(request_id):
 def _write_progress(request_id, progress_data):
     """Write progress to file (shared across workers)."""
     try:
+        # Ensure directory exists (may have been deleted or not created yet)
+        _PROGRESS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        
         progress_file = _get_progress_file(request_id)
         temp_file = progress_file.with_suffix('.tmp')
         with open(temp_file, 'w') as f:
@@ -1071,8 +1081,6 @@ def spaceshot():
           f"lat={base_lat}, lon={base_lon}, alt={base_alt}, burst={base_equil}, "
           f"ascent={base_asc}m/s, descent={base_desc}m/s, "
           f"models={len(model_ids)}, montecarlo={num_perturbations}×{len(model_ids)}={total_montecarlo}", flush=True)
-    
-    _ensure_ensemble_optimizations(worker_pid)
     
     # Generate Monte Carlo perturbations
     perturbations = _generate_perturbations(args, base_lat, base_lon, base_alt, base_equil, 
