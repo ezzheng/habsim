@@ -188,34 +188,29 @@ def refresh():
             # Verify ALL 21 model files exist before updating currgefs
             # Ensemble needs all 21 models (0-20), so we must verify all are available
             # This prevents updating to a cycle that hasn't fully uploaded yet
-            from gefs import _STATUS_S3_CLIENT, _BUCKET
-            max_retries = 3
+            # FIX: Problem 2 - Use _check_cycle_files_available with retry_for_consistency=True
+            # to handle S3 eventual consistency
+            max_retries = 5  # Increased retries for S3 eventual consistency
             retry_delay = 2.0
             for attempt in range(max_retries):
                 try:
-                    # Check all 21 models (0-20)
-                    test_files = [f'{new_gefs}_{str(i).zfill(2)}.npz' for i in range(21)]
-                    missing_files = []
-                    for test_file in test_files:
-                        try:
-                            _STATUS_S3_CLIENT.head_object(Bucket=_BUCKET, Key=test_file)
-                        except Exception:
-                            missing_files.append(test_file)
+                    # Use improved file check with S3 eventual consistency handling
+                    files_available = _check_cycle_files_available(new_gefs, max_models=21, check_disk_cache=False, retry_for_consistency=(attempt < max_retries - 1))
                     
-                    if missing_files:
+                    if files_available:
+                        # All files available - proceed with update
+                        break
+                    else:
                         if attempt < max_retries - 1:
                             wait_time = retry_delay * (2 ** attempt)
-                            print(f"INFO: New GEFS cycle {new_gefs} detected but {len(missing_files)}/{21} files not available yet, retrying in {wait_time:.1f}s...", flush=True)
+                            print(f"INFO: New GEFS cycle {new_gefs} detected but files not available yet, retrying in {wait_time:.1f}s (attempt {attempt + 1}/{max_retries})...", flush=True)
                             time.sleep(wait_time)
                             continue
                         else:
                             # Final attempt - still missing files
                             # Return special status: new cycle detected but files not ready
-                            print(f"WARNING: New GEFS cycle {new_gefs} detected in whichgefs but {len(missing_files)}/{21} files not available after {max_retries} attempts. Using current cycle {old_gefs} until files are ready.", flush=True)
+                            print(f"WARNING: New GEFS cycle {new_gefs} detected in whichgefs but files not available after {max_retries} attempts. Using current cycle {old_gefs} until files are ready.", flush=True)
                             return (False, new_gefs)  # Return tuple: (False, pending_cycle)
-                    
-                    # All files available - proceed with update
-                    break
                 except Exception as e:
                     if attempt < max_retries - 1:
                         wait_time = retry_delay * (2 ** attempt)
@@ -272,13 +267,14 @@ def get_currgefs():
     """Get current GEFS timestamp (reads from shared file)."""
     return _read_currgefs()
 
-def _check_cycle_files_available(gefs_cycle, max_models=21, check_disk_cache=False):
+def _check_cycle_files_available(gefs_cycle, max_models=21, check_disk_cache=False, retry_for_consistency=False):
     """Check if all model files exist for a given GEFS cycle.
     
     Args:
         gefs_cycle: GEFS timestamp to check (e.g., "2025103012")
         max_models: Number of models to check (default: 21 for ensemble)
         check_disk_cache: If True, also verify files exist in disk cache (default: False, only S3)
+        retry_for_consistency: If True, retry with exponential backoff for S3 eventual consistency (default: False)
     
     Returns:
         True if all files exist, False otherwise
@@ -288,21 +284,71 @@ def _check_cycle_files_available(gefs_cycle, max_models=21, check_disk_cache=Fal
     
     try:
         from gefs import _STATUS_S3_CLIENT, _BUCKET, _CACHE_DIR
-        # Check all models (0 to max_models-1)
-        for i in range(max_models):
-            test_file = f'{gefs_cycle}_{str(i).zfill(2)}.npz'
-            # Check S3 availability
-            try:
-                _STATUS_S3_CLIENT.head_object(Bucket=_BUCKET, Key=test_file)
-            except Exception:
-                return False  # At least one file missing in S3
+        from botocore.exceptions import ClientError
+        
+        # Retry logic for S3 eventual consistency (FIX: Problem 2)
+        max_retries = 5 if retry_for_consistency else 1
+        retry_delay = 1.0
+        
+        for retry_attempt in range(max_retries):
+            all_files_exist = True
+            missing_files = []
             
-            # Optionally check disk cache
-            if check_disk_cache:
-                cache_path = _CACHE_DIR / test_file
-                if not cache_path.exists():
-                    return False  # File not in disk cache
-        return True  # All files exist
+            # Check all models (0 to max_models-1)
+            for i in range(max_models):
+                test_file = f'{gefs_cycle}_{str(i).zfill(2)}.npz'
+                # Check S3 availability with retry for eventual consistency
+                file_exists = False
+                try:
+                    _STATUS_S3_CLIENT.head_object(Bucket=_BUCKET, Key=test_file)
+                    file_exists = True
+                except ClientError as e:
+                    error_code = e.response.get('Error', {}).get('Code', '')
+                    # 404/NoSuchKey means file doesn't exist (not a consistency issue)
+                    if error_code not in ('404', 'NoSuchKey'):
+                        # Other errors (403, 500, etc.) might be transient - retry if enabled
+                        if retry_for_consistency and retry_attempt < max_retries - 1:
+                            file_exists = None  # Mark as unknown, will retry
+                        else:
+                            file_exists = False
+                    else:
+                        file_exists = False
+                except Exception:
+                    # Network errors, timeouts, etc. - retry if enabled
+                    if retry_for_consistency and retry_attempt < max_retries - 1:
+                        file_exists = None  # Mark as unknown, will retry
+                    else:
+                        file_exists = False
+                
+                if file_exists is False:
+                    all_files_exist = False
+                    missing_files.append(test_file)
+                elif file_exists is None:
+                    # Transient error - will retry
+                    all_files_exist = False
+                    missing_files.append(test_file)
+                
+                # Optionally check disk cache
+                if file_exists and check_disk_cache:
+                    cache_path = _CACHE_DIR / test_file
+                    if not cache_path.exists():
+                        all_files_exist = False
+                        missing_files.append(test_file)
+            
+            if all_files_exist:
+                return True  # All files exist
+            
+            # If retry enabled and not last attempt, wait and retry
+            if retry_for_consistency and retry_attempt < max_retries - 1:
+                wait_time = retry_delay * (2 ** retry_attempt)  # Exponential backoff
+                print(f"INFO: S3 eventual consistency check: {len(missing_files)}/{max_models} files not found for cycle {gefs_cycle}, retrying in {wait_time:.1f}s (attempt {retry_attempt + 1}/{max_retries})...", flush=True)
+                time.sleep(wait_time)
+                continue
+            else:
+                # No retry or last attempt - return False
+                return False
+        
+        return False  # All retries exhausted
     except Exception:
         return False  # Error checking files
 
@@ -825,8 +871,8 @@ def _validate_simulator_cycle(simulator, currgefs):
     Extracts GEFS timestamp from wind_file path (e.g., "2025110312_00.npz" -> "2025110312")
     and compares with current currgefs. Returns True if valid, False if stale.
     
-    CRITICAL: Rejects simulators when validation cannot be performed (no path or invalid format).
-    This prevents using stale simulators after cycle changes when timestamp extraction fails.
+    FIX: Problem 7 - Improved validation to handle more path formats and edge cases.
+    Now tries multiple methods to extract cycle from path before rejecting.
     
     Args:
         simulator: Simulator instance to validate
@@ -835,24 +881,68 @@ def _validate_simulator_cycle(simulator, currgefs):
     Returns:
         True if simulator matches current cycle, False otherwise (rejects if cannot validate)
     """
+    if not currgefs or currgefs == "Unavailable":
+        # Can't validate without current cycle - reject to be safe
+        return False
+    
     try:
-        wind_file_path = getattr(simulator.wind_file, '_source_path', None)
+        # Try multiple methods to get the path
+        wind_file_path = None
+        
+        # Method 1: Check _source_path attribute
+        if hasattr(simulator, 'wind_file') and simulator.wind_file:
+            wind_file_path = getattr(simulator.wind_file, '_source_path', None)
+        
+        # Method 2: Check if wind_file has a path attribute
+        if not wind_file_path and hasattr(simulator, 'wind_file') and simulator.wind_file:
+            wind_file_path = getattr(simulator.wind_file, 'path', None)
+        
+        # Method 3: Check if wind_file is a string (direct path)
+        if not wind_file_path and hasattr(simulator, 'wind_file'):
+            if isinstance(simulator.wind_file, str):
+                wind_file_path = simulator.wind_file
+        
         if not wind_file_path:
             # No source path - cannot validate, reject to force reload (safer than assuming valid)
             # This prevents using stale simulators when path information is missing
             return False
         
-        # Extract timestamp from filename (format: YYYYMMDDHH_NN.npz)
-        filename = os.path.basename(str(wind_file_path))
-        if '_' not in filename:
-            # Can't extract timestamp - reject to force reload (safer than assuming valid)
-            # This prevents using stale simulators when filename format is unexpected
-            return False
+        # Convert to string and normalize path separators
+        path_str = str(wind_file_path)
+        # Handle both forward and backward slashes
+        path_str = path_str.replace('\\', '/')
         
-        cached_gefs = filename.split('_')[0]
-        return cached_gefs == currgefs
-    except Exception:
+        # Extract filename from path
+        filename = os.path.basename(path_str)
+        
+        # Try to extract timestamp from filename
+        # Format 1: YYYYMMDDHH_NN.npz (standard format)
+        if '_' in filename:
+            cached_gefs = filename.split('_')[0]
+            # Validate format (should be 10 digits: YYYYMMDDHH)
+            if len(cached_gefs) == 10 and cached_gefs.isdigit():
+                return cached_gefs == currgefs
+        
+        # Format 2: YYYYMMDDHHNN.npz (alternative format without underscore)
+        # Check if filename starts with digits matching currgefs length
+        if filename.startswith(currgefs):
+            # Filename starts with current cycle - likely valid
+            return True
+        
+        # Format 3: Check if path contains cycle as directory or filename component
+        if currgefs in path_str:
+            # Path contains current cycle - likely valid (but less certain)
+            # Only accept if it's in the filename part, not just anywhere in path
+            if currgefs in filename:
+                return True
+        
+        # Can't extract or match timestamp - reject to force reload (safer than assuming valid)
+        # This prevents using stale simulators when filename format is unexpected
+        return False
+    except Exception as e:
         # If validation fails, reject simulator (safe fallback)
+        # Log the error for debugging but don't raise
+        print(f"WARNING: Simulator cycle validation failed: {e}", flush=True)
         return False
 
 def _get_simulator(model):
