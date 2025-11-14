@@ -3,6 +3,7 @@ name: GEFS Auto-Downloader
 on:
   schedule:
     # Run every 6 hours at :00 (00:00, 06:00, 12:00, 18:00 UTC)
+    # This matches GEFS model release schedule (models available ~6 hours after run time)
     - cron: '0 */6 * * *'
   workflow_dispatch:  # Allow manual trigger from GitHub UI
 
@@ -25,14 +26,16 @@ jobs:
           pip install --upgrade pip
           pip install numpy requests pygrib boto3
       
-      - name: Run auto-downloader (test mode - single run)
+      - name: Run auto-downloader (single cycle)
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           AWS_REGION: ${{ secrets.AWS_REGION }}
           S3_BUCKET_NAME: ${{ secrets.S3_BUCKET_NAME }}
         run: |
-          python3 scripts/auto_downloader.py --test --logfile ./gefs_downloader.log --savedir ./data/gefs
+          # Run in single-cycle mode (default): checks for next model and downloads if available
+          # This is suitable for scheduled jobs - runs once and exits
+          python3 scripts/auto_downloader.py --logfile ./gefs_downloader.log --savedir ./data/gefs
       
       - name: List output files
         if: always()  # Always run, even on failure
@@ -65,4 +68,3 @@ jobs:
             data/gefs/whichgefs
           if-no-files-found: ignore
           retention-days: 3  # Keep artifacts for 3 days for debugging
-
