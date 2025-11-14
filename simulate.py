@@ -266,6 +266,40 @@ def get_currgefs():
     """Get current GEFS timestamp (reads from shared file)."""
     return _read_currgefs()
 
+def _check_cycle_files_available(gefs_cycle, max_models=21, check_disk_cache=False):
+    """Check if all model files exist for a given GEFS cycle.
+    
+    Args:
+        gefs_cycle: GEFS timestamp to check (e.g., "2025103012")
+        max_models: Number of models to check (default: 21 for ensemble)
+        check_disk_cache: If True, also verify files exist in disk cache (default: False, only S3)
+    
+    Returns:
+        True if all files exist, False otherwise
+    """
+    if not gefs_cycle or gefs_cycle == "Unavailable":
+        return False
+    
+    try:
+        from gefs import _STATUS_S3_CLIENT, _BUCKET, _CACHE_DIR
+        # Check all models (0 to max_models-1)
+        for i in range(max_models):
+            test_file = f'{gefs_cycle}_{str(i).zfill(2)}.npz'
+            # Check S3 availability
+            try:
+                _STATUS_S3_CLIENT.head_object(Bucket=_BUCKET, Key=test_file)
+            except Exception:
+                return False  # At least one file missing in S3
+            
+            # Optionally check disk cache
+            if check_disk_cache:
+                cache_path = _CACHE_DIR / test_file
+                if not cache_path.exists():
+                    return False  # File not in disk cache
+        return True  # All files exist
+    except Exception:
+        return False  # Error checking files
+
 # Track cycle invalidation to force re-validation of cached simulators
 _cache_invalidation_cycle = None
 _cache_invalidation_lock = threading.Lock()
