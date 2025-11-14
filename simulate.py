@@ -16,6 +16,9 @@ import threading
 import logging
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
+from pathlib import Path
+import tempfile
+import fcntl
 from windfile import WindFile
 from habsim import Simulator, Balloon
 from gefs import open_gefs, load_gefs
@@ -43,7 +46,13 @@ _elevation_lock = threading.Lock()
 _shared_elevation_file = None
 _shared_elevation_file_lock = threading.Lock()
 
-currgefs = "Unavailable"
+# Shared currgefs storage across workers (file-based on persistent volume)
+_CURRGEFS_FILE = None
+if Path("/app/data").exists():  # Railway persistent volume
+    _CURRGEFS_FILE = Path("/app/data/currgefs.txt")
+else:
+    _CURRGEFS_FILE = Path(tempfile.gettempdir()) / "habsim-currgefs.txt"
+_CURRGEFS_LOCK = threading.Lock()
 _last_refresh_check = 0.0
 _cache_trim_thread_started = False
 _IDLE_RESET_TIMEOUT = 120.0
@@ -95,29 +104,57 @@ def _cache_prediction(cache_key, result):
     _prediction_cache[cache_key] = result
     _cache_access_times[cache_key] = time.time()
 
+def _read_currgefs():
+    """Read currgefs from shared file (thread-safe, process-safe)."""
+    try:
+        if _CURRGEFS_FILE.exists():
+            with open(_CURRGEFS_FILE, 'r') as f:
+                fcntl.flock(f.fileno(), fcntl.LOCK_SH)  # Shared lock for reading
+                try:
+                    return f.read().strip()
+                finally:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+    except Exception:
+        pass
+    return "Unavailable"
+
+def _write_currgefs(value):
+    """Write currgefs to shared file (thread-safe, process-safe)."""
+    try:
+        _CURRGEFS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(_CURRGEFS_FILE, 'w') as f:
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX)  # Exclusive lock for writing
+            try:
+                f.write(value)
+                f.flush()
+                os.fsync(f.fileno())  # Ensure written to disk
+            finally:
+                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+    except Exception:
+        pass
+
 def refresh():
-    global currgefs
+    """Refresh GEFS timestamp from S3 and update shared file."""
     f = open_gefs('whichgefs')
-    s = f.readline().strip()  # Strip newline and whitespace
+    new_gefs = f.readline().strip()
     f.close()
-    print(f"DEBUG: refresh() read whichgefs: '{s}' (length={len(s)}, currgefs was '{currgefs}')", flush=True)
-    if s != currgefs:
-        old_currgefs = currgefs  # Save old timestamp for cleanup
-        currgefs = s
-        print(f"DEBUG: refresh() updating currgefs: '{old_currgefs}' -> '{currgefs}'", flush=True)
+    
+    old_gefs = _read_currgefs()
+    if new_gefs != old_gefs:
+        _write_currgefs(new_gefs)
         reset()
-        # Clear cache when model changes
         _prediction_cache.clear()
         _cache_access_times.clear()
         
-        # Clean up old model files from disk cache when model changes
-        if old_currgefs and old_currgefs != "Unavailable":
-            _cleanup_old_model_files(old_currgefs)
+        if old_gefs and old_gefs != "Unavailable":
+            _cleanup_old_model_files(old_gefs)
         
         return True
-    else:
-        print(f"DEBUG: refresh() no change needed (s == currgefs == '{s}')", flush=True)
     return False
+
+def get_currgefs():
+    """Get current GEFS timestamp (reads from shared file)."""
+    return _read_currgefs()
 
 def reset():
     """Clear simulator cache when GEFS model changes.
@@ -162,7 +199,7 @@ def record_activity():
 def _idle_memory_cleanup(idle_duration):
     """Deep cleanup when the worker has been idle for a while.
     Returns True if cleanup ran, False if skipped (lock held or models in use)."""
-    global _current_max_cache, elevation_cache, currgefs
+    global _current_max_cache, elevation_cache
     worker_pid = os.getpid()
     if not _idle_cleanup_lock.acquire(blocking=False):
         return False
@@ -210,8 +247,8 @@ def _idle_memory_cleanup(idle_duration):
         _prediction_cache.clear()
         _cache_access_times.clear()
         
-        # Reset currgefs to force re-check on next request (module global)
-        currgefs = ""  # Note: This is a module global, assigned here
+        # Clear currgefs file to force re-check on next request
+        _write_currgefs("")
 
         # Multiple aggressive GC passes to ensure numpy arrays are freed
         for _ in range(10):  # Increased from 5 to 10
@@ -642,15 +679,11 @@ def _get_simulator(model):
     _start_cache_trim_thread()
     
     # Refresh GEFS data if needed
-    refresh_start = time.time()
+    currgefs = get_currgefs()
     if not currgefs or currgefs == "Unavailable" or now - _last_refresh_check > 300:
-        print(f"INFO: Refreshing GEFS data (currgefs={currgefs})...", flush=True)
         refresh()
         _last_refresh_check = now
-        refresh_time = time.time() - refresh_start
-        print(f"INFO: GEFS refresh complete: currgefs={currgefs}, took {refresh_time:.2f}s", flush=True)
-        if refresh_time > 1.0:
-            pass
+        currgefs = get_currgefs()
     
     # Safety check: ensure currgefs is valid before using it
     if not currgefs or currgefs == "Unavailable":
@@ -715,14 +748,8 @@ def _get_simulator(model):
     preload_arrays = _should_preload_arrays()
     
     try:
-        load_start = time.time()
         model_file = f'{currgefs}_{str(model).zfill(2)}.npz'
-        print(f"INFO: Loading model file: {model_file}", flush=True)
         wind_file_path = load_gefs(model_file)
-        load_time = time.time() - load_start
-        print(f"INFO: Model file loaded: {model_file}, took {load_time:.2f}s", flush=True)
-        if load_time > 2.0:
-            pass
         
         windfile_start = time.time()
         wind_file = WindFile(wind_file_path, preload=preload_arrays)

@@ -40,22 +40,10 @@ def _load_env_file():
 _load_env_file()
 
 # AWS S3 configuration
-# Log what we're reading from environment (for debugging)
-aws_access_key_from_env = os.environ.get("AWS_ACCESS_KEY_ID", "")
-aws_secret_key_from_env = os.environ.get("AWS_SECRET_ACCESS_KEY", "")
-aws_region_from_env = os.environ.get("AWS_REGION", "us-west-1")
-bucket_from_env = os.environ.get("S3_BUCKET_NAME", "habsim-storage")
-
-print(f"DEBUG: Reading AWS credentials from environment:", flush=True)
-print(f"DEBUG:   AWS_ACCESS_KEY_ID={aws_access_key_from_env[:8] + '...' if aws_access_key_from_env else 'NOT SET'} (length={len(aws_access_key_from_env)})", flush=True)
-print(f"DEBUG:   AWS_SECRET_ACCESS_KEY={'SET' if aws_secret_key_from_env else 'NOT SET'} (length={len(aws_secret_key_from_env)})", flush=True)
-print(f"DEBUG:   AWS_REGION={aws_region_from_env}", flush=True)
-print(f"DEBUG:   S3_BUCKET_NAME={bucket_from_env}", flush=True)
-
-_AWS_ACCESS_KEY_ID = aws_access_key_from_env
-_AWS_SECRET_ACCESS_KEY = aws_secret_key_from_env
-_AWS_REGION = aws_region_from_env
-_BUCKET = bucket_from_env
+_AWS_ACCESS_KEY_ID = os.environ.get("AWS_ACCESS_KEY_ID", "")
+_AWS_SECRET_ACCESS_KEY = os.environ.get("AWS_SECRET_ACCESS_KEY", "")
+_AWS_REGION = os.environ.get("AWS_REGION", "us-west-1")
+_BUCKET = os.environ.get("S3_BUCKET_NAME", "habsim-storage")
 
 # Validate that AWS credentials are set
 if not _AWS_ACCESS_KEY_ID:
@@ -64,7 +52,7 @@ if not _AWS_SECRET_ACCESS_KEY:
     raise ValueError("AWS_SECRET_ACCESS_KEY environment variable is not set. Please configure it in Railway settings.")
 
 # Log AWS configuration (without exposing secrets)
-print(f"INFO: AWS S3 configured: region={_AWS_REGION}, bucket={_BUCKET}, access_key_id={_AWS_ACCESS_KEY_ID[:8]}...", flush=True)
+print(f"INFO: AWS S3 configured: region={_AWS_REGION}, bucket={_BUCKET}", flush=True)
 
 # Configure boto3 with retries and connection pooling
 # Increased to 64 connections for ensemble workloads (2 devices × 21 models = 42 concurrent downloads)
@@ -84,7 +72,6 @@ _S3_CLIENT = boto3.client(
     region_name=_AWS_REGION,
     config=_S3_CONFIG,
 )
-print(f"DEBUG: Created S3 client with access_key_id={_AWS_ACCESS_KEY_ID[:8] + '...' if _AWS_ACCESS_KEY_ID else 'NOT SET'}, region={_AWS_REGION}", flush=True)
 
 # Separate S3 client for status checks (small files like whichgefs)
 # This ensures status checks never wait behind large file downloads
@@ -101,7 +88,6 @@ _STATUS_S3_CLIENT = boto3.client(
     region_name=_AWS_REGION,
     config=_STATUS_S3_CONFIG,
 )
-print(f"DEBUG: Created STATUS S3 client with access_key_id={_AWS_ACCESS_KEY_ID[:8] + '...' if _AWS_ACCESS_KEY_ID else 'NOT SET'}, region={_AWS_REGION}", flush=True)
 
 # Timeout constants (kept for compatibility, but S3 uses boto3 config)
 _DEFAULT_TIMEOUT = (3, 60)
@@ -171,10 +157,8 @@ def open_gefs(file_name):
                 return io.StringIO(_whichgefs_cache["value"])
             
             try:
-                print(f"INFO: Attempting to read {file_name} from S3 bucket {_BUCKET}...", flush=True)
                 response = _STATUS_S3_CLIENT.get_object(Bucket=_BUCKET, Key=file_name)
                 content = response['Body'].read().decode("utf-8")
-                print(f"INFO: Successfully read {file_name} from S3 (length={len(content)})", flush=True)
             except ClientError as e:
                 error_code = e.response.get('Error', {}).get('Code', 'Unknown')
                 error_msg = e.response.get('Error', {}).get('Message', str(e))
@@ -449,9 +433,6 @@ def _ensure_cached(file_name: str) -> Path:
         max_retries = 5 if file_name.endswith('.npz') else (3 if is_large_file else 1)
         last_error = None
         
-        # Log download start
-        print(f"INFO: Downloading {file_name} from S3...", flush=True)
-        
         for attempt in range(max_retries):
             # Clean up any incomplete temp files from previous attempts
             # BUT: Only clean up OUR OWN temp files (from previous attempts by this worker)
@@ -598,7 +579,7 @@ def _ensure_cached(file_name: str) -> Path:
                 if actual_size < 1024:  # Files should be at least 1KB
                     raise IOError(f"Download failed: file {file_name} is suspiciously small ({actual_size} bytes) (fatal)")
                 
-                # Log successful download with size (for egress tracking)
+                # Log successful download
                 size_mb = actual_size / (1024 * 1024)
                 download_time = time.time() - download_start
                 print(f"INFO: Downloaded {file_name} ({size_mb:.1f} MB) in {download_time:.1f}s", flush=True)
