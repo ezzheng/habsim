@@ -537,14 +537,31 @@ def _periodic_cache_trim():
             should_run_idle_cleanup = (idle_duration >= _IDLE_RESET_TIMEOUT and 
                                       (time_since_last_cleanup >= _IDLE_CLEAN_COOLDOWN or _last_idle_cleanup == 0))
             
+            # Additional check: skip if cache is growing (active work)
+            if should_run_idle_cleanup:
+                with _cache_lock:
+                    cache_size = len(_simulator_cache)
+                    # Check if cache has grown recently (within last 60 seconds)
+                    if len(_cache_size_history) >= 2:
+                        recent_history = [(ts, sz) for ts, sz in _cache_size_history if now - ts < 60]
+                        if len(recent_history) >= 2:
+                            oldest_in_window = min(sz for _, sz in recent_history)
+                            newest_in_window = max(sz for _, sz in recent_history)
+                            if newest_in_window > oldest_in_window:
+                                # Cache is growing - active work happening, skip cleanup
+                                should_run_idle_cleanup = False
+            
             # Emergency cleanup: if idle >600s and cleanup never ran, force it immediately
+            # But still respect the active work checks (handled inside _idle_memory_cleanup)
             if ((idle_duration > 600 and _last_idle_cleanup == 0) or 
                 (idle_duration > 180 and _last_idle_cleanup == 0 and idle_duration >= _IDLE_RESET_TIMEOUT + 60)):
                 try:
                     with _cache_lock:
                         cache_size = len(_simulator_cache)
                     cleanup_ran = _idle_memory_cleanup(idle_duration)
-                    _last_idle_cleanup = time.time()
+                    if cleanup_ran:
+                        _last_idle_cleanup = time.time()
+                    # If cleanup was skipped (active work), don't update last_cleanup time
                 except Exception as emergency_error:
                     print(f"ERROR: Emergency cleanup failed after {idle_duration:.1f}s idle: {emergency_error}", flush=True)
                     _last_idle_cleanup = time.time()
