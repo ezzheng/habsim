@@ -367,12 +367,12 @@ def _should_preload_arrays():
 
 def _get_target_cache_size():
     """Auto-size cache based on current usage patterns.
-    Returns target cache size (normal or ensemble) based on how many models are cached."""
-    with _cache_lock:
-        ensemble_models = len([m for m in _simulator_cache.keys() if isinstance(m, int) and m < 21])
-        if ensemble_models >= 15:
-            return MAX_SIMULATOR_CACHE_ENSEMBLE
-        return MAX_SIMULATOR_CACHE_NORMAL
+    Returns target cache size (normal or ensemble) based on how many models are cached.
+    NOTE: Must be called while holding _cache_lock."""
+    ensemble_models = len([m for m in _simulator_cache.keys() if isinstance(m, int) and m < 21])
+    if ensemble_models >= 15:
+        return MAX_SIMULATOR_CACHE_ENSEMBLE
+    return MAX_SIMULATOR_CACHE_NORMAL
 
 def _update_cache_size():
     """Update cache size limit based on current workload (adaptive sizing)."""
