@@ -1,7 +1,7 @@
 # HABSIM
 **High Altitude Balloon Simulator**
 
-A web-based trajectory prediction system for high-altitude balloons using GEFS (Global Ensemble Forecast System) weather data. Supports single model simulations, ensemble runs (21 models), and Monte Carlo analysis (420 perturbations) for uncertainty quantification.
+A web-based trajectory prediction system for high-altitude balloons using GEFS (Global Ensemble Forecast System) weather data. Supports single model simulations, ensemble runs (21 models), and Monte Carlo analysis (420 perturbations) for uncertainty quantification. Designed for the Stanford Student Space Initiative.
 
 ---
 
