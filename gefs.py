@@ -40,10 +40,22 @@ def _load_env_file():
 _load_env_file()
 
 # AWS S3 configuration
-_AWS_ACCESS_KEY_ID = os.environ.get("AWS_ACCESS_KEY_ID", "")
-_AWS_SECRET_ACCESS_KEY = os.environ.get("AWS_SECRET_ACCESS_KEY", "")
-_AWS_REGION = os.environ.get("AWS_REGION", "us-west-1")
-_BUCKET = os.environ.get("S3_BUCKET_NAME", "habsim-storage")
+# Log what we're reading from environment (for debugging)
+aws_access_key_from_env = os.environ.get("AWS_ACCESS_KEY_ID", "")
+aws_secret_key_from_env = os.environ.get("AWS_SECRET_ACCESS_KEY", "")
+aws_region_from_env = os.environ.get("AWS_REGION", "us-west-1")
+bucket_from_env = os.environ.get("S3_BUCKET_NAME", "habsim-storage")
+
+print(f"DEBUG: Reading AWS credentials from environment:", flush=True)
+print(f"DEBUG:   AWS_ACCESS_KEY_ID={aws_access_key_from_env[:8] + '...' if aws_access_key_from_env else 'NOT SET'} (length={len(aws_access_key_from_env)})", flush=True)
+print(f"DEBUG:   AWS_SECRET_ACCESS_KEY={'SET' if aws_secret_key_from_env else 'NOT SET'} (length={len(aws_secret_key_from_env)})", flush=True)
+print(f"DEBUG:   AWS_REGION={aws_region_from_env}", flush=True)
+print(f"DEBUG:   S3_BUCKET_NAME={bucket_from_env}", flush=True)
+
+_AWS_ACCESS_KEY_ID = aws_access_key_from_env
+_AWS_SECRET_ACCESS_KEY = aws_secret_key_from_env
+_AWS_REGION = aws_region_from_env
+_BUCKET = bucket_from_env
 
 # Validate that AWS credentials are set
 if not _AWS_ACCESS_KEY_ID:
@@ -64,6 +76,7 @@ _S3_CONFIG = Config(
 )
 
 # Main S3 client for large file downloads (simulations)
+# Explicitly pass credentials to avoid boto3 credential chain picking up wrong credentials
 _S3_CLIENT = boto3.client(
     's3',
     aws_access_key_id=_AWS_ACCESS_KEY_ID,
@@ -71,6 +84,7 @@ _S3_CLIENT = boto3.client(
     region_name=_AWS_REGION,
     config=_S3_CONFIG,
 )
+print(f"DEBUG: Created S3 client with access_key_id={_AWS_ACCESS_KEY_ID[:8] + '...' if _AWS_ACCESS_KEY_ID else 'NOT SET'}, region={_AWS_REGION}", flush=True)
 
 # Separate S3 client for status checks (small files like whichgefs)
 # This ensures status checks never wait behind large file downloads
@@ -87,6 +101,7 @@ _STATUS_S3_CLIENT = boto3.client(
     region_name=_AWS_REGION,
     config=_STATUS_S3_CONFIG,
 )
+print(f"DEBUG: Created STATUS S3 client with access_key_id={_AWS_ACCESS_KEY_ID[:8] + '...' if _AWS_ACCESS_KEY_ID else 'NOT SET'}, region={_AWS_REGION}", flush=True)
 
 # Timeout constants (kept for compatibility, but S3 uses boto3 config)
 _DEFAULT_TIMEOUT = (3, 60)
