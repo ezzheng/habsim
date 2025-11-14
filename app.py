@@ -300,6 +300,7 @@ def wait_for_prefetch(model_ids, worker_pid, timeout=120, min_models=12):
     # ========================================================================
     # PHASE 2: Handle pending cycle (new cycle detected but files not ready)
     # ========================================================================
+    # FIX: Problem 3 - Improve pending cycle handling to check for concurrent updates
     if pending_cycle:
         print(f"INFO: [WORKER {worker_pid}] New GEFS cycle {pending_cycle} detected but files not ready. Waiting for files to become available...", flush=True)
         max_wait_time = 120  # Wait up to 2 minutes for files
@@ -308,6 +309,21 @@ def wait_for_prefetch(model_ids, worker_pid, timeout=120, min_models=12):
         files_ready = False
         
         while waited < max_wait_time:
+            # FIX: Problem 3 - Check if another worker already updated currgefs
+            # This handles the race where another worker successfully updates cycle
+            # while we're waiting for files
+            current_gefs_check = simulate.get_currgefs()
+            if current_gefs_check == pending_cycle:
+                # Another worker updated currgefs to pending_cycle - files must be ready
+                files_ready = True
+                print(f"INFO: [WORKER {worker_pid}] Another worker updated currgefs to {pending_cycle} while waiting. Files should be ready.", flush=True)
+                break
+            elif current_gefs_check and current_gefs_check != "Unavailable" and current_gefs_check != current_gefs:
+                # Cycle changed to something else - update our tracking
+                print(f"INFO: [WORKER {worker_pid}] Cycle changed during wait: {current_gefs} -> {current_gefs_check}. Updating pending cycle.", flush=True)
+                current_gefs = current_gefs_check
+                pending_cycle = current_gefs_check  # Update pending cycle to match
+            
             # Check if files are now available in S3
             # FIX: Problem 2 - Use retry_for_consistency to handle S3 eventual consistency
             if simulate._check_cycle_files_available(pending_cycle, check_disk_cache=False, retry_for_consistency=True):
@@ -427,7 +443,7 @@ def wait_for_prefetch(model_ids, worker_pid, timeout=120, min_models=12):
             final_gefs = "Unavailable"
     
     # CRITICAL: Acquire ref counts and handle cycle changes atomically
-    # FIX: Problem 3 - Check cache invalidation BEFORE acquiring ref counts to make it atomic
+    # FIX: Problem 5 - Improved ref count acquisition with better cache invalidation handling
     # If cycle changes during ref count acquisition, release ref counts and retry
     max_retries = 3
     for retry_attempt in range(max_retries):
@@ -435,15 +451,18 @@ def wait_for_prefetch(model_ids, worker_pid, timeout=120, min_models=12):
         if not cycle_before_refs or cycle_before_refs == "Unavailable":
             cycle_before_refs = final_gefs
         
-        # FIX: Problem 3 - Check cache invalidation BEFORE acquiring ref counts (atomic check)
+        # FIX: Problem 5 - Check cache invalidation BEFORE acquiring ref counts (atomic check)
         # This prevents acquiring ref counts for a cycle that's about to be invalidated
+        # FIX: Problem 1 - With the fix to refresh(), invalidation cycle is set before currgefs,
+        # so we can trust that if invalidation_cycle matches currgefs, cache is valid
         cache_invalidated = False
         invalidation_cycle = None
         try:
             with simulate._cache_invalidation_lock:
                 if simulate._cache_invalidation_cycle is not None:
                     invalidation_cycle = simulate._cache_invalidation_cycle
-                    # If invalidation cycle doesn't match our cycle, cache was invalidated
+                    # FIX: Problem 1 - With atomic refresh(), invalidation cycle should match currgefs
+                    # If it doesn't match, cache was invalidated (or refresh() is in progress)
                     if invalidation_cycle != cycle_before_refs:
                         cache_invalidated = True
         except (AttributeError, NameError):
@@ -452,10 +471,10 @@ def wait_for_prefetch(model_ids, worker_pid, timeout=120, min_models=12):
         if cache_invalidated:
             if retry_attempt < max_retries - 1:
                 print(f"WARNING: [WORKER {worker_pid}] Cache invalidated before ref count acquisition (attempt {retry_attempt + 1}): cycle {cycle_before_refs} invalidated by cycle {invalidation_cycle}. Retrying...", flush=True)
-                # Update final_gefs and retry
-                final_gefs = simulate.get_currgefs()
+                # Update final_gefs and retry - use invalidation cycle as it's the new valid cycle
+                final_gefs = invalidation_cycle if invalidation_cycle else simulate.get_currgefs()
                 if not final_gefs or final_gefs == "Unavailable":
-                    final_gefs = invalidation_cycle if invalidation_cycle else cycle_before_refs
+                    final_gefs = cycle_before_refs
                 time.sleep(0.5 * (retry_attempt + 1))  # Exponential backoff
                 continue
             else:
@@ -473,12 +492,15 @@ def wait_for_prefetch(model_ids, worker_pid, timeout=120, min_models=12):
             cycle_after_refs = cycle_before_refs
         
         # Re-check cache invalidation AFTER acquiring ref counts (double-check)
+        # FIX: Problem 5 - More robust check that handles the atomic refresh() fix
         cache_invalidated_after = False
         invalidation_cycle_after = None
         try:
             with simulate._cache_invalidation_lock:
                 if simulate._cache_invalidation_cycle is not None:
                     invalidation_cycle_after = simulate._cache_invalidation_cycle
+                    # With atomic refresh(), invalidation cycle should match currgefs
+                    # If it doesn't, cache was invalidated during ref acquisition
                     if invalidation_cycle_after != cycle_after_refs:
                         cache_invalidated_after = True
         except (AttributeError, NameError):
@@ -492,8 +514,11 @@ def wait_for_prefetch(model_ids, worker_pid, timeout=120, min_models=12):
                 # Release all ref counts
                 for model_id in model_ids:
                     simulate._release_simulator_ref(model_id)
-                # Update final_gefs and retry
-                final_gefs = cycle_after_refs
+                # Update final_gefs and retry - prefer invalidation cycle if available
+                if cache_invalidated_after and invalidation_cycle_after:
+                    final_gefs = invalidation_cycle_after
+                else:
+                    final_gefs = cycle_after_refs
                 time.sleep(0.5 * (retry_attempt + 1))  # Exponential backoff
                 continue
             else:
@@ -520,9 +545,12 @@ def wait_for_prefetch(model_ids, worker_pid, timeout=120, min_models=12):
     # This is a last-ditch defensive check to catch any edge cases where files
     # became unavailable between Phase 2 and Phase 3
     # FIX: Problem 2 - Use retry_for_consistency to handle S3 eventual consistency
+    # FIX: Problem 6 - Check happens after ref counts acquired, but before prefetch starts
+    # This minimizes wasted resources if files become unavailable
     files_available = simulate._check_cycle_files_available(prefetch_gefs, check_disk_cache=False, retry_for_consistency=True)
     if not files_available:
         # Files not available - this should not happen if logic is correct, but handle gracefully
+        # With the 2-second grace period in refresh(), this should be rare
         print(f"ERROR: [WORKER {worker_pid}] Cycle {prefetch_gefs} files not available in S3 before prefetch. This indicates a logic error or S3 issue.", flush=True)
         # Release ref counts before failing (they were acquired above)
         for model_id in model_ids:

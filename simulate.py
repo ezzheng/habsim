@@ -220,14 +220,28 @@ def refresh():
                         print(f"INFO: New GEFS cycle {new_gefs} detected but file check failed after {max_retries} attempts: {e}", flush=True)
                         return False
             
+            # FIX: Problem 1 - Set cache invalidation cycle BEFORE updating currgefs
+            # This makes the operation atomic: other workers will see invalidation cycle
+            # set before they see the new currgefs, preventing race conditions
+            with _cache_invalidation_lock:
+                old_invalidation_cycle = _cache_invalidation_cycle
+                _cache_invalidation_cycle = new_gefs
+                if old_invalidation_cycle != new_gefs:
+                    print(f"INFO: Cache invalidation cycle set to {new_gefs} (was {old_invalidation_cycle}). All cached simulators will be re-validated.", flush=True)
+            
             # Update timestamp atomically
             _write_currgefs(new_gefs)
+            
+            # FIX: Problem 2 - Add grace period for S3 eventual consistency
+            # After updating currgefs, wait briefly to allow S3 to propagate files
+            # This reduces the chance of 404 errors when prefetch starts immediately
+            time.sleep(2.0)  # 2 second grace period for S3 eventual consistency
             
             # Log cycle change for debugging
             print(f"INFO: GEFS cycle updated: {old_gefs} -> {new_gefs}. Invalidating cache and clearing simulators.", flush=True)
             
-            # Clear caches after successful update
-            reset()
+            # Clear caches after successful update (pass cycle explicitly to avoid race)
+            reset(new_gefs)
             _prediction_cache.clear()
             _cache_access_times.clear()
             
@@ -356,7 +370,7 @@ def _check_cycle_files_available(gefs_cycle, max_models=21, check_disk_cache=Fal
 _cache_invalidation_cycle = None
 _cache_invalidation_lock = threading.Lock()
 
-def reset():
+def reset(cycle=None):
     """
     Clear simulator cache when GEFS model changes.
     
@@ -365,18 +379,27 @@ def reset():
     to force re-validation on next access. This ensures cache consistency even when
     reset() runs during active prefetch operations.
     
+    FIX: Problem 4 - Accept cycle parameter to avoid race condition where cycle
+    changes between reading currgefs and setting invalidation cycle.
+    
+    Args:
+        cycle: Optional GEFS cycle to use for invalidation. If None, reads from currgefs.
+    
     Lock order: _simulator_ref_lock -> _cache_lock (consistent across all functions)
     """
     global _simulator_cache, _simulator_access_times, elevation_cache, _current_max_cache, _cache_invalidation_cycle
     
-    # Mark all cached simulators as invalid by setting invalidation cycle
-    # This forces re-validation on next access, even if ref_count > 0
-    current_gefs = get_currgefs()
+    # FIX: Problem 4 - Use provided cycle or read current, but invalidation cycle
+    # should already be set by refresh() before calling reset()
+    if cycle is None:
+        cycle = get_currgefs()
+    
+    # Invalidation cycle should already be set by refresh() before calling reset()
+    # But verify it matches to catch any inconsistencies
     with _cache_invalidation_lock:
-        old_invalidation_cycle = _cache_invalidation_cycle
-        _cache_invalidation_cycle = current_gefs
-        if old_invalidation_cycle != current_gefs:
-            print(f"INFO: Cache invalidation cycle set to {current_gefs} (was {old_invalidation_cycle}). All cached simulators will be re-validated.", flush=True)
+        if _cache_invalidation_cycle != cycle:
+            print(f"WARNING: Cache invalidation cycle mismatch: expected {cycle}, got {_cache_invalidation_cycle}. Updating to {cycle}.", flush=True)
+            _cache_invalidation_cycle = cycle
     
     # DEADLOCK PREVENTION: Get snapshot of ref counts BEFORE acquiring cache lock
     # If we acquired cache_lock first, then tried to acquire ref_lock, we'd deadlock
