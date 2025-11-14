@@ -634,6 +634,116 @@ function initFullscreenControl() {
         if (mapContainer) mapContainer.appendChild(controlsContainer);
         updateFullscreenIcon();
     });
+    
+    // Initialize tilt control repositioning
+    initTiltControlRepositioning();
+}
+
+/**
+ * Reposition Google Maps tilt/rotation control when it appears.
+ * Desktop: Above fullscreen button in bottom right with reduced gap.
+ * Mobile: Upper right corner.
+ */
+function initTiltControlRepositioning() {
+    if (!map) return;
+    
+    const repositionTiltControl = () => {
+        // Find tilt control by various possible selectors
+        const tiltSelectors = [
+            '.gm-tilt-control',
+            '.gm-bundled-control .gm-tilt-control',
+            '.gm-control-active[title*="Tilt"]',
+            '.gm-control-active[title*="tilt"]',
+            '.gm-control-active[title*="Rotate"]',
+            '.gm-control-active[title*="rotate"]',
+            'button[title*="Tilt"]',
+            'button[title*="tilt"]',
+            'button[title*="Rotate"]',
+            'button[title*="rotate"]',
+            'div[aria-label*="Tilt"]',
+            'div[aria-label*="tilt"]',
+            'div[aria-label*="Rotate"]',
+            'div[aria-label*="rotate"]'
+        ];
+        
+        let tiltControl = null;
+        for (const selector of tiltSelectors) {
+            tiltControl = document.querySelector(selector);
+            if (tiltControl) break;
+        }
+        
+        // Also check bundled controls - tilt is usually the last child
+        if (!tiltControl) {
+            const bundledControls = document.querySelector('.gm-bundled-control-on-bottom');
+            if (bundledControls) {
+                const children = Array.from(bundledControls.children);
+                // Tilt control is typically the second-to-last or last button
+                if (children.length >= 2) {
+                    tiltControl = children[children.length - 1];
+                }
+            }
+        }
+        
+        if (tiltControl) {
+            const isMobile = window.innerWidth <= 768;
+            
+            if (isMobile) {
+                // Mobile: Upper right
+                tiltControl.style.position = 'absolute';
+                tiltControl.style.top = '10px';
+                tiltControl.style.right = '10px';
+                tiltControl.style.bottom = 'auto';
+                tiltControl.style.left = 'auto';
+                tiltControl.style.zIndex = '1000';
+            } else {
+                // Desktop: Above fullscreen button (58px from bottom = 10px + 40px + 8px gap)
+                tiltControl.style.position = 'absolute';
+                tiltControl.style.bottom = '58px';
+                tiltControl.style.right = '10px';
+                tiltControl.style.top = 'auto';
+                tiltControl.style.left = 'auto';
+                tiltControl.style.zIndex = '1000';
+            }
+        }
+    };
+    
+    // Reposition immediately and on map changes
+    google.maps.event.addListener(map, 'idle', repositionTiltControl);
+    google.maps.event.addListener(map, 'tilesloaded', repositionTiltControl);
+    
+    // Use MutationObserver to watch for tilt control appearing
+    const observer = new MutationObserver(() => {
+        repositionTiltControl();
+    });
+    
+    // Observe the map container for new controls
+    const mapContainer = document.getElementById('map');
+    if (mapContainer) {
+        observer.observe(mapContainer, {
+            childList: true,
+            subtree: true,
+            attributes: true,
+            attributeFilter: ['class', 'style']
+        });
+        
+        // Also observe document body in case controls are added there
+        observer.observe(document.body, {
+            childList: true,
+            subtree: true
+        });
+    }
+    
+    // Handle window resize to update position when switching mobile/desktop
+    let resizeTimeout;
+    window.addEventListener('resize', () => {
+        clearTimeout(resizeTimeout);
+        resizeTimeout = setTimeout(repositionTiltControl, 100);
+    });
+    
+    // Initial check
+    setTimeout(repositionTiltControl, 100);
+    // Periodic check as fallback
+    setInterval(repositionTiltControl, 1000);
 }
 
 
