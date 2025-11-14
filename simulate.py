@@ -498,6 +498,9 @@ def _trim_cache_to_normal():
             
             # Evict models not in the keep list
             models_to_evict = set(_simulator_cache.keys()) - models_to_keep
+        else:
+            # Cache is not too large - nothing to evict
+            models_to_evict = set()
     
     # DEADLOCK PREVENTION: Get snapshot of ref counts OUTSIDE cache_lock
     # Lock order must be: ref_lock -> cache_lock (consistent with simulate())
