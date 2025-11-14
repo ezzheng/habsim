@@ -228,10 +228,16 @@ def refresh():
             # Update timestamp atomically
             _write_currgefs(new_gefs)
             
+            # Log cycle change for debugging
+            print(f"INFO: GEFS cycle updated: {old_gefs} -> {new_gefs}. Invalidating cache and clearing simulators.", flush=True)
+            
             # Clear caches after successful update
             reset()
             _prediction_cache.clear()
             _cache_access_times.clear()
+            
+            # Log cache invalidation completion
+            print(f"INFO: Cache invalidation complete for cycle {new_gefs}. All simulators from cycle {old_gefs} are now invalid.", flush=True)
             
             # Delay old file cleanup - only delete after confirming new cycle is available
             # This prevents "file not found" errors if new files aren't uploaded yet
@@ -321,7 +327,10 @@ def reset():
     # This forces re-validation on next access, even if ref_count > 0
     current_gefs = get_currgefs()
     with _cache_invalidation_lock:
+        old_invalidation_cycle = _cache_invalidation_cycle
         _cache_invalidation_cycle = current_gefs
+        if old_invalidation_cycle != current_gefs:
+            print(f"INFO: Cache invalidation cycle set to {current_gefs} (was {old_invalidation_cycle}). All cached simulators will be re-validated.", flush=True)
     
     # DEADLOCK PREVENTION: Get snapshot of ref counts BEFORE acquiring cache lock
     # If we acquired cache_lock first, then tried to acquire ref_lock, we'd deadlock

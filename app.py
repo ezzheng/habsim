@@ -153,6 +153,33 @@ def _prefetch_model(model_id, worker_pid, expected_gefs=None):
                         time.sleep(retry_delay * (attempt + 1))
                         continue
             
+            # CRITICAL: Check if cache was invalidated before loading simulator
+            # This catches cases where reset() ran after ref count acquisition but before simulator load
+            cache_invalidated = False
+            invalidation_cycle = None
+            try:
+                with simulate._cache_invalidation_lock:
+                    if simulate._cache_invalidation_cycle is not None:
+                        invalidation_cycle = simulate._cache_invalidation_cycle
+                        # If invalidation cycle doesn't match expected cycle, cache was invalidated
+                        if expected_gefs and expected_gefs != 'Unavailable' and invalidation_cycle != expected_gefs:
+                            cache_invalidated = True
+            except (AttributeError, NameError):
+                # If cache invalidation lock doesn't exist (shouldn't happen), skip check
+                pass
+            
+            if cache_invalidated:
+                if attempt < max_retries - 1:
+                    print(f"WARNING: [WORKER {worker_pid}] Cache invalidated before load for model {model_id} (attempt {attempt + 1}): expected cycle {expected_gefs} invalidated by cycle {invalidation_cycle}, retrying...", flush=True)
+                    # Update expected_gefs to invalidation cycle and retry
+                    if invalidation_cycle and invalidation_cycle != "Unavailable":
+                        expected_gefs = invalidation_cycle
+                    time.sleep(retry_delay * (attempt + 1))
+                    continue
+                else:
+                    # Final attempt - cache invalidated but we're out of retries
+                    raise RuntimeError(f"Cache invalidated before load for model {model_id}: expected cycle {expected_gefs} was invalidated by cycle {invalidation_cycle} after {max_retries} attempts")
+            
             # Load simulator (ref count already acquired in wait_for_prefetch)
             # Cycle may change during load, but validation will catch it
             # _get_simulator() will check cache invalidation and reject stale simulators
@@ -391,6 +418,46 @@ def wait_for_prefetch(model_ids, worker_pid, timeout=120, min_models=12):
         
         # Cycle is stable - use it for prefetch
         final_gefs = cycle_after_refs
+        
+        # CRITICAL: Check if cache was invalidated during ref count acquisition
+        # If reset() ran between reading cycle and acquiring ref counts, cache invalidation
+        # may have been set, which would cause prefetch to fail or use invalid simulators
+        cache_invalidated = False
+        invalidation_cycle = None
+        try:
+            # Access the cache invalidation state (using internal simulate module state)
+            # simulate is already imported at module level
+            with simulate._cache_invalidation_lock:
+                if simulate._cache_invalidation_cycle is not None:
+                    invalidation_cycle = simulate._cache_invalidation_cycle
+                    # If invalidation cycle doesn't match our cycle, cache was invalidated
+                    if invalidation_cycle != final_gefs:
+                        cache_invalidated = True
+        except (AttributeError, NameError):
+            # If cache invalidation lock doesn't exist (shouldn't happen), skip check
+            pass
+        
+        if cache_invalidated:
+            if retry_attempt < max_retries - 1:
+                print(f"WARNING: [WORKER {worker_pid}] Cache invalidated during ref count acquisition (attempt {retry_attempt + 1}): cycle {final_gefs} invalidated by cycle {invalidation_cycle}. Releasing ref counts and retrying...", flush=True)
+                # Release all ref counts
+                for model_id in model_ids:
+                    simulate._release_simulator_ref(model_id)
+                # Re-read cycle and retry
+                final_gefs = simulate.get_currgefs()
+                if not final_gefs or final_gefs == "Unavailable":
+                    final_gefs = cycle_after_refs  # Fallback to previous value
+                time.sleep(0.5 * (retry_attempt + 1))  # Exponential backoff
+                continue
+            else:
+                # Final attempt - cache invalidated but we're out of retries
+                print(f"ERROR: [WORKER {worker_pid}] Cache invalidated during ref count acquisition after {max_retries} attempts: cycle {final_gefs} invalidated by cycle {invalidation_cycle}", flush=True)
+                # Release ref counts before failing
+                for model_id in model_ids:
+                    simulate._release_simulator_ref(model_id)
+                raise RuntimeError(f"Cache invalidated during ref count acquisition: cycle {final_gefs} was invalidated by cycle {invalidation_cycle} after {max_retries} attempts")
+        
+        # Cycle is stable and cache is valid - exit retry loop
         break
     
     # Use final_gefs as the cycle for prefetch (single consistent value)
@@ -407,7 +474,20 @@ def wait_for_prefetch(model_ids, worker_pid, timeout=120, min_models=12):
     if not files_available:
         # Files not available - this should not happen if logic is correct, but handle gracefully
         print(f"ERROR: [WORKER {worker_pid}] Cycle {prefetch_gefs} files not available in S3 before prefetch. This indicates a logic error or S3 issue.", flush=True)
+        # Release ref counts before failing (they were acquired above)
+        for model_id in model_ids:
+            simulate._release_simulator_ref(model_id)
         raise RuntimeError(f"Cannot proceed with prefetch: Cycle {prefetch_gefs} files are not available in S3. Please check S3 storage or wait for files to be uploaded.")
+    
+    # FINAL VALIDATION: Re-check cycle one more time immediately before prefetch
+    # This catches any cycle changes that occurred between ref count acquisition and now
+    final_cycle_check = simulate.get_currgefs()
+    if final_cycle_check != prefetch_gefs:
+        print(f"WARNING: [WORKER {worker_pid}] GEFS cycle changed immediately before prefetch: {prefetch_gefs} -> {final_cycle_check}. Releasing ref counts and aborting prefetch.", flush=True)
+        # Release ref counts before failing
+        for model_id in model_ids:
+            simulate._release_simulator_ref(model_id)
+        raise RuntimeError(f"GEFS cycle changed immediately before prefetch: started with {prefetch_gefs}, got {final_cycle_check}. Please retry the request.")
     
     # Log cycle being used for prefetch
     if refresh_updated or pending_cycle:
