@@ -122,6 +122,36 @@ _whichgefs_lock = threading.Lock()
 _downloading_files = set()
 _downloading_lock = threading.Lock()
 
+# Track recently downloaded files with timestamps to protect them from cleanup
+# Files are protected for 5 minutes after download to prevent race conditions where
+# cleanup deletes files before other workers can use them
+_recently_downloaded = {}  # {file_name: download_timestamp}
+_recently_downloaded_lock = threading.Lock()
+_RECENT_DOWNLOAD_GRACE_PERIOD = 300  # 5 minutes protection
+
+def _finalize_cached_file(file_name: str, cache_path: Path) -> Path:
+    """Finalize a cached file: touch it, remove from downloading set, and protect from cleanup.
+    
+    This helper function consolidates the common pattern of finalizing a file that was
+    downloaded (either by this worker or another worker). It ensures the file is:
+    1. Touched to update access time
+    2. Removed from downloading set
+    3. Marked as recently downloaded to protect from cleanup
+    
+    Args:
+        file_name: Name of the file
+        cache_path: Path to the cached file
+        
+    Returns:
+        The cache_path (for chaining)
+    """
+    cache_path.touch()  # Update access time
+    with _downloading_lock:
+        _downloading_files.discard(file_name)
+    with _recently_downloaded_lock:
+        _recently_downloaded[file_name] = time.time()
+    return cache_path
+
 # Limit concurrent downloads to prevent connection pool exhaustion
 # During ensemble, 21 models try to download simultaneously - too many for S3
 # Increased from 4 to 8 to improve throughput while staying within S3 limits
@@ -305,6 +335,22 @@ def _cleanup_old_cache_files():
             downloading_names = _downloading_files.copy()
         cached_files = [f for f in cached_files if f.name not in downloading_names]
         
+        # CRITICAL: Exclude recently downloaded files (within grace period)
+        # Prevents race condition where cleanup deletes files before other workers use them
+        now = time.time()
+        with _recently_downloaded_lock:
+            # Remove expired entries and get current protected files
+            protected_files = {
+                file_name for file_name, download_time in _recently_downloaded.items()
+                if now - download_time < _RECENT_DOWNLOAD_GRACE_PERIOD
+            }
+            # Clean up expired entries
+            _recently_downloaded = {
+                k: v for k, v in _recently_downloaded.items()
+                if k in protected_files
+            }
+        cached_files = [f for f in cached_files if f.name not in protected_files]
+        
         # If worldelev.npy exists, ensure it's not too old (touch it to update access time)
         # This prevents it from being considered for eviction even if cleanup logic changes
         if worldelev_file and worldelev_file.exists():
@@ -464,11 +510,7 @@ def _ensure_cached(file_name: str) -> Path:
                     if cache_path.exists() and cache_path.stat().st_size > 0:
                         # File was downloaded by another worker - use it
                         lock_fd.close()
-                        cache_path.touch()  # Update access time
-                        # Remove from downloading set before returning
-                        with _downloading_lock:
-                            _downloading_files.discard(file_name)
-                        return cache_path
+                        return _finalize_cached_file(file_name, cache_path)
                 # After 5 minutes, other worker may have failed - acquire lock (blocking) to download ourselves
                 # This handles case where other worker crashed mid-download
                 fcntl.flock(lock_fd.fileno(), fcntl.LOCK_EX)
@@ -479,10 +521,7 @@ def _ensure_cached(file_name: str) -> Path:
                 # File exists - release lock and use it (no need to download)
                 fcntl.flock(lock_fd.fileno(), fcntl.LOCK_UN)
                 lock_fd.close()
-                cache_path.touch()
-                with _downloading_lock:
-                    _downloading_files.discard(file_name)
-                return cache_path
+                return _finalize_cached_file(file_name, cache_path)
         except Exception as e:
             # Lock acquisition failed - continue without lock (fallback to semaphore-only)
             # This prevents lock file issues from breaking downloads
@@ -633,18 +672,14 @@ def _ensure_cached(file_name: str) -> Path:
         # CRITICAL: Check if final file already exists (another worker might have completed the download)
         # This handles race conditions where multiple workers download the same file
         if cache_path.exists() and cache_path.stat().st_size > 0:
-            # Another worker completed the download - remove from downloading set and return
-            with _downloading_lock:
-                _downloading_files.discard(file_name)
-            return cache_path
+            # Another worker completed the download - finalize and return
+            return _finalize_cached_file(file_name, cache_path)
         
         if not tmp_path.exists():
             # Temp file doesn't exist - check if another worker completed it
             if cache_path.exists() and cache_path.stat().st_size > 0:
-                # Another worker completed it - return the final file
-                with _downloading_lock:
-                    _downloading_files.discard(file_name)
-                return cache_path
+                # Another worker completed it - finalize and return
+                return _finalize_cached_file(file_name, cache_path)
             # Temp file missing and final file doesn't exist - this is an error
             raise IOError(f"Download logic error: loop completed but temp file not found for {file_name} (and final file doesn't exist)")
         
@@ -658,10 +693,8 @@ def _ensure_cached(file_name: str) -> Path:
             except FileNotFoundError:
                 # Temp file was deleted - check if another worker completed the download
                 if cache_path.exists() and cache_path.stat().st_size > 0:
-                    # Another worker completed it - return the final file
-                    with _downloading_lock:
-                        _downloading_files.discard(file_name)
-                    return cache_path
+                    # Another worker completed it - finalize and return
+                    return _finalize_cached_file(file_name, cache_path)
                 # Temp file deleted and final file doesn't exist - error
                 raise IOError(f"Download failed: temp file {tmp_path} was deleted before rename (race condition or cleanup issue)")
             
@@ -695,7 +728,9 @@ def _ensure_cached(file_name: str) -> Path:
         if not cache_path.exists():
             raise FileNotFoundError(f"Cached file {file_name} not found at {cache_path}")
         
-        return cache_path
+        # CRITICAL: Finalize file to protect it from cleanup
+        # This prevents race condition where cleanup deletes file before other workers use it
+        return _finalize_cached_file(file_name, cache_path)
     finally:
         # CRITICAL: Always release file lock and clean up lock file, even on error
         # This prevents deadlocks on subsequent downloads
