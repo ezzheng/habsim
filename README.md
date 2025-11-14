@@ -318,7 +318,7 @@ When a new GEFS cycle is detected, the system follows a strict protocol to ensur
 
 1. **File Verification**: Verify all 21 model files exist in S3 (retries for eventual consistency)
 2. **Cache Invalidation**: Set `_cache_invalidation_cycle` to signal other workers
-3. **Grace Period**: Wait 5 seconds for S3 propagation across regions
+3. **Grace Period**: Wait 3 seconds for S3 propagation across regions (optimized from 5s)
 4. **Update currgefs**: Write new cycle to shared file (other workers can now see it)
 5. **Cache Cleanup**: Clear unused simulators and schedule old file deletion
 
@@ -326,42 +326,51 @@ This order ensures other workers see `invalidation_cycle` before `currgefs`, all
 
 ### Protection Mechanisms
 
-**1. Grace Period Handling**
-- `refresh()` sets `invalidation_cycle` before `currgefs` (5s grace period)
-- `wait_for_prefetch()` waits for cycle to stabilize before proceeding
-- Prevents race conditions where ensemble starts during cycle transition
+**1. Optimized Grace Period Handling**
+- `refresh()` sets `invalidation_cycle` before `currgefs` (3s grace period, reduced from 5s)
+- `wait_for_prefetch()` skips stabilization wait if cycle was just updated (already stable)
+- Prevents redundant checks and reduces latency after cycle change
 
 **2. Atomic Ref Count Acquisition**
 - Validates cycle consistency before and after acquiring ref counts
 - If cycle changes during acquisition, releases ref counts and retries
 - Ensures all models use the same cycle
+- Validates cycle immediately before prefetch task submission (prevents race conditions)
 
-**3. Pending Cycle Handling**
+**3. Enhanced Pending Cycle Handling**
 - If new cycle detected but files not ready, waits up to 2 minutes
-- Checks for concurrent updates by other workers
+- Checks `currgefs` frequently (every 0.5s) to detect concurrent worker updates
+- Checks S3 files less frequently (every 2s) to reduce API calls
 - Falls back gracefully if timeout (uses current cycle or cached files)
 
 **4. Cycle Consistency Validation**
 - Validates cycle before and after each model prefetch
+- Checks cache invalidation cycle before loading simulators (prevents stale data)
 - Aborts prefetch if cycle changes mid-prefetch (prevents mixed cycles)
-- Early abort if 5+ models fail (likely cycle change)
+- Early abort if 5+ models fail with cycle change errors (likely cycle change)
 
 **5. Cache Validation (Runtime)**
 - Validates cached simulators on every access
 - Extracts GEFS timestamp from `wind_file._source_path`
 - Rejects stale simulators (different cycle) and forces reload
+- Checks `invalidation_cycle` before using cached simulators
 
 **6. File Protection**
 - `_downloading_files` set prevents cleanup of active downloads
 - Per-file locks prevent concurrent downloads
 - Old files only deleted after new cycle is confirmed (30s delay)
 
+**7. Redundancy Elimination**
+- Skips redundant file availability checks after successful `refresh()` (already verified)
+- Skips cycle stabilization wait if cycle was just updated (already stable)
+- Reduces S3 API calls and improves response time
+
 ### Flow During Cycle Change
 
 1. **Refresh detects new cycle**: Reads `whichgefs` from S3
 2. **Verify files exist**: Checks all 21 model files (retries for S3 eventual consistency)
 3. **Set invalidation cycle**: Signals other workers that cache is invalid
-4. **Grace period**: Wait 5 seconds for S3 propagation
+4. **Grace period**: Wait 3 seconds for S3 propagation (optimized from 5s)
 5. **Update currgefs**: Write new timestamp to `/app/data/currgefs.txt`
 6. **Clear cache**: `reset()` evicts unused simulators (preserves active ones)
 7. **Schedule cleanup**: Delete old GEFS files after 30s delay

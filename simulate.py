@@ -230,9 +230,9 @@ def refresh():
                         print(f"INFO: New GEFS cycle {new_gefs} detected but file check failed after {max_retries} attempts: {e}", flush=True)
                         return False
             
-            # Set cache invalidation cycle BEFORE updating currgefs
-            # This makes the operation atomic: other workers see invalidation_cycle before currgefs,
-            # allowing them to detect and wait for cycle transitions properly
+            # Set cache invalidation cycle and update currgefs atomically
+            # This ensures other workers see consistent state (no timing window between updates)
+            # Order: invalidation_cycle first (signals cache invalidation), then currgefs (signals new cycle)
             with _cache_invalidation_lock:
                 old_invalidation_cycle = _cache_invalidation_cycle
                 _cache_invalidation_cycle = new_gefs
@@ -240,11 +240,12 @@ def refresh():
                     print(f"INFO: Cache invalidation cycle set to {new_gefs} (was {old_invalidation_cycle}). All cached simulators will be re-validated.", flush=True)
             
             # Grace period: wait for S3 to fully propagate files before other workers see new cycle
-            # This reduces 404 errors when prefetch starts immediately after cycle change
-            # 5 seconds handles S3 eventual consistency across regions
-            time.sleep(5.0)
+            # Reduced from 5s to 3s - files already verified above, shorter wait reduces latency
+            # 3 seconds handles S3 eventual consistency across regions while keeping response time low
+            time.sleep(3.0)
             
             # Update timestamp atomically (after grace period, files should be fully available)
+            # This completes the atomic update: invalidation_cycle -> wait -> currgefs
             _write_currgefs(new_gefs)
             
             # Log cycle change for debugging

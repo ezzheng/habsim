@@ -141,9 +141,8 @@ def _prefetch_model(model_id, worker_pid, expected_gefs=None):
                         # Final attempt - cycle changed but we're out of retries
                         raise RuntimeError(f"GEFS cycle changed during prefetch for model {model_id}: started with {expected_gefs}, got {current_gefs} after {max_retries} attempts")
             
-            # CRITICAL: Check cache invalidation before loading simulator
-            # If reset() ran during prefetch, cached simulators may be invalid even with ref_count > 0
-            # _get_simulator() will handle this, but we validate cycle consistency here
+            # CRITICAL: Check cycle consistency and cache invalidation before loading simulator
+            # This prevents loading stale simulators even if ref_count > 0 (reset() may have run)
             current_gefs_before_load = simulate.get_currgefs()
             if current_gefs_before_load and current_gefs_before_load != "Unavailable":
                 if expected_gefs and expected_gefs != 'Unavailable' and current_gefs_before_load != expected_gefs:
@@ -154,8 +153,8 @@ def _prefetch_model(model_id, worker_pid, expected_gefs=None):
                         time.sleep(retry_delay * (attempt + 1))
                         continue
             
-            # CRITICAL: Check if cache was invalidated before loading simulator
-            # This catches cases where reset() ran after ref count acquisition but before simulator load
+            # Check cache invalidation cycle (must match expected cycle)
+            # If reset() ran during prefetch, invalidation_cycle will differ from expected_gefs
             cache_invalidated = False
             invalidation_cycle = None
             try:
@@ -166,8 +165,7 @@ def _prefetch_model(model_id, worker_pid, expected_gefs=None):
                         if expected_gefs and expected_gefs != 'Unavailable' and invalidation_cycle != expected_gefs:
                             cache_invalidated = True
             except (AttributeError, NameError):
-                # If cache invalidation lock doesn't exist (shouldn't happen), skip check
-                pass
+                pass  # Lock doesn't exist (shouldn't happen, but safe to skip)
             
             if cache_invalidated:
                 if attempt < max_retries - 1:
@@ -178,7 +176,6 @@ def _prefetch_model(model_id, worker_pid, expected_gefs=None):
                     time.sleep(retry_delay * (attempt + 1))
                     continue
                 else:
-                    # Final attempt - cache invalidated but we're out of retries
                     raise RuntimeError(f"Cache invalidated before load for model {model_id}: expected cycle {expected_gefs} was invalidated by cycle {invalidation_cycle} after {max_retries} attempts")
             
             # Load simulator (ref count already acquired in wait_for_prefetch)
@@ -268,6 +265,9 @@ def _wait_for_cycle_stable(worker_pid, max_wait=6.0):
 def _wait_for_pending_cycle(pending_cycle, worker_pid, max_wait=120):
     """Wait for pending cycle files to become available in S3.
     
+    Checks currgefs frequently to detect concurrent updates by other workers.
+    This prevents unnecessary waiting when another worker has already updated the cycle.
+    
     Args:
         pending_cycle: Cycle timestamp to wait for
         worker_pid: Worker process ID for logging
@@ -277,22 +277,26 @@ def _wait_for_pending_cycle(pending_cycle, worker_pid, max_wait=120):
         True if files are ready, False if timeout
     """
     wait_interval = 2.0
+    check_interval = 0.5  # Check currgefs more frequently (every 0.5s)
     waited = 0.0
+    last_file_check = 0.0
     
     while waited < max_wait:
-        # Check if another worker already updated currgefs (files must be ready)
+        # Check currgefs frequently to detect concurrent updates (every 0.5s)
         current_gefs = simulate.get_currgefs()
         if current_gefs == pending_cycle:
             print(f"INFO: [WORKER {worker_pid}] Another worker updated currgefs to {pending_cycle}. Files should be ready.", flush=True)
             return True
         
-        # Check if files are available in S3
-        if simulate._check_cycle_files_available(pending_cycle, check_disk_cache=False, retry_for_consistency=True):
-            print(f"INFO: [WORKER {worker_pid}] Cycle {pending_cycle} files available after {waited:.1f}s", flush=True)
-            return True
+        # Check files less frequently (every 2s) to reduce S3 API calls
+        if waited - last_file_check >= wait_interval:
+            if simulate._check_cycle_files_available(pending_cycle, check_disk_cache=False, retry_for_consistency=True):
+                print(f"INFO: [WORKER {worker_pid}] Cycle {pending_cycle} files available after {waited:.1f}s", flush=True)
+                return True
+            last_file_check = waited
         
-        time.sleep(wait_interval)
-        waited += wait_interval
+        time.sleep(check_interval)
+        waited += check_interval
     
     return False
 
@@ -421,12 +425,14 @@ def wait_for_prefetch(model_ids, worker_pid, timeout=120, min_models=12):
     
     # Handle refresh() return value (may be bool or tuple)
     pending_cycle = None
+    cycle_just_updated = False
     if isinstance(refresh_result, tuple):
         _, pending_cycle = refresh_result
     elif refresh_result:
-        # Cycle was updated - wait for it to stabilize
-        current_gefs = _wait_for_cycle_stable(worker_pid)
-        if not current_gefs:
+        # Cycle was just updated by refresh() - it's already stable (refresh() waits 5s grace period)
+        # No need to call _wait_for_cycle_stable() - cycle is guaranteed stable
+        cycle_just_updated = True
+        if not current_gefs or current_gefs == "Unavailable":
             raise RuntimeError("GEFS cycle unavailable after refresh")
     
     # Phase 2: Handle pending cycle (new cycle detected but files not ready)
@@ -460,22 +466,28 @@ def wait_for_prefetch(model_ids, worker_pid, timeout=120, min_models=12):
                 else:
                     raise RuntimeError(f"Neither cycle available: pending {pending_cycle}, current {current_gefs}")
     
-    # Phase 3: Wait for cycle to stabilize and verify files are available
-    stable_cycle = _wait_for_cycle_stable(worker_pid)
-    if stable_cycle:
-        current_gefs = stable_cycle
+    # Phase 3: Wait for cycle to stabilize (only if cycle wasn't just updated)
+    # If refresh() returned True, cycle is already stable (5s grace period already waited)
+    if not cycle_just_updated:
+        stable_cycle = _wait_for_cycle_stable(worker_pid)
+        if stable_cycle:
+            current_gefs = stable_cycle
     
     if not current_gefs or current_gefs == "Unavailable":
         raise RuntimeError("GEFS cycle unavailable - cannot proceed with prefetch")
     
-    # Verify files are available before proceeding
-    if not simulate._check_cycle_files_available(current_gefs, check_disk_cache=False, retry_for_consistency=True):
-        raise RuntimeError(f"Cycle {current_gefs} files not available in S3")
+    # Verify files are available (skip if cycle was just updated - refresh() already verified)
+    # This prevents redundant S3 checks and reduces latency
+    if not cycle_just_updated:
+        if not simulate._check_cycle_files_available(current_gefs, check_disk_cache=False, retry_for_consistency=True):
+            raise RuntimeError(f"Cycle {current_gefs} files not available in S3")
     
     # Phase 4: Acquire ref counts atomically with cycle validation
     prefetch_gefs = _acquire_ref_counts_atomic(model_ids, worker_pid, current_gefs)
     
-    # Final validation: ensure cycle hasn't changed
+    # Final validation: ensure cycle hasn't changed before starting prefetch
+    # This critical check prevents race conditions where cycle changes between
+    # ref count acquisition and prefetch task submission
     final_cycle = simulate.get_currgefs()
     if final_cycle != prefetch_gefs:
         # Release ref counts and abort
@@ -483,7 +495,7 @@ def wait_for_prefetch(model_ids, worker_pid, timeout=120, min_models=12):
             simulate._release_simulator_ref(model_id)
         raise RuntimeError(f"Cycle changed before prefetch: {prefetch_gefs} -> {final_cycle}")
     
-    # Verify cache invalidation cycle matches
+    # Verify cache invalidation cycle matches (ensures cache consistency)
     try:
         with simulate._cache_invalidation_lock:
             invalidation_cycle = simulate._cache_invalidation_cycle
@@ -496,7 +508,7 @@ def wait_for_prefetch(model_ids, worker_pid, timeout=120, min_models=12):
     
     print(f"INFO: [WORKER {worker_pid}] Starting prefetch with cycle: {prefetch_gefs}", flush=True)
     
-    # Phase 5: Submit prefetch tasks
+    # Phase 5: Submit prefetch tasks (cycle validated, ref counts acquired)
     executor = ThreadPoolExecutor(max_workers=min(10, len(model_ids)))
     try:
         prefetch_futures = {
@@ -524,11 +536,13 @@ def wait_for_prefetch(model_ids, worker_pid, timeout=120, min_models=12):
                         cycle_change_failures += 1
                         print(f"WARNING: [WORKER {worker_pid}] Prefetch failed for model {model_id}: {e}", flush=True)
                     elif "FileNotFoundError" in error_msg or "file not found" in error_msg.lower():
+                        # FileNotFoundError during prefetch - may be S3 eventual consistency or cycle change
+                        # Don't count as cycle change failure, but log for monitoring
                         print(f"WARNING: [WORKER {worker_pid}] Prefetch failed for model {model_id} (file not available): {e}", flush=True)
                     else:
                         print(f"WARNING: [WORKER {worker_pid}] Prefetch failed for model {model_id}: {e}", flush=True)
                 
-                # Abort if too many cycle change failures
+                # Abort if too many cycle change failures (indicates cycle changed mid-prefetch)
                 if cycle_change_failures >= max_failures_before_abort:
                     elapsed = time.time() - start_time
                     print(f"WARNING: [WORKER {worker_pid}] Prefetch aborting: {cycle_change_failures} cycle change failures", flush=True)
