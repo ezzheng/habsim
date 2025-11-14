@@ -221,7 +221,7 @@ def refresh():
             if new_gefs == old_gefs:
                 with _cache_invalidation_lock:
                     if _cache_invalidation_cycle != new_gefs:
-                        print(f"INFO: refresh() synchronized cache invalidation cycle to {new_gefs} (already current).", flush=True)
+                        print(f"INFO: Cycle {new_gefs} already active; invalidation pointer synchronized.", flush=True)
                         _cache_invalidation_cycle = new_gefs
                 return False
             
@@ -248,21 +248,21 @@ def refresh():
                     else:
                         if attempt < max_retries - 1:
                             wait_time = retry_delay * (2 ** attempt)
-                            print(f"INFO: New GEFS cycle {new_gefs} detected but files not available yet, retrying in {wait_time:.1f}s (attempt {attempt + 1}/{max_retries})...", flush=True)
+                            print(f"INFO: Cycle {new_gefs} not ready (attempt {attempt + 1}/{max_retries}); retrying in {wait_time:.1f}s", flush=True)
                             time.sleep(wait_time)
                             continue
                         else:
                             # Final attempt - still missing files
                             # Return special status: new cycle detected but files not ready
-                            print(f"WARNING: New GEFS cycle {new_gefs} detected in whichgefs but files not available after {max_retries} attempts. Using current cycle {old_gefs} until files are ready.", flush=True)
+                            print(f"WARNING: Cycle {new_gefs} missing files after {max_retries} checks; staying on {old_gefs or 'Unavailable'}", flush=True)
                             return (False, new_gefs)  # Return tuple: (False, pending_cycle)
                 except Exception as e:
                     if attempt < max_retries - 1:
                         wait_time = retry_delay * (2 ** attempt)
-                        print(f"INFO: Error checking GEFS files for cycle {new_gefs}, retrying in {wait_time:.1f}s: {e}", flush=True)
+                        print(f"INFO: Cycle {new_gefs} check error ({e}); retry {attempt + 1}/{max_retries} in {wait_time:.1f}s", flush=True)
                         time.sleep(wait_time)
                     else:
-                        print(f"INFO: New GEFS cycle {new_gefs} detected but file check failed after {max_retries} attempts: {e}", flush=True)
+                        print(f"INFO: Cycle {new_gefs} file verification failed after {max_retries} attempts: {e}", flush=True)
                         return False
             
             # Set cache invalidation cycle and update currgefs atomically
@@ -272,7 +272,7 @@ def refresh():
                 old_invalidation_cycle = _cache_invalidation_cycle
                 _cache_invalidation_cycle = new_gefs
                 if old_invalidation_cycle != new_gefs:
-                    print(f"INFO: Cache invalidation cycle set to {new_gefs} (was {old_invalidation_cycle}). All cached simulators will be re-validated.", flush=True)
+                    print(f"INFO: Cycle switch {old_invalidation_cycle or 'None'}→{new_gefs}: invalidation armed.", flush=True)
             
             # Grace period: short wait keeps currgefs hidden until files are definitely readable
             time.sleep(3.0)
@@ -281,16 +281,13 @@ def refresh():
             # This completes the atomic update: invalidation_cycle -> wait -> currgefs
             _write_currgefs(new_gefs)
             
-            # Log cycle change for debugging
-            print(f"INFO: GEFS cycle updated: {old_gefs} -> {new_gefs}. Invalidating cache and clearing simulators.", flush=True)
-            
             # Clear caches after successful update (pass cycle explicitly to avoid race)
             reset(new_gefs)
             _prediction_cache.clear()
             _cache_access_times.clear()
             
-            # Log cache invalidation completion
-            print(f"INFO: Cache invalidation complete for cycle {new_gefs}. All simulators from cycle {old_gefs} are now invalid.", flush=True)
+            # Log consolidated summary
+            print(f"INFO: Cycle {old_gefs or 'Unavailable'}→{new_gefs} ready: cache reset, predictions flushed, cleanup scheduled.", flush=True)
             
             # Delay old file cleanup - only delete after confirming new cycle is available
             # This prevents "file not found" errors if new files aren't uploaded yet
