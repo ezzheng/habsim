@@ -253,11 +253,12 @@ function initMapControls() {
         
         const initAutocomplete = () => {
             if (autocompleteInitialized) return;
+            if (!searchInputContainer.classList.contains('expanded')) return;
             
-            // Track modifier key presses to prevent unwanted blur events
+            // Track modifier key presses to prevent unwanted autocomplete repositioning
             let modifierKeyPressed = false;
             let modifierKeyTimeout = null;
-            if (!searchInputContainer.classList.contains('expanded')) return;
+            let cachedInputRect = null; // Cache input position when modifier keys are active
             
             if (typeof google === 'undefined' || !google.maps || !google.maps.places || !google.maps.places.Autocomplete) {
                 console.warn('Places library not loaded');
@@ -333,7 +334,24 @@ function initMapControls() {
                         
                         const hasText = searchInput.value.trim().length > 0;
                         const isMobile = window.innerWidth <= 768;
-                        const inputRect = searchInput.getBoundingClientRect();
+                        
+                        // Use cached position when modifier keys are pressed to prevent shifting
+                        // Otherwise get fresh bounding rect
+                        let inputRect;
+                        if (modifierKeyPressed && cachedInputRect) {
+                            inputRect = cachedInputRect;
+                        } else {
+                            inputRect = searchInput.getBoundingClientRect();
+                            // Cache the position when we get a fresh one (for use during modifier key presses)
+                            if (!modifierKeyPressed) {
+                                cachedInputRect = {
+                                    left: inputRect.left,
+                                    top: inputRect.top,
+                                    bottom: inputRect.bottom,
+                                    width: inputRect.width
+                                };
+                            }
+                        }
                         
                         pacContainer.style.zIndex = '10000';
                         pacContainer.style.position = 'fixed';
@@ -376,9 +394,20 @@ function initMapControls() {
                 
                 searchInput.addEventListener('focus', styleAutocomplete);
                 
-                // Track modifier key presses to prevent blur from repositioning autocomplete
+                // Track modifier key presses to prevent autocomplete repositioning
+                // Cache input position before modifier keys cause focus loss
                 searchInput.addEventListener('keydown', (e) => {
                     if (e.ctrlKey || e.metaKey || e.altKey) {
+                        // Cache current position before focus is lost
+                        if (!modifierKeyPressed) {
+                            const rect = searchInput.getBoundingClientRect();
+                            cachedInputRect = {
+                                left: rect.left,
+                                top: rect.top,
+                                bottom: rect.bottom,
+                                width: rect.width
+                            };
+                        }
                         modifierKeyPressed = true;
                         // Clear any existing timeout
                         if (modifierKeyTimeout) {
@@ -387,6 +416,7 @@ function initMapControls() {
                         // Reset flag after a short delay (modifier key released)
                         modifierKeyTimeout = setTimeout(() => {
                             modifierKeyPressed = false;
+                            cachedInputRect = null; // Clear cache when modifier keys released
                         }, 100);
                     }
                 });
@@ -394,6 +424,7 @@ function initMapControls() {
                 searchInput.addEventListener('keyup', (e) => {
                     if (!e.ctrlKey && !e.metaKey && !e.altKey) {
                         modifierKeyPressed = false;
+                        cachedInputRect = null; // Clear cache when modifier keys released
                         if (modifierKeyTimeout) {
                             clearTimeout(modifierKeyTimeout);
                             modifierKeyTimeout = null;
