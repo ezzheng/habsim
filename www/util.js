@@ -253,6 +253,10 @@ function initMapControls() {
         
         const initAutocomplete = () => {
             if (autocompleteInitialized) return;
+            
+            // Track modifier key presses to prevent unwanted blur events
+            let modifierKeyPressed = false;
+            let modifierKeyTimeout = null;
             if (!searchInputContainer.classList.contains('expanded')) return;
             
             if (typeof google === 'undefined' || !google.maps || !google.maps.places || !google.maps.places.Autocomplete) {
@@ -372,7 +376,38 @@ function initMapControls() {
                 
                 searchInput.addEventListener('focus', styleAutocomplete);
                 
+                // Track modifier key presses to prevent blur from repositioning autocomplete
+                searchInput.addEventListener('keydown', (e) => {
+                    if (e.ctrlKey || e.metaKey || e.altKey) {
+                        modifierKeyPressed = true;
+                        // Clear any existing timeout
+                        if (modifierKeyTimeout) {
+                            clearTimeout(modifierKeyTimeout);
+                        }
+                        // Reset flag after a short delay (modifier key released)
+                        modifierKeyTimeout = setTimeout(() => {
+                            modifierKeyPressed = false;
+                        }, 100);
+                    }
+                });
+                
+                searchInput.addEventListener('keyup', (e) => {
+                    if (!e.ctrlKey && !e.metaKey && !e.altKey) {
+                        modifierKeyPressed = false;
+                        if (modifierKeyTimeout) {
+                            clearTimeout(modifierKeyTimeout);
+                            modifierKeyTimeout = null;
+                        }
+                    }
+                });
+                
                 searchInput.addEventListener('blur', () => {
+                    // Ignore blur events caused by modifier key presses
+                    // These cause unwanted autocomplete repositioning
+                    if (modifierKeyPressed) {
+                        return;
+                    }
+                    
                     setTimeout(() => {
                         const pacContainer = document.querySelector('.pac-container');
                         if (pacContainer && !pacContainer.contains(document.activeElement)) {
@@ -488,13 +523,7 @@ function initMapControls() {
         controlsContainer.appendChild(searchControl);
         
         // Close menus when clicking outside
-        // Ignore clicks with modifier keys (Ctrl/Cmd/Option) - these are keyboard shortcuts, not intentional outside clicks
         document.addEventListener('click', (e) => {
-            // Skip if modifier keys are pressed (prevents closing when using keyboard shortcuts)
-            if (e.ctrlKey || e.metaKey || e.altKey) {
-                return;
-            }
-            
             const pacContainer = document.querySelector('.pac-container');
             const clickedInPac = pacContainer && pacContainer.contains(e.target);
             
