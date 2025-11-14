@@ -51,8 +51,6 @@ if Path("/app/data").exists():  # Railway persistent volume
     _CURRGEFS_FILE = Path("/app/data/currgefs.txt")
 else:
     _CURRGEFS_FILE = Path(tempfile.gettempdir()) / "habsim-currgefs.txt"
-print(f"INFO: currgefs file: {_CURRGEFS_FILE}", flush=True)
-_CURRGEFS_LOCK = threading.Lock()
 _last_refresh_check = 0.0
 _cache_trim_thread_started = False
 _IDLE_RESET_TIMEOUT = 120.0
