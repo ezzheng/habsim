@@ -151,7 +151,7 @@ def refresh():
         Tuple (False, "pending_cycle") if new cycle detected but files not ready
     """
     import fcntl
-    global _last_refresh_check
+    global _last_refresh_check, _cache_invalidation_cycle
     
     # File-based lock prevents concurrent refreshes across workers
     lock_file = None
