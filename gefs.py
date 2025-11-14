@@ -336,9 +336,11 @@ def _ensure_cached(file_name: str) -> Path:
         FileNotFoundError: If file doesn't exist in S3 (fatal, no retry)
         IOError: For retryable errors (network, incomplete downloads, etc.)
     """
+    print(f"DEBUG: _ensure_cached() called for {file_name}", flush=True)
     cache_path = _CACHE_DIR / file_name
     
     if cache_path.exists():
+        print(f"DEBUG: _ensure_cached() file exists in cache: {cache_path}", flush=True)
         try:
             if file_name.endswith('.npz'):
                 import numpy as np
@@ -358,10 +360,12 @@ def _ensure_cached(file_name: str) -> Path:
 
     with _CACHE_LOCK:
         if cache_path.exists():
+            print(f"DEBUG: _ensure_cached() file exists after lock check: {cache_path}", flush=True)
             cache_path.touch()
             return cache_path
 
         # Clean up old files before downloading new one
+        print(f"DEBUG: _ensure_cached() file not in cache, starting download for {file_name}", flush=True)
         cleanup_start = time.time()
         _cleanup_old_cache_files()
         cleanup_time = time.time() - cleanup_start
