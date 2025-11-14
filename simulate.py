@@ -709,26 +709,39 @@ def _get_simulator(model):
                 del _simulator_cache[model]
                 del _simulator_access_times[model]
         
-        # Cache miss - need to load new simulator
-        # Evict oldest if cache is full (only evict if not in use)
-        if len(_simulator_cache) >= _current_max_cache:
-            # Find oldest model that's not in use
-            sorted_models = sorted(_simulator_access_times.items(), key=lambda x: x[1])
-            oldest_model = None
-            for candidate_model, _ in sorted_models:
-                if not _is_simulator_in_use(candidate_model):
-                    oldest_model = candidate_model
-                    break
-            
-            if oldest_model:
-                simulator = _simulator_cache.get(oldest_model)
-                if simulator:
-                    _cleanup_simulator_safely(simulator)
-                del _simulator_cache[oldest_model]
-                del _simulator_access_times[oldest_model]
-                with _simulator_ref_lock:
-                    _simulator_ref_counts.pop(oldest_model, None)
-                gc.collect()  # Help GC reclaim memory from evicted simulator
+        # Check if eviction is needed (still holding lock for atomic check)
+        cache_size = len(_simulator_cache)
+        needs_eviction = cache_size >= _current_max_cache
+    
+    # Cache miss - need to load new simulator
+    # Evict oldest if cache is full (only evict if not in use)
+    # Do expensive operations OUTSIDE the lock to reduce contention
+    oldest_model = None
+    if needs_eviction:
+        # Get access times snapshot outside lock
+        with _cache_lock:
+            access_times_snapshot = dict(_simulator_access_times)
+        
+        # Sort and find candidate outside lock (no nested locks)
+        sorted_models = sorted(access_times_snapshot.items(), key=lambda x: x[1])
+        for candidate_model, _ in sorted_models:
+            if not _is_simulator_in_use(candidate_model):
+                oldest_model = candidate_model
+                break
+        
+        # Re-acquire lock only to actually evict
+        if oldest_model:
+            with _cache_lock:
+                # Double-check it still exists and isn't in use (race condition protection)
+                if oldest_model in _simulator_cache and not _is_simulator_in_use(oldest_model):
+                    simulator = _simulator_cache.get(oldest_model)
+                    if simulator:
+                        _cleanup_simulator_safely(simulator)
+                    del _simulator_cache[oldest_model]
+                    del _simulator_access_times[oldest_model]
+                    with _simulator_ref_lock:
+                        _simulator_ref_counts.pop(oldest_model, None)
+                    gc.collect()  # Help GC reclaim memory from evicted simulator
     
     # Load new simulator (outside lock to avoid blocking other threads)
     # Auto-detect if we should preload arrays based on workload (adaptive)
