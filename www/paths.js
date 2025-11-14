@@ -1,5 +1,19 @@
-// Controls fetching and rendering of trajectories.
+/**
+ * Path rendering and trajectory visualization module.
+ * 
+ * Handles:
+ * - Rendering trajectory paths on Google Maps
+ * - Managing end pin markers and info windows
+ * - Waypoint visualization
+ * - Heatmap and contour rendering
+ * - Ensemble and Monte Carlo simulation coordination
+ */
 
+// ============================================================================
+// GLOBAL STATE VARIABLES
+// ============================================================================
+
+/** Cached trajectory path data (raw coordinate arrays) */
 rawpathcache = [];
 rawpathcacheModels = [];
 var endPinMarker = null;
@@ -12,17 +26,106 @@ var multiConnectorPath = null;
 var multiEndPositions = [];
 var endPinZoomListener = null;
 
+// ============================================================================
+// HELPER FUNCTIONS
+// ============================================================================
+
+/**
+ * Format Unix timestamp (seconds) to HH:MM:SS string.
+ * 
+ * @param {number} timestamp - Unix timestamp in seconds
+ * @returns {string} Formatted time string (e.g., "14:30:45")
+ */
+function formatTimeFromTimestamp(timestamp) {
+    var date = new Date(timestamp * 1000);  // Convert seconds to milliseconds
+    var hours = date.getHours();
+    var minutes = "0" + date.getMinutes();
+    var seconds = "0" + date.getSeconds();
+    return hours + ':' + minutes.substr(-2) + ':' + seconds.substr(-2);
+}
+
+/**
+ * Get timezone abbreviation for current locale (e.g., "PST", "EST", "UTC").
+ * 
+ * Uses Intl API to detect user's timezone. Falls back to UTC if detection fails.
+ * 
+ * @returns {string} Timezone abbreviation
+ */
+function getTimezoneAbbr() {
+    try {
+        var timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        var now = new Date();
+        var formatter = new Intl.DateTimeFormat('en-US', {
+            timeZone: timeZone,
+            timeZoneName: 'short'
+        });
+        var parts = formatter.formatToParts(now);
+        var tzPart = parts.find(function(part) { return part.type === 'timeZoneName'; });
+        return (tzPart && tzPart.value) || 'UTC';
+    } catch (e) {
+        return 'UTC';  // Fallback to UTC if detection fails
+    }
+}
+
+/**
+ * Validate that a value is a positive number.
+ * 
+ * @param {string} value - Value to validate
+ * @param {string} fieldName - Name of field for error message
+ * @throws {Error} If value is empty, not a number, or <= 0
+ */
+function validatePositiveNumber(value, fieldName) {
+    if (!value || value === "" || parseFloat(value) <= 0) {
+        alert(fieldName + " must be a positive number");
+        throw new Error("Invalid " + fieldName.toLowerCase());
+    }
+}
+
+/**
+ * Validate that a value is a non-negative number.
+ * 
+ * @param {string} value - Value to validate
+ * @param {string} fieldName - Name of field for error message
+ * @throws {Error} If value is empty, not a number, or < 0
+ */
+function validateNonNegativeNumber(value, fieldName) {
+    if (!value || value === "" || parseFloat(value) < 0) {
+        alert(fieldName + " must be a non-negative number");
+        throw new Error("Invalid " + fieldName.toLowerCase());
+    }
+}
+
+// ============================================================================
+// MARKER AND VISUALIZATION FUNCTIONS
+// ============================================================================
+
+/**
+ * Update end pin marker visibility and scale based on map zoom level.
+ * 
+ * Hides pins when zoomed out too far (zoom < 7) and scales them with zoom level
+ * for better visibility. Called automatically when map zoom changes.
+ * 
+ * Dependencies: Requires global map object and endPinMarker/endPinMarkers arrays
+ */
 function updateEndPinVisibility() {
     try {
         if (!map) return;
         const zoom = map.getZoom ? map.getZoom() : 10;
+        
         // Hide pins when zoomed out too far; scale pins with zoom
         const minZoomToShow = 7;
         const visible = zoom >= minZoomToShow;
+        
         // Scaling relative to zoom (base scale is 7.5)
-        let scale = Math.max(0, (zoom - 6) * 1.0 + 5.5); // zoom 7 ~5.5, 10 ~8.5, 12 ~10.5
+        // Formula: scale = (zoom - 6) * 1.0 + 5.5
+        // Results: zoom 7 ~5.5, zoom 10 ~8.5, zoom 12 ~10.5
+        let scale = Math.max(0, (zoom - 6) * 1.0 + 5.5);
         if (!visible) scale = 0;
 
+        /**
+         * Helper: Update visibility and scale for a single marker
+         * @param {google.maps.Marker} marker - Marker to update
+         */
         function setMarkerScale(marker) {
             if (!marker) return;
             if (typeof marker.setVisible === 'function') marker.setVisible(visible);
@@ -35,23 +138,40 @@ function updateEndPinVisibility() {
             }
         }
 
-        // Single mode marker
+        // Update single mode marker
         if (endPinMarker) setMarkerScale(endPinMarker);
-        // Multi markers
+        
+        // Update multi markers
         if (endPinMarkers && endPinMarkers.length) {
             for (const m of endPinMarkers) setMarkerScale(m);
         }
     } catch (e) {}
 }
 
+/**
+ * Ensure zoom change listener is attached to map for end pin visibility updates.
+ * 
+ * Only creates listener if it doesn't already exist (prevents duplicate listeners).
+ * Listener automatically calls updateEndPinVisibility() when map zoom changes.
+ * 
+ * Dependencies: Requires global map object and Google Maps API
+ */
 function ensureEndPinZoomListener() {
     try {
         if (!map || !google || !google.maps) return;
-        if (endPinZoomListener) return;
+        if (endPinZoomListener) return; // Already attached
         endPinZoomListener = google.maps.event.addListener(map, 'zoom_changed', updateEndPinVisibility);
     } catch (e) {}
 }
 
+/**
+ * Remove zoom change listener from map.
+ * 
+ * Called during cleanup to prevent memory leaks. Safe to call even if
+ * listener doesn't exist.
+ * 
+ * Dependencies: Requires Google Maps API
+ */
 function clearEndPinZoomListener() {
     try {
         if (endPinZoomListener && google && google.maps && google.maps.event) {
@@ -61,38 +181,73 @@ function clearEndPinZoomListener() {
     } catch (e) {}
 }
 
+/**
+ * Render trajectory paths on the map as polylines.
+ * 
+ * Converts raw path data (arrays of [time, lat, lon, alt]) into Google Maps
+ * Polyline objects and adds them to the map. Control model (gec00) gets
+ * thicker, more opaque lines for visibility.
+ * 
+ * @param {string} btype - Balloon type (STANDARD, ZPB, FLOAT) - currently unused
+ * @param {Array} allpaths - Array of path arrays, each containing [time, lat, lon, alt] points
+ * @param {boolean} isControl - If true, render as control model (thicker, more opaque line)
+ * 
+ * Side effects:
+ * - Adds paths to rawpathcache for later reference
+ * - Adds polylines to currpaths array for cleanup
+ * - Renders polylines on global map object
+ */
 function makepaths(btype, allpaths, isControl = false) {
-    rawpathcache.push(allpaths)
+    // Cache raw path data for waypoint visualization
+    rawpathcache.push(allpaths);
+    
+    // Convert each path array to Google Maps Polyline
     for (index in allpaths) {
         var pathpoints = [];
 
-        for (point in allpaths[index]){
-                var position = {
-                    lat: allpaths[index][point][1],
-                    lng: allpaths[index][point][2],
-                };
-                pathpoints.push(position);
+        // Convert [time, lat, lon, alt] points to {lat, lng} objects for Google Maps
+        for (point in allpaths[index]) {
+            var position = {
+                lat: allpaths[index][point][1],
+                lng: allpaths[index][point][2],
+            };
+            pathpoints.push(position);
         }
         
         // Control model (gec00) gets thicker, solid line; perturbed models get thinner lines
         var drawpath = new google.maps.Polyline({
             path: pathpoints,
-            geodesic: true,
-            strokeColor: getcolor(index),
-            strokeOpacity: isControl ? 1.0 : 0.7,
-            strokeWeight: isControl ? 4.5 : 2
+            geodesic: true,  // Follows Earth's curvature for long paths
+            strokeColor: getcolor(index),  // Color based on model index
+            strokeOpacity: isControl ? 1.0 : 0.7,  // Control: fully opaque, others: semi-transparent
+            strokeWeight: isControl ? 4.5 : 2  // Control: thicker line
         });
         drawpath.setMap(map);
-        currpaths.push(drawpath);
+        currpaths.push(drawpath);  // Store for cleanup
     }
-
-
 }
+/**
+ * Clear all visualizations from the map (paths, markers, heatmap, contours).
+ * 
+ * Comprehensive cleanup function called before new simulations to prevent
+ * visual clutter. Safely handles missing or partially initialized objects.
+ * 
+ * Side effects:
+ * - Removes all polylines, markers, info windows, heatmap, and contours
+ * - Clears cached path data
+ * - Resets global visualization state
+ */
 function clearAllVisualizations() {
+    // Clear waypoints (circles and info windows)
     clearWaypoints();
+    
+    // Clear end pin markers and info windows
     clearEndPin();
+    
+    // Remove zoom listener (will be reattached when new end pins are created)
     clearEndPinZoomListener();
     
+    // Clear multi mode connector path
     try {
         if (multiConnectorPath) {
             multiConnectorPath.setMap(null);
@@ -101,6 +256,7 @@ function clearAllVisualizations() {
         multiEndPositions = [];
     } catch (e) {}
     
+    // Remove all trajectory path polylines
     for (let path in currpaths) {
         if (currpaths[path]?.setMap) {
             currpaths[path].setMap(null);
@@ -108,6 +264,7 @@ function clearAllVisualizations() {
     }
     currpaths = [];
     
+    // Clear heatmap layer (Monte Carlo visualization)
     if (heatmapLayer) {
         try {
             if (heatmapLayer.setMap) heatmapLayer.setMap(null);
@@ -121,28 +278,63 @@ function clearAllVisualizations() {
         heatmapLayer = null;
     }
     
+    // Clear contour lines (probability visualization)
     clearContours();
+    
+    // Clear cached path data
     rawpathcache = [];
     rawpathcacheModels = [];
 }
 
+/**
+ * Clear all waypoint markers and their info windows from the map.
+ * 
+ * Waypoints are circular markers shown along trajectory paths when waypoint
+ * toggle is enabled. This function removes them and closes associated info windows.
+ * 
+ * Side effects:
+ * - Closes all waypoint info windows
+ * - Removes all waypoint circles from map
+ * - Clears waypointInfoWindows and circleslist arrays
+ */
 function clearWaypoints() {
+    // Close all waypoint info windows
     waypointInfoWindows.forEach(win => {
         try {
             if (win?.getMap()) win.close();
         } catch (e) {}
     });
     waypointInfoWindows = [];
+    
+    // Remove all waypoint circles from map
     circleslist.forEach(circle => circle.setMap(null));
     circleslist = [];
 }
 
+/**
+ * Display waypoint markers along trajectory paths.
+ * 
+ * Creates circular markers at each point along trajectory paths with info windows
+ * showing time, location, and altitude. Skips the last point of each path (which
+ * is shown as an end pin instead).
+ * 
+ * Dependencies:
+ * - Requires rawpathcache to contain path data
+ * - Requires waypointsToggle to be true
+ * - Requires global map object
+ * 
+ * Side effects:
+ * - Creates Google Maps Circle objects and adds them to map
+ * - Creates InfoWindow objects for hover display
+ * - Populates circleslist and waypointInfoWindows arrays
+ */
 function showWaypoints() {
     for (i in rawpathcache) {
         allpaths = rawpathcache[i]
         var modelIdForEntry = rawpathcacheModels[i];
         for (index in allpaths) {
             for (point in allpaths[index]){
+                // Use IIFE to capture loop variables (prevents closure issues)
                 (function () {
                     var position = {
                         lat: allpaths[index][point][1],
@@ -197,34 +389,11 @@ function showWaypoints() {
                             zIndex: 1000  // Higher z-index so waypoints appear above heatmap
                         });
                         circleslist.push(circle);
-                        // multiplied by 1000 so that the argument is in milliseconds, not seconds.
-                        var date = new Date(allpaths[index][point][0] * 1000);
-
-                        // Hours part from the timestamp
-                        var hours = date.getHours();
-                        // Minutes part from the timestamp
-                        var minutes = "0" + date.getMinutes();
-                        // Seconds part from the timestamp
-                        var seconds = "0" + date.getSeconds();
-
-                        // Will display time in 10:30:23 format
-                        var formattedTime = hours + ':' + minutes.substr(-2) + ':' + seconds.substr(-2);
+                        // Format timestamp to HH:MM:SS using helper function
+                        var formattedTime = formatTimeFromTimestamp(allpaths[index][point][0]);
                         
-                        // Get timezone abbreviation
-                        var tzAbbr = 'UTC';
-                        try {
-                            var timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-                            var now = new Date();
-                            var formatter = new Intl.DateTimeFormat('en-US', {
-                                timeZone: timeZone,
-                                timeZoneName: 'short'
-                            });
-                            var parts = formatter.formatToParts(now);
-                            var tzPart = parts.find(function(part) { return part.type === 'timeZoneName'; });
-                            tzAbbr = (tzPart && tzPart.value) || 'UTC';
-                        } catch (e) {
-                            // Fallback to UTC if detection fails
-                        }
+                        // Get timezone abbreviation using helper function
+                        var tzAbbr = getTimezoneAbbr();
                         
                         // Round altitude to 2 decimal places
                         var altitude = parseFloat(allpaths[index][point][3]);
@@ -260,12 +429,22 @@ function showWaypoints() {
     }
 }
 
+/**
+ * Close end pin info windows without removing markers.
+ * 
+ * Used for mobile tap-outside behavior where info windows should close
+ * but markers should remain visible. Different from clearEndPin() which
+ * removes markers entirely.
+ * 
+ * Side effects: Closes info windows but preserves markers
+ */
 function closeEndPinInfoWindows() {
-    // Close info windows without clearing markers (for mobile tap-outside behavior)
     try {
+        // Close single mode info window
         if (endPinInfoWindow && endPinInfoWindow.getMap()) {
             endPinInfoWindow.close();
         }
+        // Close multi mode info windows
         if (endPinInfoWindows && endPinInfoWindows.length) {
             endPinInfoWindows.forEach(iw => {
                 try {
@@ -278,26 +457,58 @@ function closeEndPinInfoWindows() {
     } catch (e) {}
 }
 
+/**
+ * Clear all end pin markers and info windows from the map.
+ * 
+ * Removes both single mode and multi mode end pin markers, closes their
+ * info windows, and resets related state. Called during cleanup before
+ * new simulations.
+ * 
+ * Side effects:
+ * - Removes markers from map
+ * - Closes and clears info windows
+ * - Resets endPinMarker, endPinMarkers, endPinInfoWindows arrays
+ * - Clears multiEndPositions array
+ */
 function clearEndPin() {
     try {
+        // Clear single mode marker and info window
         if (endPinInfoWindow) { endPinInfoWindow.close(); endPinInfoWindow = null; }
         if (endPinMarker) { endPinMarker.setMap(null); endPinMarker = null; }
-        // Also clear multi markers
+        
+        // Clear multi mode markers and info windows
         if (endPinInfoWindows && endPinInfoWindows.length) {
             endPinInfoWindows.forEach(iw => { try { iw.close(); } catch(e){} });
         }
         if (endPinMarkers && endPinMarkers.length) {
             endPinMarkers.forEach(m => { try { m.setMap(null); } catch(e){} });
         }
+        
+        // Reset arrays
         endPinInfoWindows = [];
         endPinMarkers = [];
         multiEndPositions = [];
     } catch (e) {}
 }
 
+/**
+ * Create and display an end pin marker at the landing location.
+ * 
+ * End pins show where the balloon lands. In single mode, only one pin is shown.
+ * In multi mode, multiple pins are shown (one per time offset). Pins are clickable
+ * and show detailed landing information in an info window.
+ * 
+ * @param {Array} endPoint - Landing point [time, lat, lon, alt] where time is Unix timestamp in seconds
+ * @param {string} color - Hex color for the pin marker (e.g., "#FF0000")
+ * @param {number} hourOffset - Optional hour offset for multi mode (adds to launch time for display)
+ * 
+ * Side effects:
+ * - Creates Google Maps Marker and adds to map
+ * - Creates InfoWindow for click interaction
+ * - Updates endPinMarker (single mode) or endPinMarkers array (multi mode)
+ * - Attaches zoom listener if not already attached
+ */
 function setEndPin(endPoint, color, hourOffset) {
-    // endPoint: [time, lat, lon, alt]
-    // hourOffset: optional hour offset for multi mode (adds to launch time)
     try {
         // In Multi mode, we keep all end pins; otherwise clear previous
         if (!window.multiActive) {
@@ -330,20 +541,9 @@ function setEndPin(endPoint, color, hourOffset) {
             optimized: false  // Better click detection
         });
         // Build info content on click (no hover)
-        var date = new Date(endPoint[0] * 1000);
-        var hours = date.getHours();
-        var minutes = "0" + date.getMinutes();
-        var seconds = "0" + date.getSeconds();
-        var formattedTime = hours + ':' + minutes.substr(-2) + ':' + seconds.substr(-2);
-        var tzAbbr = 'UTC';
-        try {
-            var timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-            var now = new Date();
-            var formatter = new Intl.DateTimeFormat('en-US', { timeZone: timeZone, timeZoneName: 'short' });
-            var parts = formatter.formatToParts(now);
-            var tzPart = parts.find(function(part) { return part.type === 'timeZoneName'; });
-            tzAbbr = (tzPart && tzPart.value) || 'UTC';
-        } catch (e) {}
+        // Format landing time using helper function
+        var formattedTime = formatTimeFromTimestamp(endPoint[0]);
+        var tzAbbr = getTimezoneAbbr();
         var altitude = parseFloat(endPoint[3]);
         var roundedAltitude = isNaN(altitude) ? endPoint[3] : altitude.toFixed(2);
         var lat = parseFloat(endPoint[1]);
@@ -357,15 +557,13 @@ function setEndPin(endPoint, color, hourOffset) {
             if (typeof hourOffset === 'number' && hourOffset !== 0) {
                 launchTime = launchTime + (hourOffset * 3600);
             }
+            // Format launch date and time
             var ldate = new Date(launchTime * 1000);
             var lyear = ldate.getFullYear();
             var lmonth = "0" + (ldate.getMonth() + 1);
             var lday = "0" + ldate.getDate();
-            var lhours = ldate.getHours();
-            var lminutes = "0" + ldate.getMinutes();
-            var lseconds = "0" + ldate.getSeconds();
             var lformattedDate = lyear + '-' + lmonth.substr(-2) + '-' + lday.substr(-2);
-            var lformattedTime = lhours + ':' + lminutes.substr(-2) + ':' + lseconds.substr(-2);
+            var lformattedTime = formatTimeFromTimestamp(launchTime);
             var llat = parseFloat(lastLaunchInfo.lat);
             var llon = parseFloat(lastLaunchInfo.lon);
             var lroundedLat = isNaN(llat) ? lastLaunchInfo.lat : llat.toFixed(5);
@@ -1310,6 +1508,15 @@ function crossProduct(o, a, b) {
     return (a.lon - o.lon) * (b.lat - o.lat) - (a.lat - o.lat) * (b.lon - o.lon);
 }
 
+/**
+ * Get color for contour line based on probability threshold.
+ * 
+ * Returns specific colors for standard thresholds (30%, 50%, 70%, 90%)
+ * and fallback gradient colors for non-standard thresholds.
+ * 
+ * @param {number} threshold - Probability threshold (0.0 to 1.0)
+ * @returns {string} Hex color code
+ */
 function getContourColor(threshold) {
     // Exact mapping requested: 30% red, 50% orange, 70% yellow, 90% green
     const t = Math.round(threshold * 100);
@@ -1324,6 +1531,14 @@ function getContourColor(threshold) {
     return '#1F6A00';
 }
 
+/**
+ * Update contour line visibility based on map zoom level.
+ * 
+ * Hides contours when zoomed out too far (zoom < 8) to reduce visual clutter.
+ * Shows them when zoomed in (zoom >= 8) for detailed analysis.
+ * 
+ * Dependencies: Requires global map object and contourLayers array
+ */
 function updateContourVisibility() {
     const zoom = map.getZoom();
     // Hide contours when zoomed out too far (zoom < 8)
@@ -1343,9 +1558,39 @@ function updateContourVisibility() {
     });
 }
 
-// No visual feedback needed on ensemble button during simulation
+// ============================================================================
+// SIMULATION ORCHESTRATION
+// ============================================================================
 
-// Self explanatory
+/**
+ * Main simulation function - orchestrates trajectory simulation requests.
+ * 
+ * Handles all three balloon types (STANDARD, ZPB, FLOAT) and both single
+ * and ensemble/multi modes. Includes debouncing, race condition protection,
+ * progress tracking via SSE, and comprehensive error handling.
+ * 
+ * Flow:
+ * 1. Debounce and race condition checks
+ * 2. Parse input parameters from DOM
+ * 3. Validate parameters based on balloon type
+ * 4. Build API URL
+ * 5. Execute simulation (single or ensemble)
+ * 6. Handle progress updates via SSE (ensemble only)
+ * 7. Render results (paths, heatmap, contours)
+ * 
+ * Dependencies:
+ * - Requires DOM elements for input parameters
+ * - Requires global map object for rendering
+ * - Requires URL_ROOT constant for API endpoints
+ * - Requires btype global variable for balloon type
+ * 
+ * Side effects:
+ * - Clears previous visualizations
+ * - Updates button/spinner UI state
+ * - Makes fetch requests to backend API
+ * - Renders paths, markers, heatmap, contours
+ * - Updates progress tracking
+ */
 async function simulate() {
     // Prevent duplicate/overlapping simulation calls (race condition protection)
     // Check and set atomically to prevent multiple simultaneous calls
@@ -1432,19 +1677,10 @@ async function simulate() {
                 asc = document.getElementById('asc').value.trim();
                 desc = document.getElementById('desc').value.trim();
                 
-                // Validate that values are not empty
-                if (!asc || asc === "" || parseFloat(asc) <= 0) {
-                    alert("Ascent rate must be a positive number");
-                    throw new Error("Invalid ascent rate");
-                }
-                if (!equil || equil === "" || parseFloat(equil) <= 0) {
-                    alert("Burst altitude must be a positive number");
-                    throw new Error("Invalid burst altitude");
-                }
-                if (!desc || desc === "" || parseFloat(desc) <= 0) {
-                    alert("Descent rate must be a positive number");
-                    throw new Error("Invalid descent rate");
-                }
+                // Validate all required parameters using helper functions
+                validatePositiveNumber(asc, "Ascent rate");
+                validatePositiveNumber(equil, "Burst altitude");
+                validatePositiveNumber(desc, "Descent rate");
                 
                 url = URL_ROOT + "/singlezpb?timestamp="
                     + time + "&lat=" + lat + "&lon=" + lon + "&alt=" + alt + "&equil=" + equil + "&eqtime=" + eqtime + "&asc=" + asc + "&desc=" + desc;
@@ -1456,23 +1692,11 @@ async function simulate() {
                 asc = document.getElementById('asc').value.trim();
                 desc = document.getElementById('desc').value.trim();
                 
-                // Validate that values are not empty
-                if (!asc || asc === "" || parseFloat(asc) <= 0) {
-                    alert("Ascent rate must be a positive number");
-                    throw new Error("Invalid ascent rate");
-                }
-                if (!equil || equil === "" || parseFloat(equil) <= 0) {
-                    alert("Burst altitude must be a positive number");
-                    throw new Error("Invalid burst altitude");
-                }
-                if (!desc || desc === "" || parseFloat(desc) <= 0) {
-                    alert("Descent rate must be a positive number");
-                    throw new Error("Invalid descent rate");
-                }
-                if (!eqtime || eqtime === "" || parseFloat(eqtime) < 0) {
-                    alert("Equilibrium time must be a non-negative number");
-                    throw new Error("Invalid equilibrium time");
-                }
+                // Validate all required parameters using helper functions
+                validatePositiveNumber(asc, "Ascent rate");
+                validatePositiveNumber(equil, "Burst altitude");
+                validatePositiveNumber(desc, "Descent rate");
+                validateNonNegativeNumber(eqtime, "Equilibrium time");
                 
                 url = URL_ROOT + "/singlezpb?timestamp="
                     + time + "&lat=" + lat + "&lon=" + lon + "&alt=" + alt + "&equil=" + equil + "&eqtime=" + eqtime + "&asc=" + asc + "&desc=" + desc
@@ -1634,9 +1858,9 @@ async function simulate() {
                                     return;
                                 }
                                 if (simBtn) {
-                                    // Show status (downloading/simulating) when percentage is 0, otherwise show percentage
-                                    if (data.status && data.status === 'downloading' && data.percentage === 0) {
-                                        simBtn.textContent = 'Downloading...';
+                                    // Show status (loading/simulating) when percentage is 0, otherwise show percentage
+                                    if (data.status && data.status === 'loading' && data.percentage === 0) {
+                                        simBtn.textContent = 'Loading...';
                                     } else if (data.percentage !== undefined) {
                                         simBtn.textContent = data.percentage + '%';
                                     }

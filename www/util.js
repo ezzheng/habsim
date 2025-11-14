@@ -1,16 +1,52 @@
-//Maps initialization - wait for Google Maps to load
-var map = null;
-var clickMarker = null;
-var heatmapLayer = null; // Global heatmap layer for Monte Carlo visualization
+/**
+ * Google Maps initialization and utility functions module.
+ * 
+ * Handles:
+ * - Google Maps initialization and configuration
+ * - Map controls (map type selector, search, fullscreen)
+ * - Coordinate display and marker management
+ * - Elevation fetching
+ * - Input validation helpers
+ * - Active mission data integration
+ */
 
+// ============================================================================
+// GLOBAL STATE
+// ============================================================================
+
+/** Google Maps instance (initialized by initMap) */
+var map = null;
+
+/** Click marker showing selected location on map */
+var clickMarker = null;
+
+/** Global heatmap layer for Monte Carlo visualization */
+var heatmapLayer = null;
+
+/**
+ * Initialize Google Maps instance.
+ * 
+ * Waits for Google Maps API to load, then creates map instance with OpenStreetMap
+ * as default map type. Sets up click handler for coordinate selection and initializes
+ * custom controls (map type selector, search, fullscreen).
+ * 
+ * Retries automatically if Google Maps API or map element isn't ready yet.
+ * 
+ * Side effects:
+ * - Sets global map variable
+ * - Adds click listener to map
+ * - Registers OSM map type
+ * - Initializes custom controls
+ */
 function initMap() {
-    // Check if Google Maps is loaded
+    // Check if Google Maps API is loaded
     if (typeof google === 'undefined' || !google.maps || !google.maps.Map) {
         // Google Maps not loaded yet, retry after a short delay
         setTimeout(initMap, 100);
         return;
     }
     
+    // Check if map element exists in DOM
     var element = document.getElementById("map");
     if (!element) {
         // Map element not found, retry
@@ -18,31 +54,35 @@ function initMap() {
         return;
     }
     
-    // Initialize map
+    // Initialize map with default settings
+    // Center: San Francisco Bay Area (37.4°N, -121.5°W)
+    // Zoom: 9 (regional view)
     map = new google.maps.Map(element, {
         center: new google.maps.LatLng(37.4, -121.5),
         zoom: 9,
-        mapTypeId: "OSM",
-        zoomControl: false, // Disable default - we'll use custom
-        gestureHandling: 'greedy',
-        mapTypeControl: false, // Disable default control - we'll use custom
-        fullscreenControl: false, // Disable default - we'll use custom
+        mapTypeId: "OSM",  // OpenStreetMap (custom map type)
+        zoomControl: false,  // Disable default - we'll use custom
+        gestureHandling: 'greedy',  // Allow map dragging even when over controls
+        mapTypeControl: false,  // Disable default control - we'll use custom
+        fullscreenControl: false,  // Disable default - we'll use custom
         streetViewControl: false
     });
     
+    // Add click listener to update coordinates when user clicks map
     google.maps.event.addListener(map, 'click', function (event) {
         displayCoordinates(event.latLng);
     });
     
-    // Define OSM map type
+    // Define OpenStreetMap (OSM) as custom map type
+    // OSM provides free, open-source map tiles
     map.mapTypes.set("OSM", new google.maps.ImageMapType({
         getTileUrl: function(coord, zoom) {
             // "Wrap" x (longitude) at 180th meridian properly
             // NB: Don't touch coord.x: because coord param is by reference, and changing its x property breaks something in Google's lib
-            var tilesPerGlobe = 1 << zoom;
+            var tilesPerGlobe = 1 << zoom;  // 2^zoom tiles per globe
             var x = coord.x % tilesPerGlobe;
             if (x < 0) {
-                x = tilesPerGlobe+x;
+                x = tilesPerGlobe + x;  // Handle negative wrap-around
             }
             // Wrap y (latitude) in a like manner if you want to enable vertical infinite scrolling
             return "https://tile.openstreetmap.org/" + zoom + "/" + x + "/" + coord.y + ".png";
@@ -53,14 +93,24 @@ function initMap() {
     }));
     
     // Continue with rest of initialization
-    initMapControls();
-    initFullscreenControl();
+    initMapControls();  // Map type selector and search
+    initFullscreenControl();  // Fullscreen button
 }
 
-// Start initialization
+// Start initialization (will retry if Google Maps API isn't loaded yet)
 initMap();
 
-// Unified control container for Map and Search buttons
+/**
+ * Initialize custom map controls (map type selector and search).
+ * 
+ * Creates unified control container with:
+ * - Map type selector dropdown (OSM, Roadmap, Satellite, Hybrid, Terrain)
+ * - Location search bar with Google Places Autocomplete
+ * 
+ * Controls are positioned at bottom-left on desktop, top-left on mobile.
+ * 
+ * Dependencies: Requires global map object to be initialized
+ */
 function initMapControls() {
     if (!map) return;
     
@@ -456,7 +506,15 @@ function initMapControls() {
     });
 }
 
-// Custom fullscreen control (desktop only)
+/**
+ * Initialize custom fullscreen control button.
+ * 
+ * Creates a fullscreen toggle button that works across browsers (handles
+ * vendor prefixes for Chrome, Firefox, Safari, IE). Button is positioned
+ * in top-right corner of map.
+ * 
+ * Dependencies: Requires global map object to be initialized
+ */
 function initFullscreenControl() {
     if (!map) return;
     
@@ -530,7 +588,26 @@ function initFullscreenControl() {
 }
 
 
-// Functions for displaying things
+// ============================================================================
+// COORDINATE AND MARKER MANAGEMENT
+// ============================================================================
+
+/**
+ * Update coordinates and marker when user clicks on map.
+ * 
+ * Called when user clicks anywhere on the map. Updates lat/lon input fields,
+ * moves click marker to new location, clears previous visualizations, cancels
+ * any in-progress simulation, and fetches elevation for new location.
+ * 
+ * @param {google.maps.LatLng} pnt - Clicked location (lat/lng object)
+ * 
+ * Side effects:
+ * - Updates lat/lon input fields
+ * - Moves click marker
+ * - Clears all visualizations (paths, heatmap, contours, markers)
+ * - Cancels in-progress simulation
+ * - Fetches elevation for new location (debounced)
+ */
 function displayCoordinates(pnt) {
     var lat = pnt.lat();
     lat = lat.toFixed(4);
@@ -583,15 +660,39 @@ function displayCoordinates(pnt) {
         try { getElev(); } catch(e) {}
     }, 150);
 }
+/**
+ * Update click marker position on map.
+ * 
+ * Removes old marker (if exists) and creates new marker at specified position.
+ * Click marker shows where user has selected coordinates.
+ * 
+ * @param {google.maps.LatLng} position - New marker position
+ * 
+ * Side effects: Updates global clickMarker variable
+ */
 function updateClickMarker(position) {
+    // Remove old marker if it exists
     if (clickMarker) {
         clickMarker.setMap(null);
     }
+    // Create new marker at clicked position
     clickMarker = new google.maps.Marker({
         position: position,
         map: map
     });
 }
+
+/**
+ * Fetch ground elevation for current lat/lon coordinates.
+ * 
+ * Makes API request to backend elevation endpoint and updates altitude input
+ * field. Aborts any in-flight requests when a new one starts (prevents race
+ * conditions from rapid clicks).
+ * 
+ * Side effects:
+ * - Updates alt input field with elevation value
+ * - Sets window.__elevAbort for request cancellation
+ */
 function getElev() {
     // Abort any in-flight elevation fetch when a new one starts
     if (window.__elevAbort) {
@@ -628,6 +729,17 @@ function getElev() {
             window.__elevAbort = null;
         });
 }
+/**
+ * Calculate and display remaining time until burst or landing.
+ * 
+ * Calculates time remaining based on current altitude:
+ * - If below burst altitude: calculates ascent time remaining
+ * - If at/above burst altitude: calculates descent time remaining (requires ground elevation)
+ * 
+ * Displays result in "timeremain" element with format "X.XX hr ascent/descent remaining".
+ * 
+ * Dependencies: Requires alt, equil, asc, desc input fields
+ */
 function getTimeremain() {
     const remainNode = document.getElementById("timeremain");
     if (!remainNode) return;
@@ -655,55 +767,70 @@ function getTimeremain() {
             });
     }
 }
+// ============================================================================
+// ACTIVE MISSION INTEGRATION
+// ============================================================================
+
+/**
+ * Fetch active mission data from Stanford SSI transmissions API.
+ * 
+ * Uses CORS proxy to fetch recent transmission data and display it on the map.
+ * Updates simulation parameters with mission data and calculates remaining time.
+ * 
+ * Note: Requires activeMissions and CURRENT_MISSION global variables to be defined.
+ * 
+ * Side effects:
+ * - Calls habmcshow() to process and display mission data
+ * - Calls getTimeremain() to update time remaining display
+ */
 async function habmc(){
     let activemissionurl = "https://stanfordssi.org/transmissions/recent";
     const proxyurl = "https://cors-anywhere.herokuapp.com/";
 
-    await fetch(proxyurl + activemissionurl) // https://cors-anywhere.herokuapp.com/https://example.com
+    await fetch(proxyurl + activemissionurl)
         .then(response => response.text())
         .then(contents => habmcshow(contents))
-        .catch(() => console.log("Cant access " + activemissionurl + " response. Blocked by browser?"));
+        .catch(() => console.log("Can't access " + activemissionurl + " response. Blocked by browser?"));
     getTimeremain();
-    
-}
-function toTimestamp(year, month, day, hour, minute) {
-    const datum = new Date(year, month - 1, day, hour, minute);
-    return datum.getTime() / 1000;
 }
 
-function checkNumPos(numlist){
-    for (var each in numlist){
-        if(isNaN(numlist[each]) || Math.sign(numlist[each]) === -1 || !numlist[each]){
-            alert("ATTENTION: All values should be positive and numbers, check your inputs again!");
-            return false;
-        }
-    }
-    return true;
-}
-
-function checkasc(asc,alt,equil){
-    if(alt<equil && asc==="0"){
-        alert("ATTENTION: Ascent rate is 0 while balloon altitude is below its descent ready altitude");
-        return false;
-    }
-    return true;
-}
-
+/**
+ * Process and display active mission transmission data.
+ * 
+ * Parses JSON data from transmissions API and finds matching mission.
+ * Calls habmcshoweach() for each matching transmission.
+ * 
+ * @param {string} data - JSON string from transmissions API
+ * 
+ * Dependencies: Requires activeMissions and CURRENT_MISSION global variables
+ */
 function habmcshow(data){
     let jsondata = JSON.parse(data);
     let checkmsn = activeMissions[CURRENT_MISSION];
     for (let transmission in jsondata) {
-        //console.log(activeMissions[jsondata[transmission]['mission']]);
-        //console.log()
-
         if(jsondata[transmission]['mission'] === checkmsn){
             console.log(jsondata[transmission]);
             habmcshoweach(jsondata[transmission]);
         }
     }
-
 }
 
+/**
+ * Display individual mission transmission on map and update simulation parameters.
+ * 
+ * Parses transmission data and:
+ * - Updates date/time inputs (converts to UTC)
+ * - Updates lat/lon coordinates
+ * - Creates circle marker on map showing transmission location
+ * - Updates altitude and ascent/descent rates based on transmission data
+ * 
+ * @param {Object} data2 - Transmission data object with Human Time, latitude, longitude, altitude_gps, etc.
+ * 
+ * Side effects:
+ * - Updates date/time, lat/lon, alt, asc/desc/equil input fields
+ * - Creates Google Maps Circle marker on map
+ * - Pans map to transmission location
+ */
 function habmcshoweach(data2) {
     const datetime = data2["Human Time"];
     const res = datetime.substring(0, 11).split("-");
