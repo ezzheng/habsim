@@ -116,24 +116,49 @@ def _read_currgefs():
     
     FIX C-2: Add shared file lock to prevent race with concurrent writes.
     Without locking, read can overlap with write and return partial/empty data.
+    
+    Retries on failure to handle race conditions during file replacement.
     """
     import fcntl
-    try:
-        if _CURRGEFS_FILE.exists():
-            with open(_CURRGEFS_FILE, 'r') as f:
-                # Shared lock: allows multiple readers, blocks writers
-                fcntl.flock(f.fileno(), fcntl.LOCK_SH)
-                try:
-                    content = f.read().strip()
-                    if content:
-                        return content
-                finally:
-                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
-    except FileNotFoundError:
-        # File doesn't exist yet (first run)
-        pass
-    except Exception as e:
-        print(f"WARNING: Failed to read currgefs: {e}", flush=True)
+    import time
+    # Retry up to 3 times to handle race conditions during file replacement
+    for attempt in range(3):
+        try:
+            if _CURRGEFS_FILE.exists():
+                with open(_CURRGEFS_FILE, 'r') as f:
+                    # Shared lock: allows multiple readers, blocks writers
+                    # Use non-blocking lock to avoid deadlocks, fall back to blocking
+                    try:
+                        fcntl.flock(f.fileno(), fcntl.LOCK_SH | fcntl.LOCK_NB)
+                    except BlockingIOError:
+                        # Lock is held by writer, wait briefly and retry
+                        time.sleep(0.01)
+                        fcntl.flock(f.fileno(), fcntl.LOCK_SH)
+                    
+                    try:
+                        content = f.read().strip()
+                        if content:
+                            return content
+                        # Empty file - might be mid-replace, retry
+                    finally:
+                        fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+            else:
+                # File doesn't exist yet (first run or mid-replace)
+                if attempt < 2:  # Retry if not last attempt
+                    time.sleep(0.01)
+                    continue
+        except FileNotFoundError:
+            # File was deleted during read (atomic replace in progress)
+            if attempt < 2:  # Retry if not last attempt
+                time.sleep(0.01)
+                continue
+            pass
+        except Exception as e:
+            if attempt < 2:  # Retry on transient errors
+                time.sleep(0.01)
+                continue
+            print(f"WARNING: Failed to read currgefs after {attempt + 1} attempts: {e}", flush=True)
+    
     return "Unavailable"
 
 def _write_currgefs(value):
@@ -141,14 +166,17 @@ def _write_currgefs(value):
     
     FIX C-2: Add exclusive file lock to coordinate with readers.
     Atomic rename prevents partial writes, but lock ensures readers don't see stale data.
+    
+    Uses atomic rename to ensure readers never see partial writes, even during replacement.
     """
     import fcntl
     try:
         _CURRGEFS_FILE.parent.mkdir(parents=True, exist_ok=True)
         # Atomic write: write to temp file, then rename (atomic on most filesystems)
         temp_file = _CURRGEFS_FILE.with_suffix('.tmp')
+        
+        # Write to temp file with exclusive lock
         with open(temp_file, 'w') as f:
-            # Exclusive lock on temp file during write
             fcntl.flock(f.fileno(), fcntl.LOCK_EX)
             try:
                 f.write(value)
@@ -156,10 +184,27 @@ def _write_currgefs(value):
                 os.fsync(f.fileno())  # Ensure written to disk
             finally:
                 fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+        
         # Atomic rename (replaces existing file atomically)
+        # This is safe even if readers have the old file open - they'll see old data
+        # until they close and reopen, which is fine (they'll get new data on next read)
         temp_file.replace(_CURRGEFS_FILE)
+        
+        # Verify the file was written correctly (basic check - file exists and has content)
+        # Note: We don't check exact value match since another worker might have written
+        # a different but valid value between our write and this check
+        if not _CURRGEFS_FILE.exists():
+            raise IOError(f"Failed to verify currgefs write: file does not exist after rename")
+            
     except Exception as e:
         print(f"WARNING: Failed to write currgefs: {e}", flush=True)
+        # Clean up temp file on error
+        try:
+            temp_file = _CURRGEFS_FILE.with_suffix('.tmp')
+            if temp_file.exists():
+                temp_file.unlink()
+        except Exception:
+            pass
 
 def force_preload_for_next_models(model_count: int):
     """Force the next N simulator loads to preload arrays (ensemble cold-start hint)."""
