@@ -177,6 +177,15 @@ def generate_request_id(args, base_coeff):
     request_key = f"{args['timestamp']}_{args['lat']}_{args['lon']}_{args['alt']}_{args['equil']}_{args['eqtime']}_{args['asc']}_{args['desc']}_{base_coeff_str}"
     return hashlib.md5(request_key.encode()).hexdigest()[:16]
 
+def _current_invalidation_cycle():
+    """Return current cache invalidation cycle (None if unavailable)."""
+    try:
+        with simulate._cache_invalidation_lock:
+            return simulate._cache_invalidation_cycle
+    except (AttributeError, NameError):
+        return None
+
+
 def _prefetch_model(model_id, worker_pid, expected_gefs=None):
     """Download/build one simulator while re-checking the GEFS cycle on every step."""
     max_retries = 3
@@ -184,45 +193,12 @@ def _prefetch_model(model_id, worker_pid, expected_gefs=None):
     
     for attempt in range(max_retries):
         try:
-            # Skip validation if expected_gefs is 'Unavailable' (initialization phase)
-            if expected_gefs and expected_gefs != 'Unavailable':
-                current_gefs = simulate.get_currgefs()
-                if current_gefs and current_gefs != expected_gefs:
-                    # Cycle changed - update expected_gefs and retry the entire function
-                    if attempt < max_retries - 1:
-                        print(f"INFO: [WORKER {worker_pid}] Prefetch cycle change detected for model {model_id} (attempt {attempt + 1}): {expected_gefs} -> {current_gefs}, retrying with new cycle", flush=True)
-                        expected_gefs = current_gefs
-                        time.sleep(retry_delay * (attempt + 1))  # Exponential backoff
-                        continue  # Retry with new cycle
-                    else:
-                        # Final attempt - cycle changed but we're out of retries
-                        raise RuntimeError(f"GEFS cycle changed during prefetch for model {model_id}: started with {expected_gefs}, got {current_gefs} after {max_retries} attempts")
-            
-            # CRITICAL: Check cycle consistency and cache invalidation before loading simulator
-            # This prevents loading stale simulators even if ref_count > 0 (reset() may have run)
-            current_gefs_before_load = simulate.get_currgefs()
-            if current_gefs_before_load and current_gefs_before_load != "Unavailable":
-                if expected_gefs and expected_gefs != 'Unavailable' and current_gefs_before_load != expected_gefs:
-                    # Cycle changed before load - retry
-                    if attempt < max_retries - 1:
-                        print(f"WARNING: [WORKER {worker_pid}] GEFS cycle changed before load for model {model_id} (attempt {attempt + 1}): {expected_gefs} -> {current_gefs_before_load}, retrying...", flush=True)
-                        expected_gefs = current_gefs_before_load
-                        time.sleep(retry_delay * (attempt + 1))
-                        continue
-            
             # Check cache invalidation cycle (must match expected cycle)
             # If reset() ran during prefetch, invalidation_cycle will differ from expected_gefs
             cache_invalidated = False
-            invalidation_cycle = None
-            try:
-                with simulate._cache_invalidation_lock:
-                    if simulate._cache_invalidation_cycle is not None:
-                        invalidation_cycle = simulate._cache_invalidation_cycle
-                        # If invalidation cycle doesn't match expected cycle, cache was invalidated
-                        if expected_gefs and expected_gefs != 'Unavailable' and invalidation_cycle != expected_gefs:
-                            cache_invalidated = True
-            except (AttributeError, NameError):
-                pass  # Lock doesn't exist (shouldn't happen, but safe to skip)
+            invalidation_cycle = _current_invalidation_cycle()
+            if invalidation_cycle and expected_gefs and expected_gefs != 'Unavailable' and invalidation_cycle != expected_gefs:
+                cache_invalidated = True
             
             if cache_invalidated:
                 if attempt < max_retries - 1:
@@ -242,17 +218,14 @@ def _prefetch_model(model_id, worker_pid, expected_gefs=None):
             
             # Validate cycle after load (catches cycle changes during file download)
             if expected_gefs and expected_gefs != 'Unavailable':
-                current_gefs = simulate.get_currgefs()
-                if current_gefs and current_gefs != expected_gefs:
-                    # Cycle changed during load - retry if we have attempts left
+                post_load_invalidation = _current_invalidation_cycle()
+                if post_load_invalidation and post_load_invalidation != expected_gefs:
                     if attempt < max_retries - 1:
-                        print(f"WARNING: [WORKER {worker_pid}] GEFS cycle changed during load for model {model_id} (attempt {attempt + 1}): {expected_gefs} -> {current_gefs}, retrying...", flush=True)
-                        expected_gefs = current_gefs
+                        print(f"WARNING: [WORKER {worker_pid}] GEFS cycle changed during load for model {model_id} (attempt {attempt + 1}): {expected_gefs} -> {post_load_invalidation}, retrying...", flush=True)
+                        expected_gefs = post_load_invalidation
                         time.sleep(retry_delay * (attempt + 1))  # Exponential backoff
-                        continue  # Retry with new cycle
-                    else:
-                        # Final attempt - cycle changed during load
-                        raise RuntimeError(f"GEFS cycle changed during load for model {model_id}: expected {expected_gefs}, got {current_gefs} after {max_retries} attempts")
+                        continue
+                    raise RuntimeError(f"GEFS cycle changed during load for model {model_id}: expected {expected_gefs}, got {post_load_invalidation} after {max_retries} attempts")
             
             # Success - exit retry loop
             return
@@ -261,8 +234,7 @@ def _prefetch_model(model_id, worker_pid, expected_gefs=None):
             # RuntimeError with "GEFS cycle changed" - re-raise (handled by retry logic above)
             if "GEFS cycle changed" in str(e):
                 if attempt < max_retries - 1:
-                    # Extract new cycle from error message if possible, or re-read
-                    current_gefs = simulate.get_currgefs()
+                    current_gefs = _current_invalidation_cycle() or expected_gefs
                     if current_gefs and current_gefs != expected_gefs:
                         expected_gefs = current_gefs
                         time.sleep(retry_delay * (attempt + 1))
