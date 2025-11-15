@@ -88,8 +88,8 @@ def add_security_headers(response):
         "style-src 'self' 'unsafe-inline' maxcdn.bootstrapcdn.com gitcdn.github.io fonts.googleapis.com maps.googleapis.com *.google.com *.gstatic.com",
         # Allow fonts from Google Fonts CDN
         "font-src 'self' fonts.gstatic.com data:",
-        # Allow images from self, data URIs, and Google Maps/related services (including blob: for dynamic images)
-        "img-src 'self' data: blob: maps.googleapis.com *.googleapis.com *.google.com *.gstatic.com",
+        # Allow images from self, data URIs, Google Maps, and OpenStreetMap tiles (including blob: for dynamic images)
+        "img-src 'self' data: blob: maps.googleapis.com *.googleapis.com *.google.com *.gstatic.com tile.openstreetmap.org *.openstreetmap.org",
         # Allow connections to self (API), production Railway API, CDNs (for source maps), Google Maps API, and Vercel analytics
         "connect-src 'self' *.up.railway.app code.jquery.com cdnjs.cloudflare.com maxcdn.bootstrapcdn.com gitcdn.github.io maps.googleapis.com *.googleapis.com *.google.com *.gstatic.com *.vercel-insights.com",
         # Allow iframes from Google (needed for Maps API features like Street View, Directions, etc.)
