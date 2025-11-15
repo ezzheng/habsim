@@ -66,6 +66,12 @@ _last_activity_timestamp = time.time()
 _last_idle_cleanup = 0.0
 _idle_cleanup_lock = threading.Lock()
 
+# Short-lived cache for currgefs reads (reduces file I/O and race windows)
+_CURRGEFS_CACHE = {"value": None, "expires": 0.0}
+_CURRGEFS_CACHE_TTL = 1.0  # seconds for valid cycle values
+_CURRGEFS_CACHE_UNAVAILABLE_TTL = 0.1  # shorter cache for "Unavailable"
+_currgefs_cache_lock = threading.Lock()
+
 # Simulator reference counting for safe cleanup
 _simulator_ref_counts = {}  # model_id -> count
 _simulator_ref_lock = threading.Lock()
@@ -161,6 +167,26 @@ def _read_currgefs():
     
     return "Unavailable"
 
+
+def _update_currgefs_cache(value, now=None):
+    """Update cached currgefs value with appropriate TTL."""
+    if now is None:
+        now = time.time()
+    ttl = _CURRGEFS_CACHE_TTL if value and value != "Unavailable" else _CURRGEFS_CACHE_UNAVAILABLE_TTL
+    with _currgefs_cache_lock:
+        _CURRGEFS_CACHE["value"] = value
+        _CURRGEFS_CACHE["expires"] = now + ttl
+
+
+def _get_cached_currgefs(now):
+    """Return cached currgefs if present and not expired."""
+    with _currgefs_cache_lock:
+        cached_value = _CURRGEFS_CACHE["value"]
+        expires = _CURRGEFS_CACHE["expires"]
+        if cached_value is not None and now < expires:
+            return cached_value
+    return None
+
 def _write_currgefs(value):
     """Write currgefs to shared file using atomic write (thread-safe, process-safe).
     
@@ -194,7 +220,8 @@ def _write_currgefs(value):
         # Note: We don't check exact value match since another worker might have written
         # a different but valid value between our write and this check
         if not _CURRGEFS_FILE.exists():
-            raise IOError(f"Failed to verify currgefs write: file does not exist after rename")
+            raise IOError("Failed to verify currgefs write: file does not exist after rename")
+        _update_currgefs_cache(value)
             
     except Exception as e:
         print(f"WARNING: Failed to write currgefs: {e}", flush=True)
@@ -391,9 +418,16 @@ def refresh():
             except Exception:
                 pass
 
-def get_currgefs():
-    """Get current GEFS timestamp (reads from shared file)."""
-    return _read_currgefs()
+def get_currgefs(force_refresh=False):
+    """Get current GEFS timestamp with short-lived caching to reduce race windows."""
+    now = time.time()
+    if not force_refresh:
+        cached = _get_cached_currgefs(now)
+        if cached is not None:
+            return cached
+    value = _read_currgefs()
+    _update_currgefs_cache(value, now=now)
+    return value
 
 def _check_cycle_files_available(gefs_cycle, max_models=21, check_disk_cache=False, retry_for_consistency=False, verify_content=False):
     """Check if all model files exist for a given GEFS cycle.
