@@ -82,17 +82,22 @@ def add_security_headers(response):
     csp_directives = [
         "default-src 'self'",
         # Allow scripts from CDNs used by frontend (jQuery, Bootstrap, Popper, CryptoJS, Maps API)
-        "script-src 'self' 'unsafe-inline' code.jquery.com cdnjs.cloudflare.com maxcdn.bootstrapcdn.com gitcdn.github.io maps.googleapis.com *.vercel-scripts.com cdn.vercel-insights.com",
+        # Google Maps needs: maps.googleapis.com, *.google.com, *.gstatic.com for full functionality
+        "script-src 'self' 'unsafe-inline' 'unsafe-eval' code.jquery.com cdnjs.cloudflare.com maxcdn.bootstrapcdn.com gitcdn.github.io maps.googleapis.com *.google.com *.gstatic.com *.vercel-scripts.com cdn.vercel-insights.com",
         # Allow stylesheets from CDNs (Bootstrap, Bootstrap Toggle, Google Fonts, Maps API)
-        "style-src 'self' 'unsafe-inline' maxcdn.bootstrapcdn.com gitcdn.github.io fonts.googleapis.com maps.googleapis.com",
+        "style-src 'self' 'unsafe-inline' maxcdn.bootstrapcdn.com gitcdn.github.io fonts.googleapis.com maps.googleapis.com *.google.com *.gstatic.com",
         # Allow fonts from Google Fonts CDN
-        "font-src 'self' fonts.gstatic.com",
-        # Allow images from self, data URIs, and Google Maps/related services
-        "img-src 'self' data: maps.googleapis.com *.googleapis.com *.gstatic.com",
+        "font-src 'self' fonts.gstatic.com data:",
+        # Allow images from self, data URIs, and Google Maps/related services (including blob: for dynamic images)
+        "img-src 'self' data: blob: maps.googleapis.com *.googleapis.com *.google.com *.gstatic.com",
         # Allow connections to self (API), production Railway API, Google Maps API, and Vercel analytics
-        "connect-src 'self' *.up.railway.app maps.googleapis.com *.vercel-insights.com",
-        # Prevent embedding in frames (clickjacking protection)
-        "frame-src 'none'",
+        "connect-src 'self' *.up.railway.app maps.googleapis.com *.googleapis.com *.google.com *.gstatic.com *.vercel-insights.com",
+        # Allow iframes from Google (needed for Maps API features like Street View, Directions, etc.)
+        "frame-src 'self' maps.googleapis.com *.google.com",
+        # Allow Web Workers (Google Maps uses workers for performance)
+        "worker-src 'self' blob:",
+        # Child-src for legacy browser support (fallback for frame-src and worker-src)
+        "child-src 'self' blob: maps.googleapis.com *.google.com",
         # Prevent Flash, Java, and other plugins
         "object-src 'none'",
         # Restrict base tag to prevent base tag hijacking
