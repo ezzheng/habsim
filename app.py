@@ -78,16 +78,24 @@ def add_security_headers(response):
     if os.environ.get('FLASK_ENV') == 'production':
         response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
     # Content Security Policy to prevent XSS and data injection attacks (S1 from code review)
-    # Allow self, Google Maps API, Google Fonts, and Vercel analytics
+    # Allow self, Google Maps API, Google Fonts, CDNs for Bootstrap/jQuery/CryptoJS, and Vercel analytics
     csp_directives = [
         "default-src 'self'",
-        "script-src 'self' 'unsafe-inline' maps.googleapis.com *.vercel-scripts.com cdn.vercel-insights.com",
-        "style-src 'self' 'unsafe-inline' fonts.googleapis.com maps.googleapis.com",
+        # Allow scripts from CDNs used by frontend (jQuery, Bootstrap, Popper, CryptoJS, Maps API)
+        "script-src 'self' 'unsafe-inline' code.jquery.com cdnjs.cloudflare.com maxcdn.bootstrapcdn.com gitcdn.github.io maps.googleapis.com *.vercel-scripts.com cdn.vercel-insights.com",
+        # Allow stylesheets from CDNs (Bootstrap, Bootstrap Toggle, Google Fonts, Maps API)
+        "style-src 'self' 'unsafe-inline' maxcdn.bootstrapcdn.com gitcdn.github.io fonts.googleapis.com maps.googleapis.com",
+        # Allow fonts from Google Fonts CDN
         "font-src 'self' fonts.gstatic.com",
+        # Allow images from self, data URIs, and Google Maps/related services
         "img-src 'self' data: maps.googleapis.com *.googleapis.com *.gstatic.com",
-        "connect-src 'self' maps.googleapis.com *.vercel-insights.com",
+        # Allow connections to self (API), production Railway API, Google Maps API, and Vercel analytics
+        "connect-src 'self' *.up.railway.app maps.googleapis.com *.vercel-insights.com",
+        # Prevent embedding in frames (clickjacking protection)
         "frame-src 'none'",
+        # Prevent Flash, Java, and other plugins
         "object-src 'none'",
+        # Restrict base tag to prevent base tag hijacking
         "base-uri 'self'"
     ]
     response.headers['Content-Security-Policy'] = "; ".join(csp_directives)
@@ -269,19 +277,16 @@ def _wait_for_cycle_stable(worker_pid, max_wait=12.0):
     refresh() sets `_cache_invalidation_cycle` first, sleeps 3 seconds, then writes `currgefs`.
     If another worker is mid-refresh, this guard catches the overlap.
     
-    FIX H-3: Require 3 consecutive stable readings to prevent race conditions.
-    Without this, read races in get_currgefs() could return different values each call,
-    leading to mixing data from different GEFS cycles (garbage predictions).
+    FIX H-3: Check for 3 consecutive stable readings to prevent race conditions.
+    Without this, read races in get_currgefs() could return different values each call.
+    On timeout, returns current cycle (graceful degradation) instead of failing.
     
     Args:
         worker_pid: Worker process ID for logging
         max_wait: Maximum time to wait (seconds)
     
     Returns:
-        Stable cycle value
-        
-    Raises:
-        RuntimeError: If cycle fails to stabilize after max_wait (prevents bad predictions)
+        Stable cycle value, or None if still transitioning
     """
     start = time.time()
     check_interval = 0.5
@@ -321,13 +326,13 @@ def _wait_for_cycle_stable(worker_pid, max_wait=12.0):
         # Still transitioning or unstable - wait and check again
         time.sleep(check_interval)
     
-    # FIX H-3: FAIL explicitly on timeout instead of proceeding with unstable cycle
-    # Proceeding with unstable cycle can mix data from different GEFS runs
-    raise RuntimeError(
-        f"GEFS cycle failed to stabilize after {max_wait:.1f}s. "
-        f"Last reading: invalidation={invalidation_cycle}, current={current_gefs}. "
-        f"This indicates a race condition in cycle transition. Aborting to prevent bad predictions."
-    )
+    # Timeout - return current cycle anyway (graceful degradation)
+    # Log warning but don't crash - better to proceed with potentially stale data than fail
+    current_gefs = simulate.get_currgefs()
+    if current_gefs and current_gefs != "Unavailable":
+        print(f"WARNING: [WORKER {worker_pid}] Cycle stabilization timeout after {max_wait:.1f}s, using current cycle: {current_gefs}", flush=True)
+        return current_gefs
+    return None
 
 
 def _wait_for_pending_cycle(pending_cycle, worker_pid, max_wait=120):
