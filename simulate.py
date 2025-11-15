@@ -59,6 +59,8 @@ else:
     _CURRGEFS_FILE = Path(tempfile.gettempdir()) / "habsim-currgefs.txt"
 _REFRESH_LOCK_FILE = _CURRGEFS_FILE.with_suffix('.refresh.lock')
 _last_refresh_check = 0.0
+_last_successful_refresh = 0.0
+_REFRESH_COOLDOWN_SECONDS = 60.0  # skip redundant refreshes within 60s if cycle stable
 _cache_trim_thread_started = False
 _IDLE_RESET_TIMEOUT = 120.0
 _IDLE_CLEAN_COOLDOWN = 120.0
@@ -275,7 +277,17 @@ def refresh():
         (False, pending_cycle) when a new timestamp is announced but files are still uploading.
     """
     import fcntl
-    global _last_refresh_check, _cache_invalidation_cycle
+    global _last_refresh_check, _cache_invalidation_cycle, _last_successful_refresh
+    
+    now = time.time()
+    current_cycle = get_currgefs()
+    if (
+        current_cycle
+        and current_cycle != "Unavailable"
+        and now - _last_successful_refresh < _REFRESH_COOLDOWN_SECONDS
+    ):
+        # Recent successful refresh detected - skip redundant refresh
+        return False
     
     # File-based lock prevents concurrent refreshes across workers
     lock_file = None
@@ -293,6 +305,7 @@ def refresh():
                 if current and current != "Unavailable":
                     # Another worker refreshed - update our refresh check time to avoid immediate re-check
                     _last_refresh_check = time.time()
+                    _last_successful_refresh = _last_refresh_check
                     return False  # Another worker refreshed successfully
             # Still locked after wait - try blocking lock
             lock_file = open(_REFRESH_LOCK_FILE, 'w')
@@ -302,6 +315,7 @@ def refresh():
             if current and current != "Unavailable":
                 # Another worker refreshed - update our refresh check time
                 _last_refresh_check = time.time()
+                _last_successful_refresh = _last_refresh_check
                 return False
         
         # Read current timestamp before refresh (preserve if refresh fails)
@@ -323,6 +337,7 @@ def refresh():
                     if _cache_invalidation_cycle != new_gefs:
                         print(f"INFO: Cycle {new_gefs} already active; invalidation pointer synchronized.", flush=True)
                         _cache_invalidation_cycle = new_gefs
+                _last_successful_refresh = time.time()
                 return False
             
             # Verify all 21 model files exist before updating currgefs
@@ -388,6 +403,7 @@ def refresh():
             
             # Log consolidated summary
             print(f"INFO: Cycle {old_gefs or 'Unavailable'}→{new_gefs} ready: cache reset, predictions flushed, cleanup scheduled.", flush=True)
+            _last_successful_refresh = time.time()
             
             # Delay old file cleanup - only delete after confirming new cycle is available
             # This prevents "file not found" errors if new files aren't uploaded yet
