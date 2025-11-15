@@ -90,8 +90,8 @@ def add_security_headers(response):
         "font-src 'self' fonts.gstatic.com data:",
         # Allow images from self, data URIs, and Google Maps/related services (including blob: for dynamic images)
         "img-src 'self' data: blob: maps.googleapis.com *.googleapis.com *.google.com *.gstatic.com",
-        # Allow connections to self (API), production Railway API, Google Maps API, and Vercel analytics
-        "connect-src 'self' *.up.railway.app maps.googleapis.com *.googleapis.com *.google.com *.gstatic.com *.vercel-insights.com",
+        # Allow connections to self (API), production Railway API, CDNs (for source maps), Google Maps API, and Vercel analytics
+        "connect-src 'self' *.up.railway.app code.jquery.com cdnjs.cloudflare.com maxcdn.bootstrapcdn.com gitcdn.github.io maps.googleapis.com *.googleapis.com *.google.com *.gstatic.com *.vercel-insights.com",
         # Allow iframes from Google (needed for Maps API features like Street View, Directions, etc.)
         "frame-src 'self' maps.googleapis.com *.google.com",
         # Allow Web Workers (Google Maps uses workers for performance)
