@@ -9,6 +9,7 @@ import math
 import os
 import time
 import threading
+from collections import OrderedDict
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
@@ -24,7 +25,8 @@ _MEMMAP_LOCKS_LOCK = threading.Lock()
 _FILE_LOAD_LOCKS: dict[Path, threading.Lock] = {}
 _FILE_LOAD_LOCKS_LOCK = threading.Lock()
 # Shared filter cache for ensemble mode (all WindFiles share same cache when preloaded)
-_shared_filter_cache = {}
+# FIX H-4: Use OrderedDict for LRU-style eviction instead of clear-all
+_shared_filter_cache = OrderedDict()
 
 def _normalize_path(path: Union[BytesIO, str]) -> Union[BytesIO, Path]:
     if isinstance(path, (str, Path)):
@@ -119,14 +121,15 @@ class WindFile:
         
         # Cache for interpolation filter arrays (reduces allocations)
         # In ensemble mode (preload=True), use shared global cache since all models have similar patterns
+        # FIX H-4: Use OrderedDict for LRU-style eviction to maintain cache hit rate
         if preload:
             global _shared_filter_cache
-            if not _shared_filter_cache:
-                _shared_filter_cache = {}
+            if not _shared_filter_cache or not isinstance(_shared_filter_cache, OrderedDict):
+                _shared_filter_cache = OrderedDict()
             self._filter_cache = _shared_filter_cache
             self._filter_cache_max_size = 2000  # Larger cache for ensemble mode
         else:
-            self._filter_cache = {}
+            self._filter_cache = OrderedDict()
             self._filter_cache_max_size = 1000  # Limit cache size
 
         level_array = np.asarray(self.levels, dtype=np.float32)
@@ -156,34 +159,40 @@ class WindFile:
         self._time_max = self.time + self.interval * (self.data.shape[-2]-1)
     
     def cleanup(self):
-        """Cleanup numpy arrays to free memory. Only call when WindFile is not in use."""
+        """Cleanup numpy arrays to free memory. Only call when WindFile is not in use.
+        
+        CRITICAL: This method MUST NOT be called while any thread is using this WindFile.
+        Calling cleanup() while interpolate() or get() is executing will cause crashes.
+        The caller is responsible for ensuring no concurrent access before calling cleanup().
+        """
         if hasattr(self, 'data') and self.data is not None:
             if isinstance(self.data, np.ndarray) and not hasattr(self.data, 'filename'):
                 try:
                     del self.data
                     self.data = None
-                except:
-                    pass
+                except Exception as e:
+                    # Log cleanup errors instead of silently ignoring
+                    print(f"WARNING: WindFile cleanup failed for data array: {e}", flush=True)
         
         # Clear other numpy arrays (these are smaller but still consume memory)
         if hasattr(self, 'levels') and isinstance(self.levels, np.ndarray):
             try:
                 del self.levels
                 self.levels = None
-            except:
-                pass
+            except Exception as e:
+                print(f"WARNING: WindFile cleanup failed for levels: {e}", flush=True)
         if hasattr(self, '_interp_levels') and isinstance(self._interp_levels, np.ndarray):
             try:
                 del self._interp_levels
                 self._interp_levels = None
-            except:
-                pass
+            except Exception as e:
+                print(f"WARNING: WindFile cleanup failed for _interp_levels: {e}", flush=True)
         if hasattr(self, '_interp_indices') and isinstance(self._interp_indices, np.ndarray):
             try:
                 del self._interp_indices
                 self._interp_indices = None
-            except:
-                pass
+            except Exception as e:
+                print(f"WARNING: WindFile cleanup failed for _interp_indices: {e}", flush=True)
 
     def _load_memmap_data(self, npz: np.lib.npyio.NpzFile, path: Path):
         """
@@ -380,10 +389,15 @@ class WindFile:
         if frac_key not in self._filter_cache:
             # Limit cache size to prevent memory growth
             # In ensemble mode, cache is larger (2000 vs 1000) since all models share it
+            # FIX H-4: Use LRU-style eviction (remove oldest 10%) instead of clearing entire cache
+            # Clearing entire cache causes sudden drop to 0% hit rate and performance spike
             if len(self._filter_cache) >= self._filter_cache_max_size:
-                # Clear cache if too large (simple FIFO eviction)
-                # More sophisticated eviction (LRU) would be slower
-                self._filter_cache.clear()
+                # Remove oldest 10% of entries (FIFO order from OrderedDict)
+                # This maintains 90% of cache, preserving most hot entries
+                evict_count = max(1, self._filter_cache_max_size // 10)
+                for _ in range(evict_count):
+                    if self._filter_cache:  # Safety check
+                        self._filter_cache.popitem(last=False)  # Remove oldest (FIFO)
             
             # Create interpolation filter arrays for each dimension
             # Each filter is a 2-element array [1-frac, frac] reshaped for broadcasting
@@ -394,6 +408,10 @@ class WindFile:
                 np.array([1-lat_frac, lat_frac], dtype=np.float32).reshape(2, 1, 1, 1, 1),     # Latitude filter
                 np.array([1-lon_frac, lon_frac], dtype=np.float32).reshape(1, 2, 1, 1, 1)      # Longitude filter
             )
+        else:
+            # FIX H-4: Move accessed key to end for LRU behavior
+            # This keeps frequently accessed entries at the end, rarely used at the front
+            self._filter_cache.move_to_end(frac_key)
         
         pressure_filter, time_filter, lat_filter, lon_filter = self._filter_cache[frac_key]
 

@@ -23,11 +23,18 @@ import secrets
 import logging
 
 app = Flask(__name__)
+# SECRET_KEY: Used for session signing. MUST be set via environment variable in production.
+# If not set, generates random key on each restart (invalidates all sessions).
+# In multi-instance deployments, all instances MUST use the same SECRET_KEY.
+if not os.environ.get('SECRET_KEY'):
+    print("WARNING: SECRET_KEY not set - using randomly generated key. "
+          "Sessions will be invalidated on restart. Set SECRET_KEY environment variable for production.", flush=True)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', secrets.token_hex(32))
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 app.config['SESSION_COOKIE_SECURE'] = os.environ.get('FLASK_ENV') == 'production'
-CORS(app)
+# Enable CORS with preflight caching (1 hour) to reduce OPTIONS requests
+CORS(app, max_age=3600)
 Compress(app)
 
 # Suppress /sim/status access logs (polled every 5s, creates log spam)
@@ -57,6 +64,35 @@ def cache_for(seconds=300):
         return decorated_function
     return decorator
 
+# Add security headers to all responses
+@app.after_request
+def add_security_headers(response):
+    """Add basic security headers to prevent common vulnerabilities."""
+    # Prevent MIME type sniffing
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    # Prevent clickjacking attacks
+    response.headers['X-Frame-Options'] = 'DENY'
+    # Enable XSS filter in older browsers
+    response.headers['X-XSS-Protection'] = '1; mode=block'
+    # Enforce HTTPS in production
+    if os.environ.get('FLASK_ENV') == 'production':
+        response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
+    # Content Security Policy to prevent XSS and data injection attacks (S1 from code review)
+    # Allow self, Google Maps API, Google Fonts, and Vercel analytics
+    csp_directives = [
+        "default-src 'self'",
+        "script-src 'self' 'unsafe-inline' maps.googleapis.com *.vercel-scripts.com cdn.vercel-insights.com",
+        "style-src 'self' 'unsafe-inline' fonts.googleapis.com maps.googleapis.com",
+        "font-src 'self' fonts.gstatic.com",
+        "img-src 'self' data: maps.googleapis.com *.googleapis.com *.gstatic.com",
+        "connect-src 'self' maps.googleapis.com *.vercel-insights.com",
+        "frame-src 'none'",
+        "object-src 'none'",
+        "base-uri 'self'"
+    ]
+    response.headers['Content-Security-Policy'] = "; ".join(csp_directives)
+    return response
+
 import logging
 import hashlib
 import elev
@@ -80,13 +116,28 @@ def _log(msg, level='info', worker_pid=None):
     }.get(level, 'INFO')
     print(f"{prefix}: {msg}", flush=True)
 
-def get_arg(args, key, type_func=float, default=None, required=True):
-    """Parse and validate request argument with type conversion and NaN/Inf checks."""
+def get_arg(args, key, type_func=float, default=None, required=True, max_length=1000):
+    """Parse and validate request argument with type conversion and NaN/Inf checks.
+    
+    Args:
+        args: Request arguments dict
+        key: Parameter name
+        type_func: Type conversion function (default: float)
+        default: Default value if parameter missing
+        required: Whether parameter is required
+        max_length: Maximum string length before conversion (prevents DoS via huge inputs, S3)
+    
+    Raises:
+        ValueError: If parameter invalid, missing (when required), or too long
+    """
     val = args.get(key, default)
     if required and val is None:
         raise ValueError(f"Missing required parameter: {key}")
     if val is None:
         return None
+    # Validate string length before type conversion to prevent DoS
+    if isinstance(val, str) and len(val) > max_length:
+        raise ValueError(f"Parameter {key} exceeds maximum length of {max_length} characters")
     try:
         result = type_func(val)
         # Reject NaN/Inf: comparisons with inf always return False, so this catches all non-finite values
@@ -104,7 +155,11 @@ def parse_datetime(args):
     ).replace(tzinfo=timezone.utc)
 
 def generate_request_id(args, base_coeff):
-    """Generate unique request ID using MD5 hash. Formats base_coeff consistently (1.0 not 1) to match client."""
+    """Generate unique request ID using MD5 hash. Formats base_coeff consistently (1.0 not 1) to match client.
+    
+    SECURITY: MD5 hexdigest output is [0-9a-f] only, so no path traversal risk when used in filenames.
+    Changing to a different hash algorithm must preserve this property.
+    """
     base_coeff_str = f"{base_coeff:.1f}" if isinstance(base_coeff, float) else str(base_coeff)
     request_key = f"{args['timestamp']}_{args['lat']}_{args['lon']}_{args['alt']}_{args['equil']}_{args['eqtime']}_{args['asc']}_{args['desc']}_{base_coeff_str}"
     return hashlib.md5(request_key.encode()).hexdigest()[:16]
@@ -214,15 +269,25 @@ def _wait_for_cycle_stable(worker_pid, max_wait=12.0):
     refresh() sets `_cache_invalidation_cycle` first, sleeps 3 seconds, then writes `currgefs`.
     If another worker is mid-refresh, this guard catches the overlap.
     
+    FIX H-3: Require 3 consecutive stable readings to prevent race conditions.
+    Without this, read races in get_currgefs() could return different values each call,
+    leading to mixing data from different GEFS cycles (garbage predictions).
+    
     Args:
         worker_pid: Worker process ID for logging
         max_wait: Maximum time to wait (seconds)
     
     Returns:
-        Stable cycle value, or None if still transitioning
+        Stable cycle value
+        
+    Raises:
+        RuntimeError: If cycle fails to stabilize after max_wait (prevents bad predictions)
     """
     start = time.time()
     check_interval = 0.5
+    last_stable_cycle = None
+    stable_count = 0
+    required_stable_count = 3  # Require 3 consecutive stable readings (1.5s total)
     
     while time.time() - start < max_wait:
         try:
@@ -235,19 +300,34 @@ def _wait_for_cycle_stable(worker_pid, max_wait=12.0):
         
         # Cycle is stable if invalidation_cycle matches currgefs (or both are None)
         if invalidation_cycle == current_gefs:
-            if invalidation_cycle:
-                return invalidation_cycle
-            return current_gefs if current_gefs and current_gefs != "Unavailable" else None
+            stable_cycle = invalidation_cycle if invalidation_cycle else (current_gefs if current_gefs and current_gefs != "Unavailable" else None)
+            
+            if stable_cycle:
+                # Check if this is the same as last reading
+                if stable_cycle == last_stable_cycle:
+                    stable_count += 1
+                    if stable_count >= required_stable_count:
+                        # Cycle is stable for 3 consecutive readings - safe to proceed
+                        return stable_cycle
+                else:
+                    # Different cycle - reset counter
+                    stable_count = 1
+                    last_stable_cycle = stable_cycle
+        else:
+            # Cycle mismatch - reset counter
+            stable_count = 0
+            last_stable_cycle = None
         
-        # Still transitioning - wait and check again
+        # Still transitioning or unstable - wait and check again
         time.sleep(check_interval)
     
-    # Timeout - return current cycle anyway
-    current_gefs = simulate.get_currgefs()
-    if current_gefs and current_gefs != "Unavailable":
-        print(f"INFO: [WORKER {worker_pid}] Cycle stabilization timeout after {max_wait:.1f}s, using current cycle: {current_gefs}", flush=True)
-        return current_gefs
-    return None
+    # FIX H-3: FAIL explicitly on timeout instead of proceeding with unstable cycle
+    # Proceeding with unstable cycle can mix data from different GEFS runs
+    raise RuntimeError(
+        f"GEFS cycle failed to stabilize after {max_wait:.1f}s. "
+        f"Last reading: invalidation={invalidation_cycle}, current={current_gefs}. "
+        f"This indicates a race condition in cycle transition. Aborting to prevent bad predictions."
+    )
 
 
 def _wait_for_pending_cycle(pending_cycle, worker_pid, max_wait=120):
@@ -678,7 +758,13 @@ def _generate_perturbations(args, base_lat, base_lon, base_alt, base_equil,
     return perturbations
 
 def update_progress(request_id, completed=None, ensemble_completed=None, montecarlo_completed=None, status=None):
-    """Update progress tracking atomically (both in-memory and file-based)."""
+    """Update progress tracking atomically (both in-memory and file-based).
+    
+    FIX C-3: Move file I/O outside lock to prevent blocking other progress updates.
+    Disk I/O (especially fsync) can take 10-100ms, blocking all progress updates.
+    We copy data under lock, then write to file outside lock.
+    """
+    data_to_write = None
     with _progress_lock:
         if request_id in _progress_tracking:
             if completed is not None:
@@ -689,8 +775,12 @@ def update_progress(request_id, completed=None, ensemble_completed=None, monteca
                 _progress_tracking[request_id]['montecarlo_completed'] = montecarlo_completed
             if status is not None:
                 _progress_tracking[request_id]['status'] = status
-            # Also update file-based cache for multi-worker access
-            _write_progress(request_id, _progress_tracking[request_id])
+            # Copy data for writing outside lock
+            data_to_write = _progress_tracking[request_id].copy()
+    
+    # Write to file OUTSIDE lock to avoid blocking other progress updates during I/O
+    if data_to_write is not None:
+        _write_progress(request_id, data_to_write)
 
 
 def _is_authenticated():
@@ -743,31 +833,53 @@ def _read_progress(request_id):
     return None
 
 def _write_progress(request_id, progress_data):
-    """Write progress to file (shared across workers) with collision-safe temp files."""
+    """Write progress to file (shared across workers) with collision-safe temp files.
+    
+    FIX C-1: Explicit file closing to prevent FD leaks on error paths.
+    The with statement closes the file, but we ensure it's closed before replace()
+    and properly clean up if replace() fails (disk full, permissions).
+    """
     temp_path = None
+    tmp_file = None
     try:
         # Ensure directory exists (may have been deleted or not created yet)
         _PROGRESS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
         
         progress_file = _get_progress_file(request_id)
-        with tempfile.NamedTemporaryFile('w', dir=_PROGRESS_CACHE_DIR, delete=False, suffix='.tmp') as tmp:
-            json.dump(progress_data, tmp)
-            tmp.flush()
-            os.fsync(tmp.fileno())
-            temp_path = Path(tmp.name)
+        tmp_file = tempfile.NamedTemporaryFile('w', dir=_PROGRESS_CACHE_DIR, delete=False, suffix='.tmp')
+        try:
+            json.dump(progress_data, tmp_file)
+            tmp_file.flush()
+            os.fsync(tmp_file.fileno())
+            temp_path = Path(tmp_file.name)
+        finally:
+            # Guarantee file is closed before rename, even if json.dump or fsync fails
+            tmp_file.close()
         
+        # Now that file is closed, atomically rename it
         if temp_path:
             temp_path.replace(progress_file)
     except Exception as e:
         print(f"Error writing progress file for {request_id}: {e}", flush=True)
+        # Clean up temp file if it exists and wasn't successfully renamed
         if temp_path and temp_path.exists():
             try:
                 temp_path.unlink()
-            except Exception:
-                pass
+            except Exception as cleanup_err:
+                print(f"Failed to cleanup temp file {temp_path}: {cleanup_err}", flush=True)
 
 def _delete_progress(request_id):
-    """Delete progress file."""
+    """Delete progress from both in-memory cache and file.
+    
+    Prevents unbounded memory growth in _progress_tracking dict (H1 from code review).
+    Must be called after progress is no longer needed to avoid memory leaks.
+    
+    FIX H-2: Delete file BEFORE removing from dict to prevent race condition.
+    If we delete from dict first, other threads might read stale file data between
+    the dict delete and file delete. By deleting file first, readers either see
+    the dict entry (and skip file read) or miss both.
+    """
+    # Remove file first to prevent readers from seeing stale data
     try:
         progress_file = _get_progress_file(request_id)
         if progress_file.exists():
@@ -776,6 +888,11 @@ def _delete_progress(request_id):
         pass
     except Exception as e:
         print(f"Error deleting progress file for {request_id}: {e}", flush=True)
+    
+    # Then remove from in-memory cache
+    with _progress_lock:
+        if request_id in _progress_tracking:
+            del _progress_tracking[request_id]
 
 
 def _acquire_inflight_request(request_id):

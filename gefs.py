@@ -154,9 +154,10 @@ def _finalize_cached_file(file_name: str, cache_path: Path) -> Path:
 
 # Limit concurrent downloads to prevent connection pool exhaustion
 # During ensemble, 21 models try to download simultaneously - too many for S3
-# Increased from 4 to 8 to improve throughput while staying within S3 limits
-# With 4 workers × 8 downloads = 32 max concurrent, well within 64 connection pool
-_download_semaphore = threading.Semaphore(8)
+# Increased from 8 to 16 to reduce prefetch starvation (H3 from code review)
+# Progressive prefetch waits for 12 models - with 16 concurrent, less blocking
+# With 4 workers × 16 downloads = 64 max concurrent, at connection pool limit
+_download_semaphore = threading.Semaphore(16)
 
 def _release_file_lock(lock_fd):
     """Release file lock and close file descriptor. Safe to call multiple times."""
@@ -500,7 +501,10 @@ def _ensure_cached(file_name: str) -> Path:
                     time.sleep(1)
                     if cache_path.exists() and cache_path.stat().st_size > 0:
                         # File was downloaded by another worker - use it
+                        # FIX C-4: Clean up before early return to prevent leak in _downloading_files set
                         lock_fd.close()
+                        with _downloading_lock:
+                            _downloading_files.discard(file_name)
                         return _finalize_cached_file(file_name, cache_path)
                 # After 5 minutes, other worker may have failed - acquire lock (blocking) to download ourselves
                 # This handles case where other worker crashed mid-download
@@ -510,8 +514,11 @@ def _ensure_cached(file_name: str) -> Path:
             # Another worker may have completed the download between our check and acquiring lock
             if cache_path.exists() and cache_path.stat().st_size > 0:
                 # File exists - release lock and use it (no need to download)
+                # FIX C-4: Clean up before early return to prevent leak in _downloading_files set
                 fcntl.flock(lock_fd.fileno(), fcntl.LOCK_UN)
                 lock_fd.close()
+                with _downloading_lock:
+                    _downloading_files.discard(file_name)
                 return _finalize_cached_file(file_name, cache_path)
         except Exception as e:
             # Lock acquisition failed - continue without lock (fallback to semaphore-only)

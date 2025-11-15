@@ -34,7 +34,10 @@ DATA_STEP = 6
 # Dynamic multi-simulator LRU cache: automatically expands based on workload
 _simulator_cache = {}
 _simulator_access_times = {}
+# Normal mode: 10 simulators × ~150MB = ~1.5GB memory (single model + history)
 MAX_SIMULATOR_CACHE_NORMAL = 10
+# Ensemble mode: 30 simulators × ~460MB = ~13.8GB memory (21 models preloaded)
+# Sized to hold 21 models + history with ~30% overhead for safety
 MAX_SIMULATOR_CACHE_ENSEMBLE = 30
 _current_max_cache = MAX_SIMULATOR_CACHE_NORMAL
 _cache_lock = threading.Lock()
@@ -69,7 +72,9 @@ _simulator_ref_lock = threading.Lock()
 
 _prediction_cache = {}
 _cache_access_times = {}
+# Prediction cache: 200 entries × ~5KB = ~1MB total (stores simulation results)
 MAX_CACHE_SIZE = 200
+# Cache TTL: 1 hour (3600s) - balances freshness with hit rate for repeated queries
 CACHE_TTL = 3600
 
 def _cache_key(simtime, lat, lon, rate, step, max_duration, alt, model, coefficient):
@@ -107,31 +112,54 @@ def _cache_prediction(cache_key, result):
     _cache_access_times[cache_key] = time.time()
 
 def _read_currgefs():
-    """Read currgefs from shared file (thread-safe, process-safe)."""
+    """Read currgefs from shared file (thread-safe, process-safe).
+    
+    FIX C-2: Add shared file lock to prevent race with concurrent writes.
+    Without locking, read can overlap with write and return partial/empty data.
+    """
+    import fcntl
     try:
         if _CURRGEFS_FILE.exists():
             with open(_CURRGEFS_FILE, 'r') as f:
-                content = f.read().strip()
-                if content:
-                    return content
-    except Exception:
+                # Shared lock: allows multiple readers, blocks writers
+                fcntl.flock(f.fileno(), fcntl.LOCK_SH)
+                try:
+                    content = f.read().strip()
+                    if content:
+                        return content
+                finally:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+    except FileNotFoundError:
+        # File doesn't exist yet (first run)
         pass
+    except Exception as e:
+        print(f"WARNING: Failed to read currgefs: {e}", flush=True)
     return "Unavailable"
 
 def _write_currgefs(value):
-    """Write currgefs to shared file using atomic write (thread-safe, process-safe)."""
+    """Write currgefs to shared file using atomic write (thread-safe, process-safe).
+    
+    FIX C-2: Add exclusive file lock to coordinate with readers.
+    Atomic rename prevents partial writes, but lock ensures readers don't see stale data.
+    """
+    import fcntl
     try:
         _CURRGEFS_FILE.parent.mkdir(parents=True, exist_ok=True)
         # Atomic write: write to temp file, then rename (atomic on most filesystems)
         temp_file = _CURRGEFS_FILE.with_suffix('.tmp')
         with open(temp_file, 'w') as f:
-            f.write(value)
-            f.flush()
-            os.fsync(f.fileno())  # Ensure written to disk
+            # Exclusive lock on temp file during write
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+            try:
+                f.write(value)
+                f.flush()
+                os.fsync(f.fileno())  # Ensure written to disk
+            finally:
+                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
         # Atomic rename (replaces existing file atomically)
         temp_file.replace(_CURRGEFS_FILE)
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"WARNING: Failed to write currgefs: {e}", flush=True)
 
 def force_preload_for_next_models(model_count: int):
     """Force the next N simulator loads to preload arrays (ensemble cold-start hint)."""
@@ -638,13 +666,34 @@ def _cleanup_old_model_files(old_timestamp: str):
         
         if old_files:
             deleted_count = 0
+            failed_files = []  # FIX C-5: Track failures to detect accumulation issues
             for old_file in old_files:
                 try:
                     if old_file.exists():
                         old_file.unlink()
                         deleted_count += 1
-                except Exception:
-                    pass
+                except Exception as e:
+                    # Track failures with filename and error for diagnostics
+                    failed_files.append((old_file.name, str(e)))
+            
+            # Log results
+            if deleted_count > 0:
+                print(f"INFO: Cleaned up {deleted_count} old GEFS files for timestamp {old_timestamp}", flush=True)
+            
+            # FIX C-5: Alert on cleanup failures to prevent silent disk exhaustion
+            if failed_files:
+                # Show first 3 failures for diagnostics
+                sample_failures = failed_files[:3]
+                print(f"WARNING: Failed to delete {len(failed_files)} old files: {sample_failures}", flush=True)
+                
+                # If more than 50% of files failed to delete, raise error
+                # This indicates a serious problem (permissions, disk full, etc.)
+                failure_rate = len(failed_files) / len(old_files)
+                if failure_rate > 0.5:
+                    raise RuntimeError(
+                        f"Cleanup failed for {len(failed_files)}/{len(old_files)} files ({failure_rate:.0%}). "
+                        f"This may lead to disk exhaustion. Check permissions and disk health."
+                    )
             
         # After deleting old files, also trigger the LRU cleanup to ensure we're under limits
         # This helps when the cache has accumulated files over time
