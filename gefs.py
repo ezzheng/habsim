@@ -40,20 +40,23 @@ def _load_env_file():
 
 _load_env_file()
 
-# AWS S3 configuration
+# S3-compatible storage configuration (AWS S3 or Cloudflare R2)
 _AWS_ACCESS_KEY_ID = os.environ.get("AWS_ACCESS_KEY_ID", "")
 _AWS_SECRET_ACCESS_KEY = os.environ.get("AWS_SECRET_ACCESS_KEY", "")
 _AWS_REGION = os.environ.get("AWS_REGION", "us-west-1")
-_BUCKET = os.environ.get("S3_BUCKET_NAME", "habsim-storage")
+_BUCKET = os.environ.get("S3_BUCKET_NAME", "habsim")
+# Cloudflare R2 endpoint URL (if set, uses R2 instead of AWS S3)
+_S3_ENDPOINT_URL = os.environ.get("S3_ENDPOINT_URL", None)
 
-# Validate that AWS credentials are set
+# Validate that credentials are set
 if not _AWS_ACCESS_KEY_ID:
     raise ValueError("AWS_ACCESS_KEY_ID environment variable is not set. Please configure it in Railway settings.")
 if not _AWS_SECRET_ACCESS_KEY:
     raise ValueError("AWS_SECRET_ACCESS_KEY environment variable is not set. Please configure it in Railway settings.")
 
-# Log AWS configuration (without exposing secrets)
-print(f"INFO: AWS S3 configured: region={_AWS_REGION}, bucket={_BUCKET}", flush=True)
+# Log storage configuration (without exposing secrets)
+storage_type = "Cloudflare R2" if _S3_ENDPOINT_URL else "AWS S3"
+print(f"INFO: {storage_type} configured: bucket={_BUCKET}, endpoint={_S3_ENDPOINT_URL or 'default'}", flush=True)
 
 # Configure boto3 with retries and connection pooling
 # Increased to 64 connections for ensemble workloads (2 devices × 21 models = 42 concurrent downloads)
@@ -66,13 +69,22 @@ _S3_CONFIG = Config(
 
 # Main S3 client for large file downloads (simulations)
 # Explicitly pass credentials to avoid boto3 credential chain picking up wrong credentials
-_S3_CLIENT = boto3.client(
-    's3',
-    aws_access_key_id=_AWS_ACCESS_KEY_ID,
-    aws_secret_access_key=_AWS_SECRET_ACCESS_KEY,
-    region_name=_AWS_REGION,
-    config=_S3_CONFIG,
-)
+# For R2, use endpoint_url and set region to 'auto' (R2 doesn't use regions)
+_S3_CLIENT_KWARGS = {
+    'service_name': 's3',
+    'aws_access_key_id': _AWS_ACCESS_KEY_ID,
+    'aws_secret_access_key': _AWS_SECRET_ACCESS_KEY,
+    'config': _S3_CONFIG,
+}
+if _S3_ENDPOINT_URL:
+    # Cloudflare R2: use endpoint_url and auto region
+    _S3_CLIENT_KWARGS['endpoint_url'] = _S3_ENDPOINT_URL
+    _S3_CLIENT_KWARGS['region_name'] = 'auto'
+else:
+    # AWS S3: use region
+    _S3_CLIENT_KWARGS['region_name'] = _AWS_REGION
+
+_S3_CLIENT = boto3.client(**_S3_CLIENT_KWARGS)
 
 # Separate S3 client for status checks (small files like whichgefs)
 # This ensures status checks never wait behind large file downloads
@@ -82,13 +94,23 @@ _STATUS_S3_CONFIG = Config(
     connect_timeout=3,
     read_timeout=10,
 )
-_STATUS_S3_CLIENT = boto3.client(
-    's3',
-    aws_access_key_id=_AWS_ACCESS_KEY_ID,
-    aws_secret_access_key=_AWS_SECRET_ACCESS_KEY,
-    region_name=_AWS_REGION,
-    config=_STATUS_S3_CONFIG,
-)
+# Separate S3 client for status checks (small files like whichgefs)
+# Uses same endpoint configuration as main client
+_STATUS_S3_CLIENT_KWARGS = {
+    'service_name': 's3',
+    'aws_access_key_id': _AWS_ACCESS_KEY_ID,
+    'aws_secret_access_key': _AWS_SECRET_ACCESS_KEY,
+    'config': _STATUS_S3_CONFIG,
+}
+if _S3_ENDPOINT_URL:
+    # Cloudflare R2: use endpoint_url and auto region
+    _STATUS_S3_CLIENT_KWARGS['endpoint_url'] = _S3_ENDPOINT_URL
+    _STATUS_S3_CLIENT_KWARGS['region_name'] = 'auto'
+else:
+    # AWS S3: use region
+    _STATUS_S3_CLIENT_KWARGS['region_name'] = _AWS_REGION
+
+_STATUS_S3_CLIENT = boto3.client(**_STATUS_S3_CLIENT_KWARGS)
 
 # S3 TransferManager configuration for multipart parallel downloads
 # Optimized for large files (300-450MB): uses 8MB chunks with 16 parallel threads
