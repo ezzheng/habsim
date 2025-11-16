@@ -158,7 +158,6 @@ export S3_ENDPOINT_URL=https://<account-id>.r2.cloudflarestorage.com
 export S3_BUCKET_NAME=habsim
 export AWS_ACCESS_KEY_ID=<r2-access-key>
 export AWS_SECRET_ACCESS_KEY=<r2-secret-key>
-export SECRET_KEY=$(python -c 'import secrets; print(secrets.token_hex(32))')
 python app.py
 ```
 
