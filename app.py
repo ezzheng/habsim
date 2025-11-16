@@ -37,6 +37,12 @@ app.config['SESSION_COOKIE_SECURE'] = os.environ.get('FLASK_ENV') == 'production
 CORS(app, max_age=3600)
 Compress(app)
 
+# Custom error handler for 500 errors
+@app.errorhandler(500)
+def internal_error(error):
+    """Return simple error message for 500 errors."""
+    return make_response(jsonify({"error": "Error"}), 500)
+
 # Suppress /sim/status access logs (polled every 5s, creates log spam)
 class StatusLogFilter(logging.Filter):
     def filter(self, record):
