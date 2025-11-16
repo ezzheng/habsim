@@ -139,7 +139,6 @@ Download semaphore limits concurrent downloads to 16 to prevent connection pool 
 - `S3_BUCKET_NAME`: R2 bucket name (`habsim`)
 - `AWS_ACCESS_KEY_ID`: R2 access key ID
 - `AWS_SECRET_ACCESS_KEY`: R2 secret access key
-- `SECRET_KEY`: Flask session secret (required for production)
 - `HABSIM_PASSWORD`: Optional frontend authentication password
 - `PORT`: Server port (default: 8000)
 
