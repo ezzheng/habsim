@@ -453,20 +453,57 @@ def _ensure_cached(file_name: str) -> Path:
     cache_path = _CACHE_DIR / file_name
     
     if cache_path.exists():
-        try:
-            if file_name.endswith('.npz'):
-                import numpy as np
-                with np.load(cache_path) as _:
-                    pass
-        except Exception as e:
-            print(f"WARNING: {file_name} corrupted, re-downloading", flush=True)
+        # CRITICAL: For GEFS model files, verify cached file matches current cycle
+        # Prevents using stale files from previous cycle after cycle change
+        if file_name.endswith('.npz') and '_' in file_name:
+            # Extract cycle from filename (format: {cycle}_{model}.npz)
             try:
-                cache_path.unlink()
-            except Exception:
-                pass
+                file_cycle = file_name.split('_')[0]
+                # Import here to avoid circular dependency
+                from habsim import simulate
+                current_cycle = simulate.get_currgefs()
+                if current_cycle and current_cycle != "Unavailable" and file_cycle != current_cycle:
+                    # Cached file is from old cycle - delete it and re-download
+                    print(f"INFO: Cached file {file_name} is from old cycle {file_cycle} (current: {current_cycle}), re-downloading", flush=True)
+                    try:
+                        cache_path.unlink()
+                    except Exception:
+                        pass
+                    # Fall through to download new file
+                else:
+                    # Cycle matches or cycle unavailable - verify file integrity
+                    try:
+                        import numpy as np
+                        with np.load(cache_path) as _:
+                            pass
+                    except Exception as e:
+                        print(f"WARNING: {file_name} corrupted, re-downloading", flush=True)
+                        try:
+                            cache_path.unlink()
+                        except Exception:
+                            pass
+                    else:
+                        cache_path.touch()
+                        return cache_path
+            except Exception as e:
+                # If cycle check fails, fall through to normal validation
+                print(f"WARNING: Cycle check failed for {file_name}: {e}, proceeding with normal validation", flush=True)
         else:
-            cache_path.touch()
-            return cache_path
+            # Non-GEFS file or non-model file - just verify integrity
+            try:
+                if file_name.endswith('.npz'):
+                    import numpy as np
+                    with np.load(cache_path) as _:
+                        pass
+            except Exception as e:
+                print(f"WARNING: {file_name} corrupted, re-downloading", flush=True)
+                try:
+                    cache_path.unlink()
+                except Exception:
+                    pass
+            else:
+                cache_path.touch()
+                return cache_path
 
     cache_path.parent.mkdir(parents=True, exist_ok=True)
 

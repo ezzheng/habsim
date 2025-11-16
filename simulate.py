@@ -407,10 +407,11 @@ def refresh():
             
             # Delay old file cleanup - only delete after confirming new cycle is available
             # This prevents "file not found" errors if new files aren't uploaded yet
+            # Reduced from 30s to 10s since refresh() already verified files are available
             if old_gefs and old_gefs != "Unavailable":
                 # Schedule cleanup in background (non-blocking)
                 def delayed_cleanup():
-                    time.sleep(30)  # Wait 30s for new files to be available
+                    time.sleep(10)  # Wait 10s for new files to be fully cached
                     try:
                         _cleanup_old_model_files(old_gefs)
                     except Exception:
@@ -702,9 +703,6 @@ def _idle_memory_cleanup(idle_duration):
         _prediction_cache.clear()
         _cache_access_times.clear()
         
-        # Clear currgefs file to force re-check on next request
-        _write_currgefs("")
-
         # Multiple aggressive GC passes to ensure numpy arrays are freed
         for _ in range(10):  # Increased from 5 to 10
             gc.collect()

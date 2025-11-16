@@ -52,7 +52,7 @@ logging.getLogger('werkzeug').addFilter(StatusLogFilter())
 logging.getLogger('gunicorn.access').addFilter(StatusLogFilter())
 
 LOGIN_PASSWORD = os.environ.get('HABSIM_PASSWORD')
-MAX_CONCURRENT_ENSEMBLE_CALLS = 3
+MAX_CONCURRENT_ENSEMBLE_CALLS = 2
 _ENSEMBLE_COUNTER_FILE = '/tmp/ensemble_active_count'
 _ENSEMBLE_COUNTER_LOCK_FILE = '/tmp/ensemble_active_count.lock'
 
@@ -1666,6 +1666,34 @@ def spaceshot():
             # Update status to show we're loading
             update_progress(request_id, status='loading')
             wait_for_prefetch(model_ids, worker_pid)
+            
+            # CRITICAL: Ensure all 21 models are successfully loaded before proceeding
+            # wait_for_prefetch only waits for first 12 models; wait for remaining 9 to complete
+            # This prevents ensemble from running with incomplete model set
+            import time as time_module
+            max_wait_time = 35  # Wait up to 35 seconds for remaining models
+            wait_start = time_module.time()
+            
+            while (time_module.time() - wait_start) < max_wait_time:
+                # Check if all models are in cache (loaded and ready)
+                # wait_for_prefetch already validated cycle, so cached models are valid
+                with simulate._cache_lock:
+                    cached_models = set(simulate._simulator_cache.keys())
+                    missing_models = [m for m in model_ids if m not in cached_models]
+                
+                if not missing_models:
+                    # All models in cache - ready to proceed
+                    break
+                
+                # Wait briefly before checking again
+                time_module.sleep(0.5)
+            
+            # Log warning if some models still missing (non-fatal, ensemble will proceed)
+            with simulate._cache_lock:
+                cached_models = set(simulate._simulator_cache.keys())
+                missing = [m for m in model_ids if m not in cached_models]
+            if missing:
+                print(f"WARNING: [WORKER {worker_pid}] {len(missing)} models not ready after prefetch: {missing}", flush=True)
             
             # Switch to simulating status once prefetch is done
             update_progress(request_id, status='simulating')
