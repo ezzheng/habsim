@@ -1,114 +1,173 @@
-# HABSIM – High Altitude Balloon Trajectory Simulator
+# HABSIM
 
-**Production-ready Flask service for predicting high-altitude balloon trajectories using NOAA GEFS data.**
+High Altitude Balloon Trajectory Simulator. A production Flask service for predicting high-altitude balloon trajectories using NOAA GEFS ensemble weather data and GMTED2010 elevation data.
 
-[![Python 3.13](https://img.shields.io/badge/python-3.13-blue.svg)](https://www.python.org/downloads/)
-[![Flask](https://img.shields.io/badge/flask-3.1-green.svg)](https://flask.palletsprojects.com/)
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+## Project Overview
 
-## Overview
-HABSIM powers flight planning for the Stanford Student Space Initiative. A single Flask app (served with Gunicorn) exposes REST endpoints plus an SSE stream for progress updates. Simulations couple a three-phase balloon model with wind fields derived from GEFS ensemble members and GMTED2010 elevation data.
+HABSIM simulates three-phase balloon trajectories (ascent, coast, descent) using wind fields from the Global Ensemble Forecast System (GEFS). The system supports single-model predictions and 21-member ensemble analysis with Monte Carlo parameter perturbations for uncertainty quantification.
 
-- Single-model predictions finish in seconds once the wind file is cached.
-- 21-member ensemble runs add Monte Carlo perturbations (420 extra trajectories by default) and stream progress back to the browser.
-- Adaptive caching layers (prediction, simulator, GEFS files) keep RAM and disk usage bounded while enabling warm starts.
-- AWS S3 stores authoritative GEFS and elevation assets; local disk caches keep downloads off the hot path.
+The service addresses the need for accurate trajectory prediction in mission planning, where forecast uncertainty must be quantified across multiple weather model realizations. Simulations integrate wind vectors using Runge-Kutta methods and account for ground elevation to determine landing positions.
 
-## Quick Start
-### Requirements
+## Architecture
+
+The system consists of a Flask application served by Gunicorn with multiple worker processes. The application exposes REST endpoints for simulation requests and a Server-Sent Events (SSE) stream for real-time progress updates during long-running ensemble computations.
+
+### Component Interaction
+
+**Request Flow:**
+1. Client submits simulation request via REST API (`/sim/singlezpb` or `/sim/spaceshot`)
+2. Flask validates parameters and checks for duplicate in-progress requests
+3. For ensemble requests, the system performs progressive prefetch: downloads first 12 GEFS model files, then continues remaining downloads in background
+4. Simulation orchestrator loads or creates simulator instances (wind data + elevation data)
+5. Physics engine executes trajectory calculation using Runge-Kutta integration
+6. Results are cached and returned to client
+7. SSE stream provides progress updates during ensemble execution
+
+**Data Storage:**
+- Cloudflare R2: Authoritative storage for GEFS model files (21 files per cycle, ~308MB each) and elevation data (451MB)
+- Persistent volume (`/app/data`): Disk cache for GEFS files with LRU eviction (max 30 files)
+- In-memory caches: Simulator cache (adaptive sizing: 10 normal, 30 ensemble), prediction cache (200 entries, 1hr TTL)
+
+**Concurrency Model:**
+- Gunicorn: 4 workers × 8 threads = 32 concurrent request capacity
+- File-based locking (fcntl) coordinates inter-process operations (GEFS cycle refresh, download coordination)
+- Thread-safe in-memory caches with reference counting to prevent eviction of active simulators
+- Maximum 3 concurrent ensemble requests enforced via file-based counter
+
+### GEFS Cycle Management
+
+The system enforces strict cycle consistency to prevent mixing forecasts from different GEFS cycles. The refresh mechanism:
+
+1. Reads `whichgefs` from R2 to detect new cycle timestamps
+2. Verifies all 21 model files exist and are readable before switching cycles
+3. Sets cache invalidation flag, waits 3 seconds for consistency, then updates shared state file
+4. Evicts idle simulators and clears prediction caches
+5. Asynchronously deletes old cycle files from disk cache
+
+Cycle stability is enforced through multiple validation checkpoints: three consecutive stable readings required before proceeding, atomic reference count acquisition with cycle validation, and per-simulator cycle checks during construction.
+
+## File and Directory Structure
+
+```
+habsim/
+├── app.py                 # Flask application, REST endpoints, SSE progress stream
+├── simulate.py            # Simulation orchestrator, cache management, GEFS cycle refresh
+├── gefs.py                # R2/S3 access, disk cache, download coordination
+├── windfile.py            # Wind data access, 4D interpolation, filter cache
+├── elev.py                # Elevation data access, bilinear interpolation
+├── downloader.py          # GRIB2 to NumPy conversion utilities
+├── gunicorn_config.py     # Production server configuration
+├── requirements.txt       # Python dependencies
+├── habsim/
+│   └── classes.py         # Physics engine: Balloon, Simulator, Location, ElevationFile
+├── scripts/
+│   └── auto_downloader.py # Automated GEFS downloader for GitHub Actions
+└── www/                   # Static frontend assets
+    ├── index.html         # Main web interface
+    ├── paths.js           # Trajectory visualization, SSE client
+    └── util.js            # Frontend utilities
+```
+
+**Key Modules:**
+
+- `app.py`: Handles HTTP requests, parameter validation, ensemble coordination, idempotent request deduplication, progressive prefetch orchestration
+- `simulate.py`: Manages simulator cache with adaptive sizing, prediction caching, GEFS cycle refresh logic, reference counting for safe eviction
+- `gefs.py`: Provides S3-compatible storage access (Cloudflare R2 or AWS S3), implements disk-based LRU cache, coordinates concurrent downloads via file locking
+- `windfile.py`: Extracts NPZ files, performs 4D wind interpolation (lat/lon/alt/time), maintains filter cache for interpolation weights
+- `habsim/classes.py`: Implements Runge-Kutta integration, balloon state management, wind vector interpolation
+
+## Core Functionality
+
+### Simulation Execution
+
+Single-model simulations (`/sim/singlezpb`):
+- Validates parameters, loads simulator from cache or creates new instance
+- Executes three-phase trajectory: ascent (buoyancy-driven), coast (equilibrium float), descent (parachute)
+- Returns array of trajectory paths: `[[ascent_path], [coast_path], [descent_path]]`
+- Typical execution time: 5-10 seconds (cache hit) or 30-120 seconds (cold start)
+
+Ensemble simulations (`/sim/spaceshot`):
+- Checks for duplicate in-progress requests (idempotent deduplication)
+- Performs progressive prefetch: blocks until first 12 models ready, continues remaining in background
+- Executes 21 ensemble models in parallel using ThreadPoolExecutor
+- Applies Monte Carlo perturbations (default: 20 per model = 420 additional trajectories)
+- Streams progress updates via SSE
+- Typical execution time: 5-15 minutes (first run), faster on subsequent runs with cached files
+
+### Caching Strategy
+
+**Prediction Cache:** MD5 hash of simulation parameters → cached result. TTL: 1 hour. Max size: 200 entries.
+
+**Simulator Cache:** Model ID → Simulator instance. Adaptive sizing: 10 simulators in normal mode (~1.5GB), expands to 30 in ensemble mode (~13.8GB). LRU eviction of unused simulators. Reference counting prevents eviction of active simulators.
+
+**GEFS File Cache:** Disk-based LRU cache at `/app/data/gefs/`. Max 30 files (~9.2GB). Files validated before use (NPZ structure check). Elevation file (`worldelev.npy`) never evicted.
+
+**Filter Cache:** Per-WindFile cache of interpolation weight arrays. Reduces allocations by ~90%. Normal mode: 1000 entries, ensemble mode: 2000 entries shared across all WindFiles.
+
+### GEFS Cycle Refresh
+
+The refresh mechanism (`simulate.refresh()`) ensures cycle consistency:
+
+1. Acquires inter-process lock to prevent concurrent refreshes
+2. Reads `whichgefs` from R2 and compares to current `currgefs`
+3. If new cycle detected, verifies all 21 model files exist (with retry logic for S3 eventual consistency)
+4. Sets `_cache_invalidation_cycle` flag, waits 3 seconds, then atomically updates shared state file
+5. Calls `reset()` to evict idle simulators and clear prediction caches
+6. Schedules asynchronous cleanup of old cycle files
+
+Refresh is triggered by: ensemble prefetch operations, manual `/sim/refresh` endpoint, or simulator cache misses when cycle appears stale.
+
+### Download Coordination
+
+Large file downloads (GEFS model files, ~308MB each) use file-based locking to prevent duplicate downloads across Gunicorn workers:
+
+- Worker 1 acquires lock → downloads file
+- Workers 2-N wait on lock → use completed file
+
+Download semaphore limits concurrent downloads to 16 to prevent connection pool exhaustion. TransferManager handles multipart parallel downloads (16 threads per file) for improved throughput and resilience.
+
+## Deployment and Services Used
+
+**Railway:** Production hosting platform. Deploys Flask application with Gunicorn (4 workers, 8 threads per worker). Persistent volume mounted at `/app/data` for disk cache persistence. 32GB RAM allocation supports ensemble workloads. Health checks via `/health` endpoint.
+
+**Cloudflare R2:** Object storage for GEFS model files and elevation data. S3-compatible API. Zero egress fees. Bucket name: `habsim`. Endpoint configured via `S3_ENDPOINT_URL` environment variable. Auto-downloader uploads new cycles every 6 hours via GitHub Actions.
+
+**GitHub Actions:** Scheduled workflow (`.github/workflows/gefs-downloader.yml`) runs every 6 hours to download GEFS data from NOAA NOMADS, convert GRIB2 to NumPy format, and upload to R2. Uses same R2 credentials as main application.
+
+**Environment Variables:**
+- `S3_ENDPOINT_URL`: Cloudflare R2 endpoint URL
+- `S3_BUCKET_NAME`: R2 bucket name (`habsim`)
+- `AWS_ACCESS_KEY_ID`: R2 access key ID
+- `AWS_SECRET_ACCESS_KEY`: R2 secret access key
+- `SECRET_KEY`: Flask session secret (required for production)
+- `HABSIM_PASSWORD`: Optional frontend authentication password
+- `PORT`: Server port (default: 8000)
+
+## Requirements
+
 - Python 3.13+
-- `pip install -r requirements.txt`
-- AWS credentials with read/write access to the GEFS bucket (defaults to `habsim-storage` in `us-west-1`)
+- Dependencies: See `requirements.txt`
+- Storage credentials: Cloudflare R2 API token with Object Read & Write permissions
 
-### Run locally
+## Local Development
+
 ```bash
-git clone <your-fork>
-cd habsim
 python3.13 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-export AWS_ACCESS_KEY_ID=...
-export AWS_SECRET_ACCESS_KEY=...
-export AWS_REGION=us-west-1
-export S3_BUCKET_NAME=habsim-storage
-export SECRET_KEY=$(python - <<'PY'
-import secrets; print(secrets.token_hex(32))
-PY
-)
-python app.py  # http://localhost:8000
+export S3_ENDPOINT_URL=https://<account-id>.r2.cloudflarestorage.com
+export S3_BUCKET_NAME=habsim
+export AWS_ACCESS_KEY_ID=<r2-access-key>
+export AWS_SECRET_ACCESS_KEY=<r2-secret-key>
+export SECRET_KEY=$(python -c 'import secrets; print(secrets.token_hex(32))')
+python app.py
 ```
 
-### Smoke tests
+For production-like testing:
 ```bash
-curl http://localhost:8000/health
-curl http://localhost:8000/sim/which
-curl "http://localhost:8000/sim/singlezpb?timestamp=$(date +%s)&lat=37.3553&lon=-121.8763&alt=24&equil=30000&eqtime=0&asc=4&desc=8&model=0"
+gunicorn --config gunicorn_config.py app:app
 ```
-
-## Current GEFS Cycle Logic
-The simulator refuses to mix forecasts from different GEFS cycles. This section documents the currently implemented logic shared between `simulate.py`, `gefs.py`, and `app.py`.
-
-### Artifacts & signals
-- `S3://<bucket>/whichgefs` – tiny text file containing the active cycle (e.g., `2025111312`). `gefs.open_gefs('whichgefs')` always performs a `head_object` first to compare ETags before trusting its 15s in-memory cache.
-- `/app/data/currgefs.txt` – shared file (with `fcntl` locks + atomic renames) holding the last known cycle. Workers read it via `_read_currgefs()` and cache the value for 1 second to reduce I/O.
-- `_cache_invalidation_cycle` – process-local flag that forces simulator cache entries to prove they were built with the current cycle.
-- `/app/data/gefs/*.npz` – disk cache of the 21 model files plus `worldelev.npy`. LRU eviction (max 30 files) runs before every download, excluding the elevation file and any file that is actively downloading.
-
-### Refresh trigger & ownership
-`simulate.refresh()` is called whenever:
-1. `wait_for_prefetch()` starts an ensemble and `currgefs` is empty/out-of-date.
-2. `/sim/refresh` is hit manually (useful after uploading a new cycle).
-3. Prefetch detects a cache invalidation while loading simulators.
-
-The function acquires an inter-process lock (`/app/data/currgefs.refresh.lock`) so only one worker performs a refresh sequence at a time.
-
-### Refresh flow
-1. Read `whichgefs` and compare to the previous `currgefs`. No change → synchronize `_cache_invalidation_cycle` and exit.
-2. If a new timestamp appears, `_check_cycle_files_available()` confirms that all 21 `*.npz` exist and are readable in S3 (with exponential backoff and optional disk cache checks). If files are still uploading, the call returns `(False, pending_cycle)` so the caller can wait.
-3. Once verified, `_cache_invalidation_cycle` is set to the new timestamp, the code sleeps for 3 seconds so late-arriving writes settle, then `_write_currgefs()` updates the shared file via atomic rename.
-4. `reset(new_cycle)` evicts any idle simulators, clears prediction caches, resets forced-preload hints, and trims disk caches for the old timestamp. In-flight simulators keep running but will fail validation on their next use and rebuild against the new cycle.
-5. `_cleanup_old_model_files()` runs asynchronously to delete stale `.npz` files from previous cycles; active downloads are skipped so partially written files are never removed mid-transfer.
-
-### Stability & fallback guards
-- `_wait_for_cycle_stable()` (called during prefetch) requires three consecutive matching reads of `_cache_invalidation_cycle` and `currgefs` (~1.5s) before it trusts the cycle.
-- `_wait_for_pending_cycle()` polls S3 for up to 120s when `refresh()` reports "pending" so that ensembles never start in the middle of an upload. It double-checks `currgefs` on every loop to piggyback on another worker’s refresh.
-- `_acquire_ref_counts_atomic()` locks all requested model IDs, re-validates the cycle both before and after grabbing references, and restarts if anything drifted.
-- `_prefetch_model()` runs on every simulator build, re-checking `_cache_invalidation_cycle` both before and after `_get_simulator()` to catch race conditions that occur during long downloads.
-- `gefs.open_gefs('whichgefs')` caches the body but always validates the S3 ETag to detect flips instantly without hammering the bucket.
-
-### Failure handling & observability
-- Missing files after verification → `refresh()` logs a warning and keeps the old cycle instead of flipping to incomplete data.
-- Cycle stabilization timeouts emit warnings but keep the previous stable cycle so requests don’t fail unless no usable cycle exists.
-- If both the current and pending cycles are unavailable, prefetch raises a fatal error and callers return `503` to clients. Logs clearly state which cycle was missing to speed up S3 triage.
-- Download errors in `gefs.py` clean up temp files, release locks, and remove the file from `_downloading_files` so later retries are not blocked.
-
-## Running the API locally
-1. Configure environment variables as shown in the quick start. Optional knobs: `HABSIM_PASSWORD` (frontend gate), `PORT`, and `HABSIM_CACHE_DIR`.
-2. Create `data/gefs` if you plan to seed local files; otherwise the app will download from S3 on demand.
-3. Start the app with `python app.py` for single-process development or `gunicorn --config gunicorn_config.py app:app` to mimic production (4 workers × 8 threads, 15-minute timeout).
-4. Visit `http://localhost:8000`, authenticate if `HABSIM_PASSWORD` is set, pick a launch site on the map, and run "Single" or "Ensemble". SSE updates stream from `/sim/progress-stream` until completion.
-
-## Deployment Notes
-- Production deploys run on Railway with a 32GB RAM plan and a persistent volume mounted at `/app/data` so GEFS caches survive restarts.
-- Allow at least 10GB on the volume (21 models ≈ 6.5GB + elevation file + temp files).
-- Keep `AWS_ACCESS_KEY_ID/SECRET` and `SECRET_KEY` in the platform’s secrets manager; never commit them.
-- Gunicorn workers emit health metrics via `/sim/status`; polling every 5s is safe thanks to suppressed access logs.
-
-## Auto-downloader & data prep
-`scripts/auto_downloader.py` can run once (`--mode single --cycle 2025111312`) or as a daemon (`--mode daemon`). It fetches GRIB2 products from NOAA NOMADS, converts them to NumPy, packs them into `YYYYMMDDHH_XX.npz`, and uploads them to S3. Production pipelines typically run it as a separate Railway service or cron job every 6 hours so the main app only has to download from S3.
-
-## Project layout
-- `app.py` – Flask app + SSE progress stream + ensemble orchestration.
-- `simulate.py` – simulator cache, GEFS cycle refresh logic, Monte Carlo orchestration.
-- `gefs.py` – S3 access, disk cache, download integrity checks.
-- `windfile.py`, `elev.py`, `habsim/classes.py` – physics engine and data access.
-- `www/` – static frontend (vanilla JS + Google Maps).
-
-## Contributing
-1. Fork, create a feature branch, and run the quick start commands.
-2. Add or update tests (where available), run `python app.py` locally, and verify `/health` + `/sim/singlezpb`.
-3. Open a PR describing the change, especially if it touches GEFS cycle logic or cache behavior.
 
 ## License
-Released under the MIT License. See `LICENSE` for the full text.
 
+MIT License. See `LICENSE` file for details.
