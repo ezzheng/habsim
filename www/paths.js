@@ -1891,17 +1891,31 @@ async function simulate() {
                     
                     const response = await spaceshotPromise;
                     
+                    // Read response text once (can only be read once)
+                    const responseText = await response.text();
+                    
                     // Check if response is OK before parsing
                     if (!response.ok) {
-                        const errorText = await response.text().catch(() => 'Unknown error');
-                        console.error('Spaceshot response not OK:', response.status, response.statusText, errorText);
-                        throw new Error(`Server returned ${response.status}: ${response.statusText}`);
+                        let errorMessage = `Server returned ${response.status}: ${response.statusText}`;
+                        try {
+                            // Try to parse JSON error response to get the actual error message
+                            if (responseText) {
+                                const errorData = JSON.parse(responseText);
+                                if (errorData && errorData.error) {
+                                    errorMessage = errorData.error;
+                                }
+                            }
+                        } catch (parseError) {
+                            // If parsing fails, use the default error message
+                            console.error('Failed to parse error response:', parseError);
+                        }
+                        console.error('Spaceshot response not OK:', response.status, response.statusText, errorMessage);
+                        throw new Error(errorMessage);
                     }
                     
                     // Parse JSON response
                     let data;
                     try {
-                        const responseText = await response.text();
                         if (!responseText || responseText.trim().length === 0) {
                             throw new Error('Empty response from server');
                         }
@@ -2038,12 +2052,17 @@ async function simulate() {
                         if (onlyonce) {
                             // Provide more specific error messages
                             let errorMessage = 'Failed to contact simulation server. Please try again later.';
-                            if (error.message && error.message.includes('timeout')) {
-                                errorMessage = 'Simulation timed out. The request took too long. Please try again or use a shorter simulation time.';
-                            } else if (error.message && error.message.includes('JSON')) {
-                                errorMessage = 'Server returned invalid response. The simulation may have timed out or failed. Please try again.';
-                            } else if (error.message && error.message.includes('Server returned')) {
-                                errorMessage = error.message + '. Please try again later.';
+                            if (error.message) {
+                                if (error.message.includes('timeout')) {
+                                    errorMessage = 'Simulation timed out. The request took too long. Please try again or use a shorter simulation time.';
+                                } else if (error.message.includes('JSON')) {
+                                    errorMessage = 'Server returned invalid response. The simulation may have timed out or failed. Please try again.';
+                                } else if (error.message.includes('Server returned')) {
+                                    errorMessage = error.message + '. Please try again later.';
+                                } else {
+                                    // Use the error message directly if it's already user-friendly
+                                    errorMessage = error.message;
+                                }
                             }
                             alert(errorMessage);
                             onlyonce = false;

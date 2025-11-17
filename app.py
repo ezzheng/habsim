@@ -1581,7 +1581,7 @@ def spaceshot():
         if not _increment_ensemble_counter():
             return _finalize_error(
                 {
-                    "error": f"Too many concurrent ensemble requests. Maximum is {MAX_CONCURRENT_ENSEMBLE_CALLS}. Please try again later."
+                    "error": "Server handling other ensemble requests. Try again later."
                 },
                 429
             )
