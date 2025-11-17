@@ -1014,6 +1014,24 @@ def index():
     except FileNotFoundError:
         return "Application not found", 404
 
+@app.route('/logo.png')
+def logo():
+    """Serve logo/favicon file."""
+    logo_path = os.path.join(os.path.dirname(__file__), 'www', 'logo.png')
+    try:
+        return send_from_directory(os.path.dirname(logo_path), 'logo.png')
+    except FileNotFoundError:
+        return "Logo not found", 404
+
+@app.route('/favicon.ico')
+def favicon():
+    """Serve favicon (redirects to logo.png)."""
+    logo_path = os.path.join(os.path.dirname(__file__), 'www', 'logo.png')
+    try:
+        return send_from_directory(os.path.dirname(logo_path), 'logo.png')
+    except FileNotFoundError:
+        return "Favicon not found", 404
+
 @app.route('/sim/which')
 def whichgefs():
     """Get current GEFS timestamp."""
@@ -1360,6 +1378,8 @@ def singlezpbh():
     # Validate input ranges
     if not (-90 <= lat <= 90):
         return make_response(jsonify({"error": "Latitude must be between -90 and 90"}), 400)
+    if not (-180 <= lon <= 360):
+        return make_response(jsonify({"error": "Longitude must be between -180 and 360"}), 400)
     if not (0 <= alt < 50000):
         return make_response(jsonify({"error": "Launch altitude must be between 0 and 50000 meters"}), 400)
     if not (alt <= equil < 50000):
@@ -1520,6 +1540,8 @@ def spaceshot():
         # Validate input ranges
         if not (-90 <= base_lat <= 90):
             return make_response(jsonify({"error": "Latitude must be between -90 and 90"}), 400)
+        if not (-180 <= base_lon <= 360):
+            return make_response(jsonify({"error": "Longitude must be between -180 and 360"}), 400)
         if not (0 <= base_alt < 50000):
             return make_response(jsonify({"error": "Launch altitude must be between 0 and 50000 meters"}), 400)
         if not (base_alt <= base_equil < 50000):
@@ -1974,6 +1996,8 @@ def elevation():
         # Validate coordinate ranges
         if not (-90 <= lat <= 90):
             return make_response(jsonify({"error": "Latitude must be between -90 and 90"}), 400)
+        if not (-180 <= lon <= 360):
+            return make_response(jsonify({"error": "Longitude must be between -180 and 360"}), 400)
         
         result = elev.getElevation(lat, lon)
         return str(result or 0)
