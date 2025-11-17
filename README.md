@@ -1,6 +1,6 @@
 # HABSIM
 
-High Altitude Balloon Trajectory Simulator. A production Flask service for predicting high-altitude balloon trajectories using NOAA GEFS ensemble weather data and GMTED2010 elevation data.
+High Altitude Balloon Trajectory Simulator. Simulate balloon trajectories and probabilistically model balloon landing locations. Developed by the Stanford Student Space Initiative (SSI) Balloons Team. Uses NOAA GEFS ensemble weather data and GMTED2010 elevation data.
 
 ## Project Overview
 
@@ -24,7 +24,7 @@ The system consists of a Flask application served by Gunicorn with multiple work
 7. SSE stream provides progress updates during ensemble execution
 
 **Data Storage:**
-- Cloudflare R2: Authoritative storage for GEFS model files (21 files per cycle, ~308MB each) and elevation data (451MB)
+- Cloudflare R2: Authoritative storage for GEFS model files (21 files per cycle, ~308MB each) and elevation data (451MB); chosen due to zero egress cost
 - Persistent volume (`/app/data`): Disk cache for GEFS files with LRU eviction (max 30 files)
 - In-memory caches: Simulator cache (adaptive sizing: 10 normal, 30 ensemble), prediction cache (200 entries, 1hr TTL)
 
@@ -32,7 +32,7 @@ The system consists of a Flask application served by Gunicorn with multiple work
 - Gunicorn: 4 workers × 8 threads = 32 concurrent request capacity
 - File-based locking (fcntl) coordinates inter-process operations (GEFS cycle refresh, download coordination)
 - Thread-safe in-memory caches with reference counting to prevent eviction of active simulators
-- Maximum 3 concurrent ensemble requests enforced via file-based counter
+- Maximum 2 concurrent ensemble requests enforced via file-based counter
 
 ### GEFS Cycle Management
 
