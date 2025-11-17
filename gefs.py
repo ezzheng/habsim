@@ -460,7 +460,7 @@ def _ensure_cached(file_name: str) -> Path:
             try:
                 file_cycle = file_name.split('_')[0]
                 # Import here to avoid circular dependency
-                from habsim import simulate
+                import simulate
                 current_cycle = simulate.get_currgefs()
                 if current_cycle and current_cycle != "Unavailable" and file_cycle != current_cycle:
                     # Cached file is from old cycle - delete it and re-download
