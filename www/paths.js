@@ -1741,7 +1741,31 @@ async function simulate() {
                             + "&model=0";
                         try {
                             const response = await fetch(url2, { signal: window.__simAbort.signal });
-                            const payload = await response.json();
+                            
+                            // Read response text once (can only be read once)
+                            const responseText = await response.text();
+                            
+                            // Check if response is OK before parsing
+                            if (!response.ok) {
+                                // For multi mode, silently skip failed requests (don't spam user with errors)
+                                console.warn(`Multi fetch failed for offset ${h}: ${response.status} ${response.statusText}`);
+                                continue;
+                            }
+                            
+                            // Parse JSON response
+                            let payload;
+                            try {
+                                if (!responseText || responseText.trim().length === 0) {
+                                    console.warn(`Multi fetch empty response for offset ${h}`);
+                                    continue;
+                                }
+                                payload = JSON.parse(responseText);
+                            } catch (parseError) {
+                                console.warn('Multi fetch failed to parse response for offset', h, parseError);
+                                continue;
+                            }
+                            
+                            // Handle legacy string error responses (backward compatibility)
                             if (payload && payload !== "error" && payload !== "alt error") {
                                 // Add end pin only; defer trajectory to endpoint click
                                 const color = getMultiGradientColor(i, total);
@@ -2076,8 +2100,50 @@ async function simulate() {
                     console.log(urlWithModel);
                     try {
                         const response = await fetch(urlWithModel, { signal: window.__simAbort.signal });
-                        const payload = await response.json();
+                        
+                        // Read response text once (can only be read once)
+                        const responseText = await response.text();
+                        
+                        // Check if response is OK before parsing
+                        if (!response.ok) {
+                            let errorMessage = `Server returned ${response.status}: ${response.statusText}`;
+                            try {
+                                // Try to parse JSON error response to get the actual error message
+                                if (responseText) {
+                                    const errorData = JSON.parse(responseText);
+                                    if (errorData && errorData.error) {
+                                        errorMessage = errorData.error;
+                                    }
+                                }
+                            } catch (parseError) {
+                                // If parsing fails, use the default error message
+                                console.error('Failed to parse error response:', parseError);
+                            }
+                            console.error('Singlezpb response not OK:', response.status, response.statusText, errorMessage);
+                            if (onlyonce) {
+                                alert(errorMessage);
+                                onlyonce = false;
+                            }
+                            continue; // Skip to next model
+                        }
+                        
+                        // Parse JSON response
+                        let payload;
+                        try {
+                            if (!responseText || responseText.trim().length === 0) {
+                                throw new Error('Empty response from server');
+                            }
+                            payload = JSON.parse(responseText);
+                        } catch (parseError) {
+                            console.error('Failed to parse singlezpb response as JSON:', parseError);
+                            if (onlyonce) {
+                                alert('Server returned invalid response. The simulation may have timed out or failed. Please try again.');
+                                onlyonce = false;
+                            }
+                            continue; // Skip to next model
+                        }
 
+                        // Handle legacy string error responses (backward compatibility)
                         if (payload === "error") {
                             if (onlyonce) {
                                 alert("Simulation failed on the server. Please verify inputs or try again in a few minutes.");
@@ -2100,7 +2166,21 @@ async function simulate() {
                         }
                         console.error('Simulation fetch failed', error);
                         if (onlyonce) {
-                            alert('Failed to contact simulation server. Please try again later.');
+                            // Use error message if available, otherwise generic message
+                            let errorMessage = 'Failed to contact simulation server. Please try again later.';
+                            if (error.message) {
+                                if (error.message.includes('timeout')) {
+                                    errorMessage = 'Simulation timed out. The request took too long. Please try again or use a shorter simulation time.';
+                                } else if (error.message.includes('JSON')) {
+                                    errorMessage = 'Server returned invalid response. The simulation may have timed out or failed. Please try again.';
+                                } else if (error.message.includes('Server returned')) {
+                                    errorMessage = error.message + '. Please try again later.';
+                                } else {
+                                    // Use the error message directly if it's already user-friendly
+                                    errorMessage = error.message;
+                                }
+                            }
+                            alert(errorMessage);
                             onlyonce = false;
                         }
                     }
