@@ -797,12 +797,154 @@ _progress_lock = threading.Lock()
 _PROGRESS_CACHE_DIR = Path("/app/data/progress") if Path("/app/data").exists() else Path(tempfile.gettempdir()) / "habsim-progress"
 _PROGRESS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
+_ENSEMBLE_LOCK_DIR = Path(tempfile.gettempdir()) / "habsim-ensemble-locks"
+_ENSEMBLE_RESULT_DIR = Path(tempfile.gettempdir()) / "habsim-ensemble-results"
+for directory in (_ENSEMBLE_LOCK_DIR, _ENSEMBLE_RESULT_DIR):
+    directory.mkdir(parents=True, exist_ok=True)
+
 _inflight_ensembles = {}
 _inflight_lock = threading.Lock()
 
 def _get_progress_file(request_id):
     """Get file path for progress tracking."""
     return _PROGRESS_CACHE_DIR / f"{request_id}.json"
+
+
+def _get_ensemble_result_file(request_id):
+    """Return path used to cache ensemble result for cross-worker dedupe."""
+    return _ENSEMBLE_RESULT_DIR / f"{request_id}.json"
+
+
+def _clear_ensemble_result(request_id):
+    """Delete any cached ensemble result for a request (stale run)."""
+    result_path = _get_ensemble_result_file(request_id)
+    try:
+        if result_path.exists():
+            result_path.unlink()
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        print(f"WARNING: Failed to clear ensemble result cache for {request_id}: {e}", flush=True)
+
+
+def _store_ensemble_result(request_id, payload, status_code):
+    """Persist ensemble result so duplicate requests on other workers can reuse it."""
+    data = {
+        'status': status_code,
+        'payload': payload,
+        'timestamp': time.time()
+    }
+    temp_path = None
+    tmp_file = None
+    result_path = _get_ensemble_result_file(request_id)
+    try:
+        tmp_file = tempfile.NamedTemporaryFile('w', dir=_ENSEMBLE_RESULT_DIR, delete=False, suffix='.tmp')
+        try:
+            json.dump(data, tmp_file)
+            tmp_file.flush()
+            os.fsync(tmp_file.fileno())
+            temp_path = Path(tmp_file.name)
+        finally:
+            tmp_file.close()
+
+        if temp_path:
+            temp_path.replace(result_path)
+    except Exception as e:
+        print(f"WARNING: Failed to store ensemble result for {request_id}: {e}", flush=True)
+        if temp_path and temp_path.exists():
+            try:
+                temp_path.unlink()
+            except Exception:
+                pass
+
+
+def _schedule_ensemble_result_cleanup(request_id, delay_seconds=120):
+    """Remove cached ensemble result after delay to avoid stale reuse."""
+    def _cleanup():
+        try:
+            time.sleep(delay_seconds)
+        except Exception:
+            pass
+        _clear_ensemble_result(request_id)
+
+    cleanup_thread = threading.Thread(target=_cleanup, daemon=True)
+    cleanup_thread.start()
+
+
+def _read_ensemble_result(request_id):
+    """Read cached ensemble result written by the worker that executed it."""
+    result_path = _get_ensemble_result_file(request_id)
+    try:
+        if not result_path.exists():
+            return None
+        with open(result_path, 'r') as f:
+            content = f.read().strip()
+            if not content:
+                return None
+            return json.loads(content)
+    except json.JSONDecodeError:
+        # Partial write or corruption – treat as missing and log once
+        print(f"WARNING: Corrupted ensemble cache for {request_id}, ignoring", flush=True)
+    except Exception as e:
+        print(f"WARNING: Failed to read ensemble cache for {request_id}: {e}", flush=True)
+    return None
+
+
+def _acquire_cross_worker_lock(request_id):
+    """Acquire exclusive lock so only one worker runs an ensemble for given request."""
+    lock_path = _ENSEMBLE_LOCK_DIR / f"{request_id}.lock"
+    lock_file = None
+    try:
+        lock_file = open(lock_path, 'a+')
+        import fcntl
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return lock_file, True
+    except BlockingIOError:
+        if lock_file:
+            try:
+                lock_file.close()
+            except Exception:
+                pass
+        return None, False
+    except Exception as e:
+        print(f"WARNING: Failed to acquire ensemble lock for {request_id}: {e}", flush=True)
+        if lock_file:
+            try:
+                lock_file.close()
+            except Exception:
+                pass
+        return None, None
+
+
+def _release_cross_worker_lock(lock_file):
+    """Release lock acquired via _acquire_cross_worker_lock."""
+    if not lock_file:
+        return
+    try:
+        import fcntl
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+    except Exception:
+        pass
+    try:
+        lock_file.close()
+    except Exception:
+        pass
+
+
+def _wait_for_cross_worker_result(request_id, timeout_seconds=900):
+    """Wait for the worker that owns the lock to publish its result."""
+    deadline = time.time() + timeout_seconds
+    logged_wait = False
+    while time.time() < deadline:
+        result = _read_ensemble_result(request_id)
+        if result:
+            return result.get('payload'), result.get('status', 200)
+        if not logged_wait:
+            print(f"INFO: Waiting for ensemble result from other worker (request_id={request_id})", flush=True)
+            logged_wait = True
+        time.sleep(0.5)
+    print(f"WARNING: Timed out waiting for ensemble result (request_id={request_id})", flush=True)
+    return None, None
 
 def _read_progress(request_id):
     """Read progress from file (shared across workers)."""
@@ -1561,6 +1703,20 @@ def spaceshot():
     
     request_id = generate_request_id(args, base_coeff)
     
+    lock_file = None
+    lock_owner = False
+    lock_file, lock_owner = _acquire_cross_worker_lock(request_id)
+    if lock_owner is None:
+        return make_response(jsonify({"error": "Server is busy handling another ensemble request. Please try again shortly."}), 503)
+    if not lock_owner:
+        payload, status_code = _wait_for_cross_worker_result(request_id)
+        if payload is None:
+            return make_response(jsonify({"error": "Another simulation with the same parameters is still running. Please try again shortly."}), 503)
+        return make_response(jsonify(payload), status_code or 200)
+    
+    # Remove stale cached result now that we are the owner
+    _clear_ensemble_result(request_id)
+    
     inflight_entry, inflight_owner = _acquire_inflight_request(request_id)
     if not inflight_owner:
         try:
@@ -1582,6 +1738,9 @@ def spaceshot():
     def _finalize_success(payload, status_code=200):
         nonlocal response_payload, inflight_completed
         response_payload = payload
+        if lock_owner:
+            _store_ensemble_result(request_id, payload, status_code)
+            _schedule_ensemble_result_cleanup(request_id)
         _complete_inflight_request(request_id, payload, status=status_code, is_error=False)
         _release_inflight_request(request_id)
         inflight_completed = True
@@ -1591,6 +1750,9 @@ def spaceshot():
         nonlocal error_payload, error_status, inflight_completed
         error_payload = payload
         error_status = status_code
+        if lock_owner:
+            _store_ensemble_result(request_id, payload, status_code)
+            _schedule_ensemble_result_cleanup(request_id)
         _complete_inflight_request(request_id, payload, status=status_code, is_error=True)
         _release_inflight_request(request_id)
         inflight_completed = True
@@ -1882,8 +2044,13 @@ def spaceshot():
         if inflight_owner and not inflight_completed:
             fallback_payload = error_payload or {"error": "Simulation ended before completion"}
             fallback_status = error_status or 500
+            if lock_owner:
+                _store_ensemble_result(request_id, fallback_payload, fallback_status)
+                _schedule_ensemble_result_cleanup(request_id)
             _complete_inflight_request(request_id, fallback_payload, status=fallback_status, is_error=True)
             _release_inflight_request(request_id)
+        if lock_owner and lock_file:
+            _release_cross_worker_lock(lock_file)
 
 @app.route('/sim/progress-stream')
 def progress_stream():
